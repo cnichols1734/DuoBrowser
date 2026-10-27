@@ -47,7 +47,9 @@ There are no changes to application source, app assets, entitlements, bundle ID,
 
 Local results: Debug and Release simulator builds passed; 21 scroll, 12 archive and 19 data assertions passed (52 total); 24 gutter-layout and 14 camera-layout checks passed (38 total); SwiftLint correctness rules and actionlint passed; npm audit reported no known vulnerabilities in the locked development graph. The native simulator driver passed 30 integration checks, 1 persistence-write / 2 persistence-read checks across process termination, and 11 memory checks. No result is a physical-device or universal-site compatibility claim.
 
-Hosted GitHub Actions verification is pending the preparation PR's run. Update this section with the result before requesting publication approval. Branch protection requires the hosted `Required CI` result, not a local claim.
+Hosted GitHub Actions [run 40534724010](https://github.com/cnichols1734/DuoBrowser/actions/runs/40534724010) passed all four jobs for preparation commit `cd5591c`: Repository and security, Layout regression tests, iOS build and native tests, and Required CI. The hosted runner compiled Debug/Release and passed the same 52 portable, 38 layout, 30 native, 3 persistence and 11 memory assertions. Its disposable simulator was cleaned up. Subsequent documentation-only commits still require their own green `Required CI` result before merge; the PR shows that current result.
+
+The final full-history Gitleaks scan after adding the preparation commit found zero secrets. One unreachable local blob was also scanned with no findings. All relative Markdown links resolve, and a Git comparison confirms application source/assets and Xcode project files are byte-for-byte unchanged from `f168f4d`. API rechecks confirm private visibility, the configured protections, no additional collaborators, and no Actions secrets or environments.
 
 ## Publication checklist — requires explicit approval
 

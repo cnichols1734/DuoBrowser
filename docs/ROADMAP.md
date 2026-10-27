@@ -113,3 +113,7 @@ Added adaptive large-text browser/tab/library controls, constrained address edit
 ## App icon — October 27, 2026
 
 The owner selected and supplied a blue-globe/open-book icon after the earlier compass and two-panel D concepts, then requested removal of its exterior white border. The navy background now fills the square asset, with iOS applying the final corner mask. The 28-second product demo closing card also uses the selected artwork. See [asset provenance and verification](APP_ICON.md). The 1024-pixel opaque raster is wired into Debug and Release; custom dark/tinted layers and hardware appearance remain unverified.
+
+## Open-source preparation — October 27, 2026
+
+Prepared MIT licensing, contribution/security/release guidance, issue/PR templates, owner review policy, pinned development tools and hosted CI on `chore/open-source-preparation`. The pre-change exposure assessment found no committed secrets; the owner approved the public reporting email and icon licensing. Application behavior and project configuration are unchanged. Local and hosted build/test checks passed. See [verified settings, limitations and publication checklist](OPEN_SOURCE_PREPARATION.md). The repository remains private, PR review is required, and public visibility and App Store publication each require separate explicit authorization.
