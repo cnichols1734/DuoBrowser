@@ -52,7 +52,7 @@ struct BrowserView: View {
                     .accessibilityLabel(browser.isLoading ? "Stop loading" : "Reload")
 
                     Menu {
-                        Toggle("Full width (experimental)", isOn: $browser.fullWidth)
+                        Toggle("Full-width page", isOn: $browser.fullWidth)
                         Toggle("Show reserved regions", isOn: $browser.showRegions)
                         Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }
                             .disabled(!browser.canGoForward)
@@ -79,6 +79,7 @@ struct BrowserView: View {
             .padding(.bottom, 8)
             .frame(maxWidth: 620)
         }
+        .statusBarHidden(browser.fullWidth)
         .onChange(of: browser.address) { _, newValue in
             if !editingAddress { input = newValue }
         }
@@ -101,7 +102,7 @@ private struct BrowserSurface: UIViewRepresentable {
 
 private final class ViewportView: UIView {
     let webView: WKWebView
-    var fullWidth = false
+    var fullWidth = true
     var showRegions = false
     private let regionsLayer = CAShapeLayer()
 

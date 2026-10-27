@@ -13,7 +13,7 @@ October 26, 2026, America/Chicago.
 
 ## Still to verify
 
-The Device Hub UI remained on another simulator. Attempts to select the new simulator were rejected after the tool detected user changes, so no interactive browser checks are claimed. Attempts to open Xcode through Computer Use timed out; the project file is available to open manually.
+During the initial setup, the Device Hub UI remained on another simulator. Attempts to select the new simulator were rejected after the tool detected user changes. Attempts to open Xcode through Computer Use timed out; the project file is available to open manually. The subsequent full-width verification below supersedes the initial visual-inspection gap for closed-display rendering only.
 
 Run the app on DuoBrowser QA, then check:
 
@@ -24,6 +24,15 @@ Run the app on DuoBrowser QA, then check:
 5. Keyboard, pinch zoom, rotation, and the last lines of a page remain usable.
 
 The starter has no automated UI suite yet. Camera-avoidance behavior, AI, native accessibility review, hardware performance, energy, private browsing, tabs, and Safari comparison are future milestones. No area-gain percentage or Safari-equivalence claim is established.
+
+## Full-width follow-up — October 26, 2026
+
+- The owner's screenshot showed the fixture at 382 × 644 CSS pixels, with a full-height white strip on the right. The model's full-width flag was false, so the web view was constrained to its safe-area layout frame.
+- Full-width rendering is now on by default in both model and viewport view. The status bar is hidden in this mode, and the menu calls the option “Full-width page”. Switching it off restores the conservative comparison mode.
+- The updated simulator build passed, with no Swift compiler warnings. The AppIntents metadata-skipped notice remains expected.
+- Installed and relaunched on DuoBrowser QA. Visually inspected a live Apple webpage filling the closed display from left to right, with no dedicated blank right-hand strip and no clock/connectivity indicators over the page. The bottom browser controls also occupy the available width.
+- Camera avoidance is still separate work: this change removes the full-height gutter, but does not relocate arbitrary site controls around the physical camera.
+- A follow-up attempt to select the local test page was rejected after a user UI change. No new CSS-width measurement, open-pose, keyboard, pinch-zoom, or automated interaction result is claimed for this pass.
 
 ## Project registration
 

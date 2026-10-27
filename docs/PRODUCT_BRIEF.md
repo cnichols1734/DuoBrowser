@@ -18,7 +18,7 @@ Follow the content-first direction in ../.impeccable.md: calm native chrome, cle
 
 ## 4. Layout strategy
 
-- Outer display: full-width web canvas where proven safe, a compact floating address/control cluster, and no permanently reserved full-height browser rail.
+- Outer display: full-width web canvas by default, a compact floating address/control cluster, and no permanently reserved full-height browser rail. The owner explicitly requested removing the right-hand blank strip; native full-width mode also hides the status bar. Safe-area mode remains an optional fallback.
 - Inner display: preserve control relationships and page state; show optional tab navigation only when space supports it. Do not automatically split the website or reload it on opening.
 - Exclusions: derive camera, expanded system occlusion, fold, keyboard, and browser-control areas from current geometry. Reclaim space around these areas, not underneath essential interaction.
 - Proposal: bottom address entry on both displays; compare its reachability against a compact edge alternative during the first prototype.
@@ -45,7 +45,7 @@ Tap the address field to edit, use standard back/forward gestures, and open tabs
 
 On collision, measure the original and final positions, commit a validated layout adjustment, and animate the visual difference. Proposed initial timing: 180–240 ms, decelerating, with no repeated bounce. Recheck hit targets and reading order. Reduce Motion uses an immediate update or subtle fade.
 
-Provide page options for **Fit around camera**, **Original layout**, and **Always use original layout on this site**. For the experiment, adaptation is explicitly enabled so results can be compared. A production default is a later decision.
+Provide page options for **Fit around camera**, **Original layout**, and **Always use original layout on this site**. For the experiment, DOM adaptation is explicitly enabled so results can be compared. Its production default is a later decision. This is separate from native full-width rendering, which is now the default.
 
 ## 7. Content requirements
 

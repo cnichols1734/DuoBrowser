@@ -16,7 +16,7 @@ A native iOS browser designed to make the iPhone Duo's closed outer display usef
 
 Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and **DuoBrowser QA** simulator, then Run. The starter targets iOS 27.1 and uses SwiftUI with a UIKit-backed `WKWebView`.
 
-It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in safe-area mode; use Browser options to enable the experiment. Camera avoidance, tab management, and AI are not implemented yet.
+It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. Camera avoidance, tab management, and AI are not implemented yet.
 
 Build from the repo root:
 

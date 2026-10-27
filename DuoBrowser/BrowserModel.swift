@@ -11,7 +11,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
     @Published var isLoading = false
     @Published var progress = 0.0
     @Published var errorMessage: String?
-    @Published var fullWidth = false
+    @Published var fullWidth = true
     @Published var showRegions = false
     private var observations: [NSKeyValueObservation] = []
 
