@@ -3,6 +3,7 @@ import SwiftUI
 struct BrowserLibrary: View {
     @ObservedObject var session: BrowserSession
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var section = 0
     @State private var search = ""
     @State private var confirmClear = false
@@ -11,13 +12,17 @@ struct BrowserLibrary: View {
             search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || $0.address.localizedCaseInsensitiveContains(search)
         }
     }
+    private var sectionPicker: some View {
+        Picker("Library", selection: $section) {
+            Text("Bookmarks").tag(0)
+            Text("History").tag(1)
+        }
+    }
     var body: some View {
         NavigationStack {
             List {
-                Picker("Library", selection: $section) {
-                    Text("Bookmarks").tag(0)
-                    Text("History").tag(1)
-                }.pickerStyle(.segmented)
+                if dynamicTypeSize.isAccessibilitySize { sectionPicker.pickerStyle(.menu) }
+                else { sectionPicker.pickerStyle(.segmented) }
                 if entries.isEmpty {
                     ContentUnavailableView(section == 0 ? "No Bookmarks" : "No History", systemImage: section == 0 ? "bookmark" : "clock",
                         description: Text(section == 0 ? "Save a page from Page options." : "Private browsing never adds to history."))

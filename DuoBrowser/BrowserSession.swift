@@ -70,6 +70,7 @@ final class BrowserSession: ObservableObject {
     }
 
     private func connect(_ tab: BrowserModel) {
+        tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
         tab.onChange = { [weak self, weak tab] in if tab?.isPrivate == false { self?.scheduleSave() } }
         tab.onOpenWindow = { [weak self, weak tab] configuration in
             guard let self, let tab, self.tabs.count < 200 else { return nil }
@@ -138,6 +139,7 @@ final class BrowserSession: ObservableObject {
         let prior = usePrivate ? lastPrivateID : lastNormalID
         if let tab = visibleTabs.first(where: { $0.id == prior }) ?? visibleTabs.first {
             selectedID = tab.id
+            tab.lastUsed = Date()
             tab.activate()
         } else { newTab(privateTab: usePrivate) }
         showingTabs = showingOverview
@@ -213,8 +215,20 @@ final class BrowserSession: ObservableObject {
         }
     }
     private func trimSnapshots() {
-        let retained = Set(tabs.suffix(12).map(\.id) + [selectedID])
-        tabs.filter { !retained.contains($0.id) }.forEach { $0.clearSnapshot() }
+        // Prefer the selected/recently used tabs, and enforce bytes after asynchronous captures finish.
+        let ranked = tabs.sorted {
+            if $0.id == selectedID { return $1.id != selectedID }
+            if $1.id == selectedID { return false }
+            return $0.lastUsed > $1.lastUsed
+        }
+        var bytes = 0
+        var count = 0
+        for tab in ranked where tab.snapshot != nil {
+            let cost = tab.snapshotByteCount
+            if !tab.isPrivate, count < 12, bytes + cost <= 8 * 1024 * 1024 {
+                bytes += cost; count += 1
+            } else { tab.clearSnapshot() }
+        }
     }
     func showTabs() { selected.revealControls(); selected.captureSnapshot(); trimSnapshots(); showingTabs = true }
 

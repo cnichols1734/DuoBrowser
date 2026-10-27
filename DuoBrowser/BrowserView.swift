@@ -8,7 +8,7 @@ struct BrowserView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ActiveBrowserView(session: session, browser: session.selected)
+        ActiveBrowserView(session: session, browser: session.selected, viewport: session.selected.viewport)
             .id(session.selectedID)
             .fullScreenCover(isPresented: $session.showingTabs) {
                 TabOverview(session: session)
@@ -23,6 +23,7 @@ struct BrowserView: View {
 private struct ActiveBrowserView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
+    @ObservedObject var viewport: BrowserViewportState
     @State private var input = ""
     @State private var keyboardVisible = false
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
@@ -35,9 +36,9 @@ private struct ActiveBrowserView: View {
                     .ignoresSafeArea(.container)
                 VStack(spacing: 8) {
                     if let error = browser.errorMessage {
-                        HStack {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text(error).font(.callout)
-                            Button("Dismiss") { browser.errorMessage = nil }
+                            Button("Dismiss") { browser.errorMessage = nil }.frame(minHeight: 44)
                         }
                         .padding(12)
                         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
@@ -48,13 +49,16 @@ private struct ActiveBrowserView: View {
                                    bottomSafeArea: geometry.safeAreaInsets.bottom,
                                    accessibilityExpanded: voiceOverEnabled || dynamicTypeSize.isAccessibilitySize)
                 }
-                .padding(.bottom, 8)
+                .padding(.bottom, 8 + viewport.bottomControlLift)
             }
             // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
             .ignoresSafeArea(.container, edges: .horizontal)
         }
         .statusBarHidden(browser.fullWidthLayout)
         .onAppear { input = browser.address }
+        .onChange(of: browser.errorMessage) { _, message in
+            if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             keyboardVisible = true
             browser.revealControls()
@@ -90,6 +94,8 @@ private final class ViewportView: UIView {
     private let regionsLayer = CAShapeLayer()
     private var chromeObserver: AnyCancellable?
     private var collapse = 0.0
+    private var expandedHeight: CGFloat = 52
+    private var bottomControlLift: CGFloat = 0
 
     init(browser: BrowserModel) {
         self.browser = browser
@@ -101,8 +107,9 @@ private final class ViewportView: UIView {
         regionsLayer.strokeColor = UIColor.systemOrange.cgColor
         regionsLayer.lineWidth = 2
         layer.addSublayer(regionsLayer)
-        chromeObserver = browser.chrome.$progress.sink { [weak self] progress in
+        chromeObserver = browser.chrome.$progress.combineLatest(browser.chrome.$expandedHeight).sink { [weak self] progress, height in
             self?.collapse = progress
+            if self?.expandedHeight != height { self?.expandedHeight = height; self?.setNeedsLayout() }
             self?.updateObscuredArea()
         }
     }
@@ -117,6 +124,19 @@ private final class ViewportView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         webView.frame = fullWidth ? bounds : safeAreaLayoutGuide.layoutFrame
+        // Keep native controls clear of bottom camera/system occlusions in rotated poses.
+        let occlusions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+        let lift = BrowserViewportState.controlLift(in: bounds, height: expandedHeight,
+                                                    safeBottom: safeAreaInsets.bottom, regions: occlusions)
+        if lift != bottomControlLift {
+            bottomControlLift = lift
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.browser?.viewport.bottomControlLift != self.bottomControlLift {
+                    self.browser?.viewport.bottomControlLift = self.bottomControlLift
+                }
+            }
+        }
         // Reserve scrollable space beneath our floating controls, without narrowing the page.
         updateObscuredArea()
         // Keep the native indicator at the actual web-view edge, not the Duo's camera-safe inset.
@@ -141,8 +161,8 @@ private final class ViewportView: UIView {
     }
 
     private func updateObscuredArea() {
-        let expanded = 60 + (fullWidth ? safeAreaInsets.bottom : 0)
-        let bottom = expanded + (38 - expanded) * collapse
+        let expanded = expandedHeight + 8 + (fullWidth ? safeAreaInsets.bottom : 0)
+        let bottom = expanded + (38 - expanded) * collapse + bottomControlLift
         // This public WebKit API moves fixed/sticky page controls above browser chrome.
         let inset = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }

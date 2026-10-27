@@ -9,17 +9,40 @@ struct BrowserToolbar: View {
     let bottomSafeArea: CGFloat
     let accessibilityExpanded: Bool
     @State private var showingAddress = false
-    @FocusState private var editing: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
+    @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
+    @ScaledMetric(relativeTo: .caption) private var statusLineHeight = 15.0
+    @AccessibilityFocusState private var addressFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var keepExpanded: Bool {
-        showingAddress || editing || keyboardVisible || accessibilityExpanded || session.showingTabs
+        showingAddress || keyboardVisible || accessibilityExpanded || session.showingTabs
     }
     private var progress: CGFloat {
         keepExpanded || browser.errorMessage != nil ? 0 : chrome.progress
     }
 
+    private var statusText: String {
+        [browser.isPrivate ? "Private" : nil, browser.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
+    }
+    private var addressRowHeight: CGFloat {
+        max(52, textLineHeight + 16) + (statusText.isEmpty || showingAddress ? 0 : statusLineHeight + 4)
+    }
+    private var toolbarHeight: CGFloat { dynamicTypeSize.isAccessibilitySize ? addressRowHeight + 60 : 52 }
+
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize { accessibleControls }
+            else { compactControls }
+        }
+        .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
+        .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
+
+    }
+
+    private var compactControls: some View {
         GeometryReader { geometry in
             let width = min(620, max(240, geometry.size.width - 24))
             let expandedWidth = width - 124
@@ -41,32 +64,31 @@ struct BrowserToolbar: View {
                         .scaleEffect(1 - 0.2 * p)
                         .allowsHitTesting(p < 0.1)
                         .accessibilityHidden(p > 0.1)
+                        .accessibilitySortPriority(5)
                         .accessibilityLabel("Back")
                         .transition(.opacity.combined(with: .scale(scale: 0.88)))
                     }
 
                     ZStack {
                         if showingAddress {
-                            AddressField(text: $input, submit: {
-                                showingAddress = false
-                                browser.navigate(to: input)
-                            }, cancel: { showingAddress = false })
-                                .padding(.horizontal, 14)
+                            addressEditor.padding(.horizontal, 14)
                         } else {
                             Button {
                                 if p > 0.1 { browser.revealControls() }
                                 else { input = browser.address; showingAddress = true }
                             } label: {
                                 Text(browser.transportLabel + browser.privateLabel + browser.siteName)
-                                    .font(accessibilityExpanded ? .body.weight(.medium) : .system(size: 17 - 5 * p, weight: .medium))
+                                    .font(.system(size: addressFont - 5 * p, weight: .medium))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
+                            .accessibilityFocused($addressFocused)
+                            .accessibilitySortPriority(3)
                             .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
                             HStack(spacing: 0) {
-                                pageMenu.frame(width: 44, height: 44)
+                                pageMenu.frame(width: 44, height: 44).accessibilitySortPriority(4)
                                 Spacer(minLength: 0)
                                 Button {
                                     if browser.isLoading { browser.webView.stopLoading() }
@@ -75,6 +97,7 @@ struct BrowserToolbar: View {
                                     Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
                                         .frame(width: 44, height: 44)
                                 }
+                                .accessibilitySortPriority(2)
                                 .accessibilityLabel(browser.isLoading ? "Stop loading" : "Reload")
                             }
                             .font(.system(size: 19))
@@ -96,7 +119,6 @@ struct BrowserToolbar: View {
 
                     if p < 0.5 {
                         Button {
-                            editing = false
                             showingAddress = false
                             session.showTabs()
                         } label: {
@@ -110,6 +132,7 @@ struct BrowserToolbar: View {
                         .scaleEffect(1 - 0.2 * p)
                         .allowsHitTesting(p < 0.1)
                         .accessibilityHidden(p > 0.1)
+                        .accessibilitySortPriority(1)
                         .accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
                         .contextMenu {
                             Button("New Tab", systemImage: "plus") { session.newTab() }
@@ -128,15 +151,69 @@ struct BrowserToolbar: View {
             }
         }
         .frame(height: 52)
-        .onChange(of: keepExpanded, initial: true) { _, value in
-            browser.keepControlsExpanded = value
+    }
+
+    private func endEditing() { showingAddress = false; addressFocused = true }
+
+    private var addressEditor: some View {
+        HStack(spacing: 0) {
+            AddressField(text: $input, submit: {
+                browser.navigate(to: input)
+                endEditing()
+            }, cancel: { endEditing() })
+                .frame(maxWidth: .infinity).clipped()
+            Button(action: endEditing) {
+                Image(systemName: "xmark").font(.system(size: 17)).frame(width: 44, height: 44)
+            }.accessibilityLabel("Cancel address editing")
         }
-        .onChange(of: editing) { _, focused in
-            if !focused { showingAddress = false }
+    }
+
+    private var accessibleControls: some View {
+        VStack(spacing: 8) {
+            Group {
+                if showingAddress { addressEditor }
+                else {
+                    Button {
+                        input = browser.address; showingAddress = true
+                    } label: {
+                        VStack(spacing: 4) {
+                            Text(browser.siteName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                            if !statusText.isEmpty { Text(statusText).font(.caption).lineLimit(1) }
+                        }
+                        .frame(maxWidth: .infinity, minHeight: addressRowHeight)
+                        .contentShape(Rectangle())
+                    }
+                    .accessibilityLabel("Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
+                    .accessibilityHint("Edit the website address or search")
+                    .accessibilityFocused($addressFocused)
+                }
+            }
+            .padding(.horizontal, 16)
+            .frame(height: addressRowHeight)
+            .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 24))
+            HStack {
+                Button { browser.webView.goBack() } label: {
+                    Image(systemName: "chevron.backward").frame(width: 52, height: 52)
+                }.disabled(!browser.canGoBack).accessibilityLabel("Back")
+                Spacer(minLength: 0)
+                pageMenu.frame(width: 52, height: 52)
+                Spacer(minLength: 0)
+                Button { if browser.isLoading { browser.webView.stopLoading() } else { browser.webView.reload() } } label: {
+                    Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise").frame(width: 52, height: 52)
+                }.accessibilityLabel(browser.isLoading ? "Stop loading" : "Reload")
+                Spacer(minLength: 0)
+                Button { endEditing(); session.showTabs() } label: {
+                    Image(systemName: "square.on.square").frame(width: 52, height: 52)
+                }.accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
+            }
+            .font(.system(size: 23, weight: .medium))
+            .glassEffect(.regular.interactive(), in: Capsule())
         }
-        .onChange(of: browser.address) { _, value in
-            if !editing { input = value }
-        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: 620)
+        .frame(maxWidth: .infinity)
+        .frame(height: toolbarHeight)
     }
 
     private var pageMenu: some View {

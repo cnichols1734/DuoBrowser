@@ -10,7 +10,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     #endif
     let id: UUID
     let chrome = BrowserChromeState()
+    let viewport = BrowserViewportState()
     var onChange: (() -> Void)?
+    var onSnapshot: (() -> Void)?
     var onOpenWindow: ((WKWebViewConfiguration) -> WKWebView?)?
     var onOpenLink: ((URL) -> Void)?
     var onClose: (() -> Void)?
@@ -42,6 +44,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     @Published private(set) var title = "Start Page"
     @Published private(set) var snapshot: UIImage?
     private var snapshotGeneration = 0
+    private var snapshotRequest: UUID?
     private var activated = false
     private var suspendedInteractionState: Any?
     private var currentMethod = "GET"
@@ -189,14 +192,22 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var isFixture: Bool { startsWithFixture && restorationURL == nil }
 
     func captureSnapshot() {
-        guard !isPrivate, let webView = loadedWebView, webView.window != nil, webView.bounds.width > 0 else { return }
+        guard !isPrivate, snapshotRequest == nil, let webView = loadedWebView,
+              let screen = webView.window?.screen, webView.bounds.width > 0, webView.bounds.height > 0 else { return }
         snapshotGeneration += 1
         let generation = snapshotGeneration
+        let request = UUID()
+        snapshotRequest = request
         let configuration = WKSnapshotConfiguration()
-        configuration.snapshotWidth = 360
+        // snapshotWidth is in points; WebKit multiplies by the display scale.
+        // Bound both raster dimensions, including very tall pages and unfolded views.
+        let ratio = min(1, 640 / max(webView.bounds.width, webView.bounds.height))
+        configuration.snapshotWidth = NSNumber(value: Double(webView.bounds.width * ratio / screen.scale))
         webView.takeSnapshot(with: configuration) { [weak self] image, _ in
-            guard let self, self.snapshotGeneration == generation else { return }
-            if let image { self.snapshot = image }
+            guard let self else { return }
+            if self.snapshotRequest == request { self.snapshotRequest = nil }
+            guard self.snapshotGeneration == generation else { return }
+            if let image { self.snapshot = image; self.onSnapshot?() }
         }
     }
 
@@ -214,6 +225,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         clearSnapshot()
         observations.removeAll()
         onChange = nil
+        onSnapshot = nil
         onOpenWindow = nil
         onOpenLink = nil
         onClose = nil
@@ -352,8 +364,14 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         guard stillInactive(), let view = loadedWebView, view.window == nil, !view.isLoading,
               currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork,
               let url = restorationURL else { return false }
-        let protected = try? await view.evaluateJavaScript("Boolean(document.querySelector('script,form,input,textarea,select,[contenteditable],video,audio,iframe,canvas') || document.activeElement?.isContentEditable)") as? Bool
+        let protected = try? await view.callAsyncJavaScript("""
+            if (document.querySelector('script,form,input,textarea,select,[contenteditable],video,audio,iframe,canvas') || document.activeElement?.isContentEditable) return true;
+            const nodes = document.querySelectorAll('*');
+            if (nodes.length > 1500) return true;
+            return Array.from(nodes).some(node => Array.from(node.attributes).some(attribute => attribute.name.startsWith('on')));
+            """, arguments: [:], in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
         guard protected == false, stillInactive(), loadedWebView === view, view.window == nil, !view.isLoading,
+              view.url == url, currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork,
               let state = view.interactionState else { return false }
         suspendedInteractionState = state
         pendingURL = url
@@ -369,6 +387,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         activated = false
         return true
     }
+
+    var snapshotByteCount: Int { snapshot?.cgImage.map { $0.bytesPerRow * $0.height } ?? 0 }
 
     func clearSnapshot() { snapshotGeneration += 1; snapshot = nil }
 
@@ -440,4 +460,19 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 @MainActor
 final class BrowserChromeState: ObservableObject {
     @Published var progress = 0.0
+    @Published var expandedHeight: CGFloat = 52
+}
+
+/// Geometry-only state: observing this never subscribes the web-view wrapper to per-scroll progress.
+@MainActor
+final class BrowserViewportState: ObservableObject {
+    @Published var bottomControlLift: CGFloat = 0
+
+    static func controlLift(in bounds: CGRect, height: CGFloat, safeBottom: CGFloat, regions: [CGRect]) -> CGFloat {
+        let width = min(620, max(240, bounds.width - 24))
+        // Use the unshifted expanded position so a successful lift cannot oscillate back to zero.
+        let band = CGRect(x: bounds.midX - width / 2, y: bounds.maxY - height - safeBottom - 8,
+                          width: width, height: height + safeBottom + 8)
+        return regions.filter { $0.intersects(band) }.map { max(0, bounds.maxY - $0.minY) }.max() ?? 0
+    }
 }

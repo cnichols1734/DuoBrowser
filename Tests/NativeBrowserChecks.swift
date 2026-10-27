@@ -1,6 +1,7 @@
 #if DEBUG
 import SwiftUI
 import WebKit
+import Darwin
 
 /// Debug-only integration harness. Uses synthetic loopback pages and isolated stores, never real browsing data.
 struct NativeBrowserChecks: UIViewControllerRepresentable {
@@ -43,7 +44,7 @@ private final class NativeCheckRunner {
         mount(model)
         model.navigate(to: "http://127.0.0.1:8765/" + path)
         try await wait {
-            guard !model.webView.isLoading, model.webView.url?.path == "/" + path else { return false }
+            guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
             return (try? await self.js(model, "document.readyState") as? String) == "complete"
         }
     }
@@ -98,7 +99,76 @@ private final class NativeCheckRunner {
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PersistentCookieChecks.txt")
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
     }
+    func memoryChecks() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MemoryChecks-" + UUID().uuidString)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.MemoryChecks")!,
+            archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        func footprint() -> UInt64 {
+            var info = task_vm_info_data_t()
+            var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+            let status = withUnsafeMutablePointer(to: &info) { pointer in
+                pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+                }
+            }
+            return status == KERN_SUCCESS ? info.phys_footprint : 0
+        }
+        func record(_ stage: String) {
+            let images = session.tabs.compactMap { $0.snapshot?.cgImage }
+            let bytes = images.reduce(0) { $0 + $1.bytesPerRow * $1.height }
+            results.append("METRIC: \(stage) tabs=\(session.tabs.count) loaded=\(session.tabs.filter { $0.loadedWebView != nil }.count) previews=\(images.count) previewBytes=\(bytes) appFootprint=\(footprint())")
+        }
+        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        do {
+            record("start")
+            for index in 0..<20 {
+                let tab = index == 0 ? session.selected : session.newTab()
+                try await load(tab, index < 16 ? "reading?tab=\(index)" : "memory?tab=\(index)")
+                if index >= 16 { _ = try await js(tab, "document.querySelector('#kept').value='keep unsent'") }
+                tab.captureSnapshot()
+                try await wait { tab.snapshot != nil }
+                // Exercise the production preview policy via the overview entry point.
+                session.showTabs(); session.showingTabs = false
+                try await Task.sleep(for: .milliseconds(150))
+            }
+            try await Task.sleep(for: .seconds(2))
+            record("twenty-tabs")
+            try check(session.tabs.reduce(0) { $0 + $1.snapshotByteCount } <= 8 * 1024 * 1024, "preview cache stays within eight MiB")
+            try check(session.tabs.compactMap { $0.snapshot?.cgImage }.allSatisfy { max($0.width, $0.height) <= 640 }, "preview rasters stay within 640 pixels")
+            let protectedTabs = Array(session.tabs.suffix(4))
+            try check(protectedTabs.allSatisfy { $0.loadedWebView != nil }, "interactive pages remain loaded before pressure")
+            NotificationCenter.default.post(name: UIApplication.didReceiveMemoryWarningNotification, object: nil)
+            try await Task.sleep(for: .seconds(3))
+            record("memory-warning")
+            try check(session.tabs.allSatisfy { $0.snapshot == nil }, "memory warning discards every preview")
+            try check(session.tabs.prefix(16).allSatisfy { $0.loadedWebView == nil }, "memory warning reclaims eligible reading tabs")
+            for tab in protectedTabs {
+                try check(try await js(tab, "document.querySelector('#kept').value") as? String == "keep unsent", "memory warning preserves an unsent form")
+            }
+            let first = session.tabs[0]
+            session.select(first.id); mount(first)
+            try await wait { !first.webView.isLoading && first.webView.title == "Reading fixture" }
+            try check(true, "reclaimed reading tab reloads when selected")
+            for tab in Array(session.tabs.dropFirst()) { session.close(tab.id) }
+            try await Task.sleep(for: .seconds(2))
+            record("closed-nineteen")
+            let manyStore = BrowserArchiveStore(directory: directory.appendingPathComponent("many"))
+            let records = (0..<200).map { TabRecord(id: UUID(), address: "http://127.0.0.1:8765/reading?tab=\($0)", fixture: false) }
+            try manyStore.write(BrowserArchive(session: TabArchive(tabs: records, selectedID: records[0].id)))
+            let many = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.MemoryChecks.Lazy")!, archiveStore: manyStore, dataStore: .nonPersistent())
+            try check(many.tabs.count == 200 && many.tabs.filter { $0.loadedWebView != nil }.count == 1, "two hundred restored tabs create one WKWebView")
+            many.tabs.forEach { $0.close() }
+        } catch { results.append("FAIL: \(error)") }
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MemoryChecks.txt")
+        try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        host.view.subviews.forEach { $0.removeFromSuperview() }
+        let text = UITextView(frame: host.view.bounds)
+        text.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        text.text = results.joined(separator: "\n"); text.isEditable = false
+        host.view.addSubview(text)
+    }
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--memory-checks") { await memoryChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--site-checks") {
             await siteChecks()
             return
@@ -113,6 +183,14 @@ private final class NativeCheckRunner {
         let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
         defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
         do {
+            let portrait = CGRect(x: 0, y: 0, width: 466, height: 678)
+            try check(BrowserViewportState.controlLift(in: portrait, height: 180, safeBottom: 34,
+                regions: [CGRect(x: 390, y: 30, width: 60, height: 60)]) == 0, "top camera does not lift bottom controls")
+            let landscape = CGRect(x: 0, y: 0, width: 678, height: 466)
+            try check(BrowserViewportState.controlLift(in: landscape, height: 180, safeBottom: 34,
+                regions: [CGRect(x: 610, y: 380, width: 60, height: 60)]) == 86, "bottom camera lifts native controls clear of its region")
+            try check(BrowserViewportState.controlLift(in: landscape, height: 180, safeBottom: 34, regions: []) == 0,
+                "removing an occlusion restores the original control position")
             let normal = session.selected
             try await load(normal, "normal")
             results.append("STEP: normal fixture loaded")
@@ -179,14 +257,23 @@ private final class NativeCheckRunner {
             try await load(memoryTab, "memory")
             _ = try await js(memoryTab, "document.querySelector('#kept').value='unsent synthetic value';window.scrollTo(0,400)")
             mount(normal)
+            _ = try await js(memoryTab, "document.querySelector = () => null; true")
             let protected = await memoryTab.suspendIfIdle { true }
             try check(!protected && memoryTab.loadedWebView != nil, "tab with unsent form is protected from reclamation")
-            try check(try await js(memoryTab, "document.querySelector('#kept').value") as? String == "unsent synthetic value", "protected form retains its unsent value")
+            try check(try await js(memoryTab, "document.getElementById('kept').value") as? String == "unsent synthetic value", "protected form retains its unsent value")
+            try await load(memoryTab, "reading")
+            _ = try await js(memoryTab, "document.body.insertAdjacentHTML('beforeend', '<button onclick=\"this.textContent=123\">Stateful control</button>')")
+            mount(normal)
+            let inlineProtected = await memoryTab.suspendIfIdle { true }
+            try check(!inlineProtected, "inline event handlers protect a document from reclamation")
             try await load(memoryTab, "reading")
             _ = try await js(memoryTab, "window.scrollTo(0,400)")
             try await wait { memoryTab.webView.scrollView.contentOffset.y >= 399 }
             mount(normal)
+            weak let reclaimedView = memoryTab.loadedWebView
             let suspended = await memoryTab.suspendIfIdle { true }
+            try await wait { reclaimedView == nil }
+            try check(reclaimedView == nil, "reclaimed WKWebView actually deallocates")
             try check(suspended && memoryTab.loadedWebView == nil, "inactive static reading tab releases its WKWebView")
             memoryTab.activate()
             mount(memoryTab)

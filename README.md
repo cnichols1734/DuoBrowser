@@ -28,6 +28,8 @@ Page fitting has no host-specific rules or AI calls. A bounded detector removes 
 
 Read the [pre-implementation production audit](docs/PRODUCTION_AUDIT_2026-10-27.md) and [implementation / release gates](docs/PRODUCTION_IMPLEMENTATION_2026-10-27.md). Password providers, arbitrary-site passkey eligibility, authenticated compatibility, physical permissions/media, accessibility and performance require the separate evidence listed there. WKWebView supplies the engine; it does not confer Safari parity.
 
+The [accessibility and memory follow-up](docs/ACCESSIBILITY_MEMORY_2026-10-27.md) records large-text/VoiceOver coverage and the bounded preview cache. For device credentials, follow the [iPhone password/passkey checklist](docs/IPHONE_PASSWORD_PASSKEY_CHECKLIST.md).
+
 Run the [browser behavior checks](Tests/README.md) when changing scrolling or restoration.
 
 Build from the repo root:

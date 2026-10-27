@@ -8,7 +8,7 @@ struct AddressField: UIViewRepresentable {
     var cancel: () -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextField {
-        let field = UITextField()
+        let field = BrowserAddressTextField()
         field.delegate = context.coordinator
         field.placeholder = "Search or enter website"
         field.accessibilityLabel = "Website address or search"
@@ -19,6 +19,9 @@ struct AddressField: UIViewRepresentable {
         field.clearButtonMode = .whileEditing
         field.font = .preferredFont(forTextStyle: .body)
         field.adjustsFontForContentSizeCategory = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        field.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        field.clipsToBounds = true
         field.text = text
         field.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)), for: .editingChanged)
         DispatchQueue.main.async { [weak field] in field?.becomeFirstResponder(); field?.selectAll(nil) }
@@ -32,4 +35,11 @@ struct AddressField: UIViewRepresentable {
         func textFieldShouldReturn(_ field: UITextField) -> Bool { parent.submit(); field.resignFirstResponder(); return true }
         func textFieldDidEndEditing(_ field: UITextField) { parent.cancel() }
     }
+}
+
+private final class BrowserAddressTextField: UITextField {
+    override var keyCommands: [UIKeyCommand]? {
+        [UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(cancelEditing))]
+    }
+    @objc private func cancelEditing() { resignFirstResponder() }
 }

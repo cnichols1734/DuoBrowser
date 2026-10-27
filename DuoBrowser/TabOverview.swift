@@ -5,88 +5,96 @@ struct TabOverview: View {
     @State private var search = ""
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .body) private var searchLineHeight = 20.0
 
     private var filteredTabs: [BrowserModel] {
         session.visibleTabs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
             || $0.siteName.localizedCaseInsensitiveContains(search) }
     }
+    private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
 
     var body: some View {
-        VStack(spacing: 0) {
-            Text(session.privateMode ? "Private Tabs" : "Tabs")
-                .font(.title2.weight(.bold))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 20)
-            if session.privateMode {
-                Text("Private tabs are not saved. Closing them clears this private session.")
-                    .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 8)
-            }
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                TextField("Search Tabs", text: $search)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityLabel("Search Tabs")
-                if !search.isEmpty {
-                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .accessibilityLabel("Clear tab search")
+        GeometryReader { geometry in
+            VStack(spacing: 8) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(session.privateMode ? "Private Tabs" : "Tabs")
+                            .font(.title2.weight(.bold))
+                            .accessibilityAddTraits(.isHeader)
+                            .padding(.trailing, geometry.safeAreaInsets.trailing)
+                        if session.privateMode {
+                            Text("Private tabs are not saved. Closing them clears this private session.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                        HStack(spacing: 10) {
+                            Image(systemName: "magnifyingglass").font(.system(size: 20))
+                                .foregroundStyle(.secondary).accessibilityHidden(true)
+                            TextField("Search Tabs", text: $search)
+                                .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .accessibilityLabel("Search Tabs")
+                            if !search.isEmpty {
+                                Button { search = "" } label: {
+                                    Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44)
+                                }.accessibilityLabel("Clear tab search")
+                            }
+                        }
+                        .padding(.horizontal, 16).frame(minHeight: max(44, searchLineHeight + 16))
+                        .glassEffect(.regular, in: Capsule())
+                        LazyVGrid(columns: largeText ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 160), spacing: 20)], spacing: 24) {
+                            ForEach(filteredTabs) { tab in
+                                TabPreview(tab: tab, selected: session.selectedID == tab.id,
+                                           select: { session.select(tab.id) }, close: {
+                                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
+                                })
+                            }
+                        }
+                        if filteredTabs.isEmpty { ContentUnavailableView.search(text: search) }
+                    }.padding(20)
                 }
-            }
-            .padding(.horizontal, 16).frame(height: 44)
-            .glassEffect(.regular, in: Capsule())
-            .padding(.horizontal, 20).padding(.bottom, 4)
-
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 280 : 160), spacing: 20)], spacing: 24) {
-                    ForEach(filteredTabs) { tab in
-                        TabPreview(tab: tab, selected: session.selectedID == tab.id,
-                                   select: { session.select(tab.id) }, close: {
-                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
-                        })
+                .scrollDismissesKeyboard(.interactively)
+                Group {
+                    if largeText {
+                        VStack(spacing: 8) { modeMenu; footerActions }
+                    } else {
+                        ZStack { modeMenu; footerActions }
                     }
                 }
-                .padding(20)
+                .buttonStyle(.plain)
+                .padding(.horizontal, 20).padding(.bottom, 8)
+                .frame(maxWidth: 700).frame(maxWidth: .infinity)
             }
-            .scrollDismissesKeyboard(.interactively)
-            .overlay {
-                if filteredTabs.isEmpty { ContentUnavailableView.search(text: search) }
-            }
-            ZStack {
-                Menu {
-                    Button("Tabs") { session.switchMode(false) }
-                    Button("Private") { session.switchMode(true) }
-                    if session.privateMode {
-                        Button("Close All Private Tabs", role: .destructive) { session.closePrivateTabs() }
-                    }
-                } label: {
-                    Text(session.privateMode ? "Private · \(session.visibleTabs.count)" : "\(session.visibleTabs.count) \(session.visibleTabs.count == 1 ? "Tab" : "Tabs")")
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 22).frame(height: 48)
-                }
-                .glassEffect(.regular.interactive(), in: Capsule())
-                .accessibilityLabel("Browsing mode, \(session.privateMode ? "Private" : "Tabs"), \(session.visibleTabs.count) open")
-                HStack {
-                    Button { session.newTab() } label: {
-                        Image(systemName: "plus").font(.title2).frame(width: 48, height: 48)
-                    }
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .accessibilityLabel("New Tab")
-                    Spacer()
-                    Button("Done") { session.showingTabs = false }
-                        .font(.body.weight(.semibold))
-                        .padding(.horizontal, 18).frame(height: 48)
-                        .glassEffect(.regular.interactive(), in: Capsule())
-                }
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 20).padding(.bottom, 8)
-            .frame(maxWidth: 700)
-            .frame(maxWidth: .infinity)
+            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-
-        .ignoresSafeArea(.container, edges: .horizontal)
         .statusBarHidden(true)
+
+    }
+
+    private var modeMenu: some View {
+        Menu {
+            Button("Tabs") { search = ""; session.switchMode(false) }
+            Button("Private") { search = ""; session.switchMode(true) }
+            if session.privateMode {
+                Button("Close All Private Tabs", role: .destructive) { session.closePrivateTabs() }
+            }
+        } label: {
+            Text(session.privateMode ? "Private · \(session.visibleTabs.count)" : "\(session.visibleTabs.count) \(session.visibleTabs.count == 1 ? "Tab" : "Tabs")")
+                .font(.subheadline.weight(.semibold)).lineLimit(1)
+                .padding(.horizontal, 22).padding(.vertical, 6).frame(minHeight: 48)
+        }
+        .glassEffect(.regular.interactive(), in: Capsule())
+        .accessibilityLabel("Browsing mode, \(session.privateMode ? "Private" : "Tabs"), \(session.visibleTabs.count) open")
+    }
+    private var footerActions: some View {
+        HStack {
+            Button { session.newTab() } label: {
+                Image(systemName: "plus").font(.system(size: 24)).frame(width: 52, height: 52)
+            }.glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("New Tab")
+            Spacer()
+            Button("Done") { session.showingTabs = false }
+                .font(.body.weight(.semibold)).padding(.horizontal, 18).padding(.vertical, 6).frame(minHeight: 48)
+                .glassEffect(.regular.interactive(), in: Capsule())
+        }
     }
 }
 
@@ -95,14 +103,37 @@ private struct TabPreview: View {
     let selected: Bool
     let select: () -> Void
     let close: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                HStack(alignment: .center, spacing: 8) {
+                    Button(action: select) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(tab.title).font(.headline).lineLimit(2)
+                            Text(tab.siteName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Open tab, \(tab.title)")
+                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                    Button(action: close) { Image(systemName: "xmark").font(.system(size: 20)).frame(width: 52, height: 52) }
+                        .accessibilityLabel("Close tab, \(tab.title)")
+                }
+                .buttonStyle(.plain).padding(12)
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+                .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3) }
+            } else { previewCard }
+        }.accessibilityElement(children: .contain)
+    }
+    private var previewCard: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 Image(systemName: "globe").font(.caption).foregroundStyle(.secondary)
                 Text(tab.title).font(.subheadline.weight(.medium)).lineLimit(1)
             }
-            .padding(.horizontal, 4)
+            .padding(.horizontal, 4).accessibilityHidden(true)
             ZStack(alignment: .topTrailing) {
                 Button(action: select) {
                     GeometryReader { geometry in
@@ -128,8 +159,9 @@ private struct TabPreview: View {
                     }
                 }
                 .buttonStyle(.plain)
+                .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Open tab, \(tab.title)")
-                .accessibilityAddTraits(selected ? .isSelected : [])
+                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
 
                 Button(action: close) {
                     Image(systemName: "xmark").font(.system(size: 12, weight: .semibold))
