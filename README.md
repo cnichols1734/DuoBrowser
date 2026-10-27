@@ -1,66 +1,96 @@
 # DuoBrowser
 
-A native iOS browser designed to make the iPhone Duo's closed outer display useful edge to edge, with the reliability and familiarity people expect from Safari.
+A free, minimal iPhone Duo browser built with SwiftUI, UIKit and WKWebView. DuoBrowser uses the outer display edge to edge and moves small obstructed website controls away from the camera when a safe adjustment is possible.
 
-**Working name. Created October 26, 2026.** Includes the approved product direction, research, and native Xcode application. Private GitHub repository: [cnichols1734/DuoBrowser](https://github.com/cnichols1734/DuoBrowser).
+**No advertising, subscriptions, paid features or app tracking.** Community contributions are welcome; Christopher Nichols retains final authority over merges and official releases.
 
-## Start here
+This is a development preview, not an App Store release. Contributions go through pull requests, and official releases remain owner-controlled.
 
-- [Product brief](docs/PRODUCT_BRIEF.md): proposed experience and unresolved design decisions.
-- [Architecture](docs/ARCHITECTURE.md): WebKit, reserved regions, reversible page adaptation, and optional on-device intelligence.
-- [Build plan](docs/ROADMAP.md): ordered milestones and acceptance criteria.
-- [Research](docs/RESEARCH.md): Brim, Apple documentation, verified SDK APIs, and limitations.
-- [Validation](docs/VALIDATION.md): successful build/install/launch and remaining interaction checks.
+## Purpose
 
-## First build
+Keep the page central, controls reachable, and browsing dependable. Safari-level reliability is the goal, not a claim of parity. Website adaptation is conservative and reversible, and every site can return to Original Layout.
 
-Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and **DuoBrowser QA** simulator, then Run. The starter targets iOS 27.1 and uses SwiftUI with a UIKit-backed `WKWebView`.
+## Features
 
-The browser now includes normal and private tabs, local history/bookmarks, native sharing and find, downloads to Files, WebKit file/photo selection, guarded external links, JavaScript dialogs, opener-preserving new windows, and per-site original-layout and desktop preferences. The default page is a minimal Start Page. Diagnostic controls and the native test harness are Debug-only.
+- Full-width browsing with camera-aware adjustments based on actual system geometry.
+- Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
+- Normal and private tabs, previews, lazy restoration and a bounded preview cache.
+- Local history, bookmarks, find on page and native sharing.
+- Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
+- Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 
-Normal browsing uses WebKit's persistent data store. Private tabs share a separate nonpersistent store until all private tabs close; their URLs, history, previews, and site preferences are never archived. Explicitly saved bookmarks and Files exports are deliberate exceptions. A native curtain covers app-switcher snapshots. Private browsing does not anonymize network traffic.
+Layout fitting is local and deterministic. There are no AI calls or site-specific repair rules. Ambiguous layouts fall back without alteration; not every website can be repaired safely.
 
-The centered native Liquid Glass toolbar collapses into a low domain pill; back/tab actions disappear in compact mode and return on reverse scrolling or a tap. Keyboard, VoiceOver and accessibility text sizes keep controls expanded. Reduce Motion disables the chrome transition. The native scrollbar stays at the full-width right edge. Public WebKit obscured-content insets keep compatible fixed/sticky website controls above the browser toolbar.
+## Screenshots
 
-The tab grid uses the full display. Its bottom mode control switches between normal and private tabs. Normal tab order, selection, URLs and best-effort scroll position restore from a bounded atomic local archive with a recovery backup. Background restored tabs allocate a web view only when selected. Live forms and navigation stay in their original web views. Under memory pressure, previews are discarded and only eligible static reading pages may release their view; scripts, forms, media, frames, transfers and opener relationships are protected. Opaque interaction state stays in memory and is never written to disk. Cold restart does not restore form values or full back-forward history.
+Apple.com on the closed Duo simulator, showing the same page with standard insets and full-width rendering. These frames come from the recorded development demo; both modes are DuoBrowser, not a comparison with Safari. Website content belongs to its respective owner.
 
-Page fitting has no host-specific rules or AI calls. A bounded detector removes verified safe-area gutter patterns, and a separate camera adapter uses actual reserved-region rectangles to relocate small obstructed controls only when geometry, containment and hit testing validate. Original Layout restores owned changes and persists per host in normal mode (private preferences remain in memory). Complex, transformed, occupied or ambiguous layouts fall back without alteration. This is not a promise that every website can be repaired.
+| Standard insets | Full-width DuoBrowser |
+| --- | --- |
+| ![Apple.com with standard insets](docs/images/standard-insets.png) | ![Apple.com at full width](docs/images/full-width.png) |
 
-Read the [pre-implementation production audit](docs/PRODUCTION_AUDIT_2026-10-27.md) and [implementation / release gates](docs/PRODUCTION_IMPLEMENTATION_2026-10-27.md). Password providers, arbitrary-site passkey eligibility, authenticated compatibility, physical permissions/media, accessibility and performance require the separate evidence listed there. WKWebView supplies the engine; it does not confer Safari parity.
+## Compatibility and requirements
 
-The [accessibility and memory follow-up](docs/ACCESSIBILITY_MEMORY_2026-10-27.md) records large-text/VoiceOver coverage and the bounded preview cache. For device credentials, follow the [iPhone password/passkey checklist](docs/IPHONE_PASSWORD_PASSKEY_CHECKLIST.md).
+- macOS with **Xcode 27.1**, the iOS 27.1 SDK and an iPhone Duo simulator runtime.
+- Deployment target: **iOS 27.1**. Closed, open and partially folded layouts use runtime geometry; they do not require a page reload just because the display changes size.
+- Node.js 22 and npm for development-only layout tests. Python 3 and OpenSSL for synthetic native fixtures. SwiftLint 0.65.1 for the checked-in correctness rules.
+- No third-party runtime packages, app server, API key or Apple Intelligence requirement.
 
-Run the [browser behavior checks](Tests/README.md) when changing scrolling or restoration.
+Signed-device passwords/passkeys, physical permissions/media, full spoken VoiceOver coverage, energy/endurance and authenticated-site compatibility remain release gates. See the [implementation report](docs/PRODUCTION_IMPLEMENTATION_2026-10-27.md) and [iPhone credential checklist](docs/IPHONE_PASSWORD_PASSKEY_CHECKLIST.md).
 
-Build from the repo root:
+## Build locally
+
+```sh
+git clone https://github.com/cnichols1734/DuoBrowser.git
+cd DuoBrowser
+open DuoBrowser.xcodeproj
+```
+
+Choose the **DuoBrowser** scheme and a Duo simulator, then Run. No signing team is needed for the simulator. From the repository root:
 
 ```sh
 xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser \
-  -destination 'generic/platform=iOS Simulator' \
+  -configuration Debug -destination 'generic/platform=iOS Simulator' \
   -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
 ```
 
-Synthetic fixtures cover gutter fitting, camera hit testing/rollback, privacy isolation, new-window POST/opener behavior, fixed footers and safe tab reclamation. Live-site and hardware coverage are recorded separately.
+Use a separate test simulator and synthetic data. Do not commit personal signing settings or change the shared bundle identifier for your local account.
 
-## Local environment verified
-
-- Xcode 27.1, build 27A9275.
-- iPhoneSimulator27.1 SDK with public reserved-region APIs.
-- iOS 27.1 iPhone Duo simulator available; it was already booted when inspected.
-- No new SDK, runtime, package manager, or dependency was installed.
-
-See [the build plan](docs/ROADMAP.md) for the next implementation milestones. Development-team signing and a final bundle identifier can be selected when installing on a physical device.
-
-## Add this repo as a local project
-
-Choose this folder in the app's local-project folder picker:
-
-```text
-/Users/christophernichols/Documents/Codex/2026-10-26/i-x20/outputs/DuoBrowser
+```sh
+bash scripts/check.sh
+npm ci --ignore-scripts
+npx --no-install playwright install chromium
+npm test
+swiftlint lint --strict --config .swiftlint.yml
+bash scripts/native-checks.sh
 ```
 
-Name the project **DuoBrowser**, and move this planning chat into it. The repo is ready, but project registration and the chat move have not been completed: the available project tools cannot create local projects, and computer control of the Codex app was denied.
+The native script creates a disposable Duo simulator, runs isolated WebKit/persistence/memory checks, and removes that simulator afterward. [Test details and manual checks](Tests/README.md) distinguish portable tests, native evidence and hardware gaps.
 
-## Current boundaries
+## Architecture
 
-This is the foundation for planning and implementation, not a Safari replacement yet. Broader device and site compatibility, AI quality, animation performance, and App Store eligibility still require implementation or validation. The owner approved the proposed design direction in this chat. Product naming and later release decisions remain open.
+| Layer | Responsibility |
+| --- | --- |
+| SwiftUI shell | Bottom controls, tab overview, local library and accessibility |
+| UIKit / WKWebView | Page rendering, navigation, permissions, downloads and display geometry |
+| BrowserSession / BrowserModel | Tab ownership, normal/private stores, lifecycle and recovery |
+| BrowserData / TabArchive | Bounded local history/preferences and best-effort session restoration |
+| PageLayout.js / CameraAvoidance.js | Bounded geometry checks, safe page adjustments and rollback |
+
+Normal browsing uses persistent WebKit storage. Private tabs share a separate nonpersistent store until all private tabs close; their URLs, history, previews and site preferences are not archived. Deliberately saved bookmarks and Files exports are exceptions. Cold restart restores URLs and best-effort scroll positions, not form values or full back/forward history.
+
+## Security and privacy
+
+The app contains no analytics or advertising SDKs and sends no page content to an AI service. Websites and search destinations still receive ordinary browsing requests and may track visitors. Private mode does not anonymize network traffic.
+
+Page content is untrusted. Adaptation must preserve forms, focus, navigation and accessibility, and remain reversible. Code signing and App Store submission are separate, owner-authorized steps. Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
+
+## Contribute
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), choose an issue or propose a focused improvement, and submit a PR. All changes require review; submitting a PR or passing CI does not guarantee acceptance. Follow the [code of conduct](CODE_OF_CONDUCT.md). [RELEASING.md](RELEASING.md) describes the owner's release control.
+
+Project context: [product brief](docs/PRODUCT_BRIEF.md), [architecture](docs/ARCHITECTURE.md), [roadmap](docs/ROADMAP.md), [accessibility and memory findings](docs/ACCESSIBILITY_MEMORY_2026-10-27.md).
+
+## License
+
+Project-owned code, documentation and artwork are available under the [MIT License](LICENSE), copyright 2026 Christopher Nichols. [Third-party notices](THIRD_PARTY_NOTICES.md) identify separately licensed material and development tools. Apple and website names remain their respective owners' trademarks; no affiliation or endorsement is implied.

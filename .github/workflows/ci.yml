@@ -1,0 +1,122 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: Repository and security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Repository and dependency policy
+        run: python3 scripts/repository-check.py
+      - name: Check patch formatting
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            git diff --check "$BASE_SHA" HEAD
+          else
+            git show --format= --check HEAD
+          fi
+      - name: Install pinned scanners
+        run: |
+          mkdir -p "$RUNNER_TEMP/duo-tools"
+          cd "$RUNNER_TEMP/duo-tools"
+          curl -fsSL https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o gitleaks.tar.gz
+          echo '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz' | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          curl -fsSL https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o actionlint.tar.gz
+          echo '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  actionlint.tar.gz' | sha256sum -c -
+          tar xzf actionlint.tar.gz actionlint
+      - name: Scan full Git history without exposing secrets
+        run: '"$RUNNER_TEMP/duo-tools/gitleaks" git --log-opts=--all --redact=100 --ignore-gitleaks-allow .'
+      - name: Validate workflow syntax
+        run: '"$RUNNER_TEMP/duo-tools/actionlint" -config-file .github/actionlint.yml'
+
+  layout:
+    name: Layout regression tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts
+      - run: npm audit --audit-level=high
+      - run: npx --no-install playwright install --with-deps chromium
+      - run: npm test
+
+  ios:
+    name: iOS build and native tests
+    runs-on: xcode-27
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Verify required SDK
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          test "$(xcrun --sdk iphonesimulator --show-sdk-version)" = 27.1
+      - name: Swift compilation and portable unit tests
+        run: bash scripts/check.sh
+      - name: SwiftLint correctness rules
+        run: |
+          mkdir -p "$RUNNER_TEMP/duo-swiftlint"
+          cd "$RUNNER_TEMP/duo-swiftlint"
+          curl -fsSL https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip -o swiftlint.zip
+          echo 'c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0  swiftlint.zip' | shasum -a 256 -c -
+          unzip -q swiftlint.zip
+          chmod +x swiftlint
+          cd "$GITHUB_WORKSPACE"
+          "$RUNNER_TEMP/duo-swiftlint/swiftlint" lint --strict --config .swiftlint.yml --quiet
+      - name: Compile Debug and Release without signing
+        run: |
+          for configuration in Debug Release; do
+            xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser \
+              -configuration "$configuration" -destination 'generic/platform=iOS Simulator' \
+              -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+          done
+      - name: Native WebKit, persistence and memory checks
+        run: bash scripts/native-checks.sh --skip-build
+
+  required:
+    name: Required CI
+    needs: [repository, layout, ios]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every validation job to pass
+        env:
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          LAYOUT_RESULT: ${{ needs.layout.result }}
+          IOS_RESULT: ${{ needs.ios.result }}
+        run: |
+          test "$REPOSITORY_RESULT" = success
+          test "$LAYOUT_RESULT" = success
+          test "$IOS_RESULT" = success
