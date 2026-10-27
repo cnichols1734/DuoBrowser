@@ -57,6 +57,17 @@ The starter has no automated UI suite yet. Camera-avoidance behavior, AI, native
 - Remaining QA: full in-page form/zoom/history preservation matrix, search filtering with many tabs, popup edge cases, closing the final tab, memory pressure, and exhaustive keyboard interactions. An open-pose attempt was rejected when Computer Use detected a user interaction; open/partially folded poses, rotation, native VoiceOver, larger text, Reduce Motion, system glass variants, and physical-device performance remain unverified in this pass. No measured animation frame-rate or pixel-identical Safari claim is made.
 - Persistence is deliberately basic: IDs, tab order, HTTP(S) URLs, fixture state, and selection. Page history, forms, scroll positions, and preview images are retained only in the live session. Private browsing and tab groups are not implemented.
 
+## YouTube right-gutter diagnosis — October 26, 2026
+
+Reproduced the owner's mobile YouTube search in the closed Duo QA simulator using temporary read-only geometry diagnostics. Removed the instrumentation afterward.
+
+- Native WKWebView bounds: **466 × 678 points**. Right content and adjusted-content insets: **0**. Native right safe-area inset: **84**. Obscured content insets: **0** on all sides.
+- YouTube reports `innerWidth`, root `clientWidth`, and visual viewport width of **466 CSS pixels**, scale **1**. Its viewport meta already includes `viewport-fit=cover`.
+- HTML and BODY bounds both span **466 CSS pixels**. BODY computed padding is **0px left / 84px right**; the `YTM-APP` content box is only **382px** wide.
+- This confirms that the visible full-height strip comes from page-body padding, not a narrowed native web view. The 84px padding exactly matches the device's right safe-area inset. The diagnostic inspected computed values; it did not trace the authored CSS declaration.
+- For comparison, the Apple page measured a 466px-wide body with **0px right padding** in the same browser.
+- No website CSS was modified in this diagnostic pass. Selective root-padding correction with local header/camera protection remains implementation work; expanding the native viewport alone cannot remove a site's own padding.
+
 ## Project registration
 
 The Git repo and Xcode project exist locally. They have not been registered as a project in the chat app, and this chat has not been moved. The available tools cannot create a local project; Computer Use explicitly disallows controlling the Codex app. Add the repo folder manually using the path in README.md.
