@@ -112,4 +112,4 @@ Added adaptive large-text browser/tab/library controls, constrained address edit
 
 ## App icon — October 27, 2026
 
-Added the first compass app icon: blue field, ivory ring, vermilion needle. Asset catalog compilation and simulator build passed; installed and visually checked at Home Screen size on DuoBrowser QA. See [artwork and prompt](APP_ICON.md). The original 1024-pixel opaque raster is wired into Debug and Release; custom dark/tinted layers and hardware appearance remain unverified.
+Replaced the initial compass, which the owner found too close to Safari, with an original two-panel D mark in sea-green and ivory on graphite. Asset catalog compilation and simulator build passed; installed and visually checked at Home Screen size on DuoBrowser QA beside Safari. The 28-second product demo closing card also uses the new mark. See [artwork and prompt](APP_ICON.md). The 1024-pixel opaque raster is wired into Debug and Release; custom dark/tinted layers and hardware appearance remain unverified.
