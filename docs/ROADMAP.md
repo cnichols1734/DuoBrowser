@@ -7,11 +7,13 @@
 - Apple Duo layout, WebKit, Foundation Models, and browser entitlement references researched.
 - Xcode 27.1 and Duo simulator availability checked.
 - Public reserved-region API declarations found in the installed SDK.
-- Initial brief and architecture written. Design confirmation and app-project registration remain open.
+- Initial brief direction approved by the owner. App-project registration remains open.
+- Native Xcode project created with a shared DuoBrowser scheme, iOS 27.1 app target, local fixture, URL/search navigation, full-width toggle, and reserved-region overlay.
+- Debug build passed for both simulator architectures. A dedicated DuoBrowser QA simulator was created; installation and launch succeeded. Interaction testing remains open; see VALIDATION.md.
 
 ## 1. Prove the available space
 
-Create `DuoBrowser.xcodeproj` with a SwiftUI iOS app target, a shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.
+The starter `DuoBrowser.xcodeproj` now has a SwiftUI iOS app target, shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.
 
 Build a diagnostic browser shell with URL entry, back/forward, reload/stop, and a full-width mode. Expose reserved-region and viewport overlays only in development UI. Make a dedicated DuoBrowser QA simulator so existing QA sessions are not disturbed.
 
@@ -65,4 +67,4 @@ For each comparison, record device/runtime, pose, site/fixture version, zoom, br
 
 ## Next owner input
 
-Review PRODUCT_BRIEF.md, particularly bottom floating controls and the initial opt-in adaptation experiment. Add this folder as a local project in the app, then move the planning chat into that project. Supply frequently visited sites when convenient; synthetic fixtures can proceed independently.
+The owner approved PRODUCT_BRIEF.md's direction, including bottom floating controls and the initial opt-in adaptation experiment. Add this folder as a local project in the app, then move the planning chat into that project. Supply frequently visited sites when convenient; synthetic fixtures can proceed independently.

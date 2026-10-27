@@ -1,6 +1,6 @@
 # Product brief
 
-Status: proposed direction for owner review. October 26, 2026.
+Status: direction approved by the owner on October 26, 2026: ‘Yes, use this direction.’ Detailed timings and implementation behavior still require prototype validation.
 
 ## 1. Feature summary
 
@@ -59,7 +59,7 @@ Use Apple's Duo layout guidance and reserved-region APIs in RESEARCH.md. During 
 
 ## 9. Open questions
 
-- Confirm the proposed familiar native feel and floating bottom controls.
+- Approved: familiar native feel and floating bottom controls. Validate their reachability in the prototype.
 - Choose a product name later; DuoBrowser is only a repo name.
 - Which 5–10 sites matter most in the owner's daily browsing? Until supplied, use varied synthetic fixtures and public sites.
 - Decide the default adaptation mode after real-site testing and review of default-browser requirements.

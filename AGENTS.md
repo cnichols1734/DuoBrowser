@@ -4,7 +4,7 @@
 
 Build a native iOS browser for iPhone Duo. Prioritize usable space on the closed outer display, reliable browsing, and polished motion. Safari is the quality benchmark. Brim is a researched reference, not a specification of its implementation.
 
-Read README.md and docs/ROADMAP.md first. Consult docs/PRODUCT_BRIEF.md, docs/ARCHITECTURE.md, docs/RESEARCH.md, and .impeccable.md before changing the design or architecture. The initial brief is a proposal awaiting owner feedback.
+Read README.md and docs/ROADMAP.md first. Consult docs/PRODUCT_BRIEF.md, docs/ARCHITECTURE.md, docs/RESEARCH.md, and .impeccable.md before changing the design or architecture. The owner approved the initial brief's direction on October 26, 2026. Continue the staged implementation plan; do not treat that as proof of runtime behavior.
 
 ## Engineering
 

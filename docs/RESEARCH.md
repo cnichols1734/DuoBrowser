@@ -48,6 +48,6 @@ These references do not establish that a particular adaptation design will recei
 
 ## Local setup observations
 
-`xcodebuild -version` reported Xcode 27.1 (27A9275). `xcrun simctl list devices available` listed iOS 27.1 Duo devices, including an already booted iPhone Duo. No app was built or launched, and no simulator pose was changed during this planning pass.
+`xcodebuild -version` reported Xcode 27.1 (27A9275). `xcrun simctl list devices available` listed iOS 27.1 Duo devices, including an already booted iPhone Duo. After the owner approved the design direction, a starter app was added and its simulator build passed. A dedicated DuoBrowser QA simulator was created. See VALIDATION.md for runtime verification and remaining gaps.
 
 The app's current project tool inventory supports listing projects and moving chats to existing projects, but not creating a local project. Computer Use returned: “Computer Use is not allowed to use the app 'com.openai.codex' for safety reasons.” No bypass or app-state edit was attempted. [Official project documentation](https://learn.chatgpt.com/docs/projects) describes associating local folders with projects.

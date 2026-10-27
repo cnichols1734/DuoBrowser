@@ -2,7 +2,7 @@
 
 A native iOS browser designed to make the iPhone Duo's closed outer display useful edge to edge, with the reliability and familiarity people expect from Safari.
 
-**Working name. Local planning repository, created October 26, 2026.** No browser implementation or runnable Xcode target exists yet. No remote repository has been created.
+**Working name. Local repository, created October 26, 2026.** Includes the approved product direction, research, and a buildable native Xcode starter. No remote repository has been created.
 
 ## Start here
 
@@ -10,10 +10,21 @@ A native iOS browser designed to make the iPhone Duo's closed outer display usef
 - [Architecture](docs/ARCHITECTURE.md): WebKit, reserved regions, reversible page adaptation, and optional on-device intelligence.
 - [Build plan](docs/ROADMAP.md): ordered milestones and acceptance criteria.
 - [Research](docs/RESEARCH.md): Brim, Apple documentation, verified SDK APIs, and limitations.
+- [Validation](docs/VALIDATION.md): successful build/install/launch and remaining interaction checks.
 
 ## First build
 
-Create a small SwiftUI iOS app in Xcode 27.1 using a UIKit-backed `WKWebView`. Target iOS 27.1 for the first Duo experiment. Prove full-width rendering and camera avoidance before expanding into a daily browser.
+Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and **DuoBrowser QA** simulator, then Run. The starter targets iOS 27.1 and uses SwiftUI with a UIKit-backed `WKWebView`.
+
+It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in safe-area mode; use Browser options to enable the experiment. Camera avoidance, tab management, and AI are not implemented yet.
+
+Build from the repo root:
+
+```sh
+xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser \
+  -destination 'generic/platform=iOS Simulator' \
+  -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+```
 
 The first demonstration should open a fixture with a menu button under the camera, move the button to a reachable position, preserve its action, and restore the original layout. Then repeat on live sites and through fold/unfold, rotation, and pinch zoom. A static mockup does not pass this milestone.
 
@@ -24,7 +35,7 @@ The first demonstration should open a fixture with a menu button under the camer
 - iOS 27.1 iPhone Duo simulator available; it was already booted when inspected.
 - No new SDK, runtime, package manager, or dependency was installed.
 
-See [the build plan](docs/ROADMAP.md) for Xcode project setup. Development-team signing and a final bundle identifier can be selected when installing on a physical device.
+See [the build plan](docs/ROADMAP.md) for the next implementation milestones. Development-team signing and a final bundle identifier can be selected when installing on a physical device.
 
 ## Add this repo as a local project
 
@@ -38,4 +49,4 @@ Name the project **DuoBrowser**, and move this planning chat into it. The repo i
 
 ## Current boundaries
 
-This is the foundation for planning and implementation, not a Safari replacement yet. Full-width behavior, site compatibility, AI quality, animation performance, and App Store eligibility require implementation and validation. The proposed design is recorded as a draft, not as owner-approved.
+This is the foundation for planning and implementation, not a Safari replacement yet. Full-width behavior, site compatibility, AI quality, animation performance, and App Store eligibility require implementation and validation. The owner approved the proposed design direction in this chat. Product naming and later release decisions remain open.
