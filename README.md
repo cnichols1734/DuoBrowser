@@ -2,7 +2,7 @@
 
 A native iOS browser designed to make the iPhone Duo's closed outer display useful edge to edge, with the reliability and familiarity people expect from Safari.
 
-**Working name. Local repository, created October 26, 2026.** Includes the approved product direction, research, and a buildable native Xcode starter. No remote repository has been created.
+**Working name. Created October 26, 2026.** Includes the approved product direction, research, and native Xcode application. Private GitHub repository: [cnichols1734/DuoBrowser](https://github.com/cnichols1734/DuoBrowser).
 
 ## Start here
 
