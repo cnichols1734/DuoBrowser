@@ -154,6 +154,9 @@ struct BrowserToolbar: View {
             Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }
                 .disabled(!browser.canGoForward)
             Toggle("Full-width page", isOn: $session.fullWidth)
+            if browser.webView.url?.host == "m.youtube.com" {
+                Toggle("Original YouTube layout", isOn: $browser.originalYouTubeLayout)
+            }
             Toggle("Show reserved regions", isOn: $session.showRegions)
             Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
         } label: {

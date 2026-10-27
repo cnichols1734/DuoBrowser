@@ -20,6 +20,14 @@
 - Added multiple tabs with stable web views, page previews, close/new/select, tab search, and basic URL/order/selection restoration. Background restored tabs load when selected. Private browsing, tab groups, full session recovery, and memory-pressure eviction remain later work.
 - Build and 33 portable behavior checks passed. Closed-Duo native creation, URL entry, selection, closing, relaunch restoration, full-width overview, and compact/restored controls were exercised. See VALIDATION.md for detailed evidence and remaining checks.
 
+## YouTube feed compatibility — October 26, 2026
+
+- Implemented a bounded, reversible mobile YouTube body-padding correction. Feed previews and search results now span 466 CSS pixels on the closed QA display, reclaiming the measured 84px gutter. The independently inset header stays unchanged.
+- Added an “Original YouTube layout” switch for the current live tab; full-width off also restores the original page. No AI, page text collection, or general bridge is involved.
+- Enabled inline media playback for sites that request it, avoiding forced fullscreen feed previews.
+- Simulator build, 16 synthetic browser layout checks, 21 scroll checks, and 12 archive checks passed. Native feed/search, scrolling, menu reachability, restore/reapply, and playback checks are recorded in VALIDATION.md.
+- The watch-page player's separate inset, general camera avoidance, native pinch/accessibility, broad pose coverage, and hardware profiling remain open.
+
 ## 1. Prove the available space
 
 The starter `DuoBrowser.xcodeproj` now has a SwiftUI iOS app target, shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.

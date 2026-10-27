@@ -5,6 +5,26 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+		"A8D627F57636C97D96D5E52A" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.javascript";
+			"path" = "YouTubeLayout.js";
+			"sourceTree" = "<group>";
+		};
+		"B81E92E7689834E497F90266" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "A8D627F57636C97D96D5E52A";
+		};
+		"27FE0606548118518F503C28" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "YouTubeLayoutAdapter.swift";
+			"sourceTree" = "<group>";
+		};
+		"9E4BE3069E2B082E6F70BA50" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "27FE0606548118518F503C28";
+		};
 		"087AA246BB6F0D9BA26D04E8" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -109,6 +129,8 @@
 				"DC6E03491E473D6150654B34",
 				"F0DDEC4061E452CE6E19989D",
 				"030053585739E548397F415E",
+				"A8D627F57636C97D96D5E52A",
+				"27FE0606548118518F503C28",
 				"087AA246BB6F0D9BA26D04E8",
 				"5C3BCA4109E699E3ED6C8AAA",
 				"EE8BF6C7173D7DEDE4F28D2B",
@@ -142,6 +164,7 @@
 				"A58ACDC7E2BA8C191B8AABE8",
 				"9088E8A43DC789E9511587D1",
 				"E52494181822B80E3505C2DA",
+				"9E4BE3069E2B082E6F70BA50",
 				"C843DBAA5A593585D55D2F75",
 				"CB12B02B5F0A7F590143708C",
 				"837B7BA51408479FA07FEE23",
@@ -154,6 +177,7 @@
 			"buildActionMask" = 2147483647;
 			"files" = (
 				"280EC78FD2F34318F57091C8",
+				"B81E92E7689834E497F90266",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};

@@ -5,7 +5,9 @@ import Foundation
 final class BrowserSession: ObservableObject {
     @Published private(set) var tabs: [BrowserModel] = []
     @Published private(set) var selectedID: UUID
-    @Published var fullWidth = true
+    @Published var fullWidth = true {
+        didSet { tabs.forEach { $0.fullWidthLayout = fullWidth } }
+    }
     @Published var showRegions = false
     @Published var showingTabs = false
     private let storage: UserDefaults
@@ -27,6 +29,7 @@ final class BrowserSession: ObservableObject {
     }
 
     private func connect(_ tab: BrowserModel) {
+        tab.fullWidthLayout = fullWidth
         tab.onChange = { [weak self] in self?.save() }
         tab.onOpenTab = { [weak self] request in
             guard let self, let url = request.url else { return }

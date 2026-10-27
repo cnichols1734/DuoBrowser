@@ -16,7 +16,9 @@ A native iOS browser designed to make the iPhone Duo's closed outer display usef
 
 Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and **DuoBrowser QA** simulator, then Run. The starter targets iOS 27.1 and uses SwiftUI with a UIKit-backed `WKWebView`.
 
-It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. Camera avoidance and AI are not implemented yet.
+It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. General camera avoidance and AI are not implemented yet.
+
+Mobile YouTube has a targeted full-width feed correction. When its body padding exactly matches the current horizontal safe inset and its header has independent protection, the browser removes that body gutter and validates the result. “Original YouTube layout” in Page options restores the site immediately for the current tab; turning off full-width mode also disables the correction. The option lasts for the live tab, not across app relaunch. Other sites and subframes are untouched. This is a fixed compatibility rule, not AI-generated CSS. The watch-page player has separate sizing and can still retain its own inset.
 
 The toolbar is centered across the full display, including the area beyond the camera's horizontal safe inset. It uses native Liquid Glass with no custom tint or appearance override. The native scroll indicator follows the right edge.
 

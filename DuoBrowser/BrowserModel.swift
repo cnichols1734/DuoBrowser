@@ -15,7 +15,23 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private var activated = false
     private var pendingURL: URL?
     private var startsWithFixture = false
-    let webView = WKWebView(frame: .zero)
+    let webView: WKWebView = {
+        let configuration = WKWebViewConfiguration()
+        // Let sites keep muted feed previews and playsinline videos inside the page.
+        configuration.allowsInlineMediaPlayback = true
+        return WKWebView(frame: .zero, configuration: configuration)
+    }()
+    private var youtubeLayout: YouTubeLayoutAdapter!
+    @Published var originalYouTubeLayout = false {
+        didSet { updateYouTubeLayout() }
+    }
+    var fullWidthLayout = true {
+        didSet { updateYouTubeLayout() }
+    }
+
+    private func updateYouTubeLayout() {
+        youtubeLayout?.setEnabled(fullWidthLayout && !originalYouTubeLayout)
+    }
     @Published var address = ""
     @Published var canGoBack = false
     @Published var canGoForward = false
@@ -41,6 +57,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         startsWithFixture = fixture && url == nil
         super.init()
         title = siteName
+        youtubeLayout = YouTubeLayoutAdapter(webView: webView)
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -173,6 +190,10 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         report(error)
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        youtubeLayout.applyToCurrentDocument()
     }
 
     private func report(_ error: Error) {

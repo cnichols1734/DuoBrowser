@@ -73,6 +73,7 @@ private struct BrowserSurface: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ViewportView, context: Context) {
+        browser.fullWidthLayout = fullWidth
         view.fullWidth = fullWidth
         view.showRegions = showRegions
         view.setNeedsLayout()
