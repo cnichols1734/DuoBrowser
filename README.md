@@ -4,7 +4,7 @@ A free, minimal iPhone Duo browser built with SwiftUI, UIKit and WKWebView. DuoB
 
 **No advertising, subscriptions, paid features or app tracking.** Community contributions are welcome; Christopher Nichols retains final authority over merges and official releases.
 
-This is a development preview, not an App Store release. The repository is being prepared for public launch and remains private until the owner approves publication.
+This is a development preview, not an App Store release. Contributions go through pull requests, and official releases remain owner-controlled.
 
 ## Purpose
 

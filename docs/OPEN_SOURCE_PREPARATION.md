@@ -1,6 +1,8 @@
 # Open-source preparation status
 
-October 27, 2026. Repository: `cnichols1734/DuoBrowser`. Preparation branch: `chore/open-source-preparation`. **Visibility remains private. No App Store publication is authorized or configured.**
+Pre-publication snapshot, October 27, 2026. Repository: `cnichols1734/DuoBrowser`. Preparation branch: `chore/open-source-preparation`. The repository was private when the settings below were audited. This document records preparation-time findings, not live repository status. No App Store publication is authorized or configured.
+
+The owner subsequently authorized a one-time review exception for PR #1, restoration of the original protections immediately after merging, and public visibility only after restoration. That exception does not authorize future review bypasses or App Store distribution. Public security settings must be verified after the visibility change.
 
 ## What changed
 
