@@ -16,11 +16,15 @@ A native iOS browser designed to make the iPhone Duo's closed outer display usef
 
 Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and **DuoBrowser QA** simulator, then Run. The starter targets iOS 27.1 and uses SwiftUI with a UIKit-backed `WKWebView`.
 
-It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. Camera avoidance, tab management, and AI are not implemented yet.
+It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. Camera avoidance and AI are not implemented yet.
 
-The native scroll indicator follows the web view's right edge. Scrolling down collapses the URL controls into a compact site-name pill; scrolling up, returning to the top, or tapping the pill restores them. Text entry, VoiceOver, and accessibility text sizes keep the controls expanded. Reduce Motion disables the transition. The web viewport and bottom content inset stay stable during the transition, avoiding page jumps.
+The toolbar is centered across the full display, including the area beyond the camera's horizontal safe inset. It uses native Liquid Glass with no custom tint or appearance override. The native scroll indicator follows the right edge.
 
-Run the [scroll behavior checks](Tests/README.md) when changing that policy.
+As you scroll down the page, the address capsule continuously shrinks into a centered domain pill (for example, `apple.com`). The expanded bar sits a little lower, and the compact pill moves down to an 8-point gap above the bottom edge. Back and tab buttons fade near their outer positions and are removed in compact mode. Scrolling back or tapping the pill restores the controls. Text entry, VoiceOver, and accessibility text sizes keep them expanded; Reduce Motion disables the transition. WebKit's viewport and bottom scroll inset stay stable throughout.
+
+The overlapping-squares button opens a Safari-style tab grid with page previews, titles, search, close buttons, New Tab, and Done. Each open tab retains its own WebKit view, navigation history, forms, and scroll position while the app runs. Tab order, URLs, and selection restore after relaunch; page history, form values, scroll positions, and previews are not restored across process termination. Background restored pages load when selected. Closing the last tab creates a fresh Start Page. Private browsing and tab groups remain future work.
+
+Run the [browser behavior checks](Tests/README.md) when changing scrolling or restoration.
 
 Build from the repo root:
 

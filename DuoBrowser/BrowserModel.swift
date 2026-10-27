@@ -4,7 +4,17 @@ import UIKit
 import WebKit
 
 @MainActor
-final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UIScrollViewDelegate {
+final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigationDelegate, UIScrollViewDelegate {
+    let id: UUID
+    let chrome = BrowserChromeState()
+    var onChange: (() -> Void)?
+    var onOpenTab: ((URLRequest) -> Void)?
+    @Published private(set) var title = "Start Page"
+    @Published private(set) var snapshot: UIImage?
+    private var snapshotGeneration = 0
+    private var activated = false
+    private var pendingURL: URL?
+    private var startsWithFixture = false
     let webView = WKWebView(frame: .zero)
     @Published var address = ""
     @Published var canGoBack = false
@@ -12,9 +22,6 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
     @Published var isLoading = false
     @Published var progress = 0.0
     @Published var errorMessage: String?
-    @Published var fullWidth = true
-    @Published var showRegions = false
-    @Published private(set) var controlsCollapsed = false
     var keepControlsExpanded = false {
         didSet { if keepControlsExpanded { revealControls() } }
     }
@@ -22,14 +29,18 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
     private var observations: [NSKeyValueObservation] = []
 
     var siteName: String {
-        guard let url = webView.url, !url.isFileURL, let host = url.host else {
-            return "DuoBrowser"
+        guard let url = webView.url ?? pendingURL, !url.isFileURL, let host = url.host else {
+            return startsWithFixture ? "Viewport Lab" : "Start Page"
         }
         return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
     }
 
-    override init() {
+    init(id: UUID = UUID(), url: URL? = nil, fixture: Bool = true) {
+        self.id = id
+        pendingURL = url
+        startsWithFixture = fixture && url == nil
         super.init()
+        title = siteName
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -52,7 +63,60 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
                 Task { @MainActor in self?.refreshState() }
             }
         ]
-        loadFixture()
+        observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in self?.refreshState() }
+        })
+    }
+
+    /// Restored background tabs do not load until selected.
+    func activate() {
+        guard !activated else { return }
+        activated = true
+        if let url = pendingURL {
+            webView.load(URLRequest(url: url))
+        } else if startsWithFixture {
+            loadFixture()
+        } else {
+            webView.loadHTMLString("""
+            <!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
+            <style>:root{color-scheme:light dark}body{font:17px -apple-system;margin:0;padding:28px;
+            background:Canvas;color:CanvasText}main{margin-top:18vh}h1{font-size:32px}p{opacity:.6}</style>
+            <main><h1>Start Page</h1><p>Search or enter a website below.</p></main>
+            """, baseURL: nil)
+        }
+    }
+
+    var restorationURL: URL? {
+        let url = webView.url ?? pendingURL
+        guard let url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              ["https", "http"].contains(components.scheme?.lowercased() ?? ""),
+              let host = components.host, !host.isEmpty,
+              components.user == nil, components.password == nil else { return nil }
+        return url
+    }
+
+    var isFixture: Bool { startsWithFixture && restorationURL == nil }
+
+    func captureSnapshot() {
+        guard webView.window != nil, webView.bounds.width > 0 else { return }
+        snapshotGeneration += 1
+        let generation = snapshotGeneration
+        let configuration = WKSnapshotConfiguration()
+        configuration.snapshotWidth = 360
+        webView.takeSnapshot(with: configuration) { [weak self] image, _ in
+            guard let self, self.snapshotGeneration == generation else { return }
+            if let image { self.snapshot = image }
+        }
+    }
+
+    func close() {
+        snapshotGeneration += 1
+        webView.stopLoading()
+        webView.navigationDelegate = nil
+        webView.scrollView.delegate = nil
+        observations.removeAll()
+        onChange = nil
+        onOpenTab = nil
     }
 
     private func refreshState() {
@@ -60,7 +124,9 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
         canGoForward = webView.canGoForward
         isLoading = webView.isLoading
         progress = webView.estimatedProgress
-        address = webView.url?.isFileURL == false ? (webView.url?.absoluteString ?? "") : ""
+        address = restorationURL?.absoluteString ?? ""
+        title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? siteName
+        onChange?()
     }
 
     func navigate(to input: String) {
@@ -84,10 +150,12 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
         }
         guard let url else { errorMessage = "This address could not be opened."; return }
         errorMessage = nil
+        startsWithFixture = false
         webView.load(URLRequest(url: url))
     }
 
     func loadFixture() {
+        startsWithFixture = true
         errorMessage = nil
         if let url = Bundle.main.url(forResource: "ViewportFixture", withExtension: "html") {
             webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
@@ -124,8 +192,8 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
     }
 
     private func publishChromeIfChanged() {
-        if controlsCollapsed != scrollChrome.isCollapsed {
-            controlsCollapsed = scrollChrome.isCollapsed
+        if abs(chrome.progress - scrollChrome.progress) > 0.001 {
+            chrome.progress = scrollChrome.progress
         }
     }
 
@@ -144,11 +212,12 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
     }
 
     func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        if !decelerate { scrollChrome.resetTracking() }
+        if !decelerate { scrollChrome.settle(); publishChromeIfChanged() }
     }
 
     func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        scrollChrome.resetTracking()
+        scrollChrome.settle()
+        publishChromeIfChanged()
     }
 
     func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
@@ -165,9 +234,15 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UISc
         }
         if navigationAction.targetFrame == nil {
             decisionHandler(.cancel)
-            webView.load(navigationAction.request)
+            onOpenTab?(navigationAction.request)
         } else {
             decisionHandler(.allow)
         }
     }
+}
+
+/// Only the controls observe per-scroll progress; WebKit layout does not rerun every frame.
+@MainActor
+final class BrowserChromeState: ObservableObject {
+    @Published var progress = 0.0
 }

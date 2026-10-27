@@ -77,6 +77,21 @@ struct ScrollChromeStateTests {
         }
         expect(state.isCollapsed, "Settling from that fling does not reopen the controls")
 
+        state = ScrollChromeState()
+        state.beginDragging(at: 200)
+        state.update(offset: 230, maximumOffset: 1_000, userScrolling: true, keepExpanded: false)
+        expect(state.progress > 0 && state.progress < 0.5, "Small scrolls produce a partial transition")
+        let partial = state.progress
+        state.update(offset: 250, maximumOffset: 1_000, userScrolling: true, keepExpanded: false)
+        expect(state.progress > partial && state.progress < 1, "Progress follows additional finger travel continuously")
+        state.settle()
+        expect(state.progress == 1, "A mostly collapsed bar settles to its compact endpoint")
+        state.beginDragging(at: 250)
+        state.update(offset: 230, maximumOffset: 1_000, userScrolling: true, keepExpanded: false)
+        expect(state.progress > 0 && state.progress < 1, "Upward motion also interpolates")
+        state.reveal()
+        expect(state.progress == 0, "Explicit expansion always returns to the exact endpoint")
+
         print("Passed \(checks) scroll-chrome behavior checks.")
     }
 }

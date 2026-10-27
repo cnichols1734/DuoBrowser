@@ -1,4 +1,4 @@
-# Scroll chrome checks
+# Browser behavior checks
 
 Run from the repo root:
 
@@ -6,8 +6,12 @@ Run from the repo root:
 mkdir -p work
 swiftc DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/scroll-chrome-tests
 work/scroll-chrome-tests
+swiftc DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
+work/tab-archive-tests
 ```
 
-These portable checks exercise the scrolling policy without UIKit: sustained downward/upward movement, small reversals, programmatic scrolling, tap-to-reveal during momentum, short pages, keyboard/accessibility suppression, top/bottom bounce, and fast flings that overshoot the bottom before reporting an intermediate offset.
+The 21 scrolling checks cover continuous progress, settling, direction reversal, small jitter, programmatic movement, tap-to-reveal during momentum, short pages, keyboard/accessibility suppression, elastic bounce, and fast overshooting flings.
 
-They do not prove touch behavior, animation quality, VoiceOver behavior, or scroll-indicator placement. Verify those in the running app.
+The 12 archive checks cover stable IDs and selection, ordered restoration, duplicate IDs, missing selections, invalid/unsafe destinations, and restoring 100 tab records without truncation.
+
+These portable tests do not prove UI interaction, live tab lifecycle, animation frame rate, native accessibility, or glass appearance. Verify those in the running app; see `docs/VALIDATION.md` for results and gaps.

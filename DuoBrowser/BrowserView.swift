@@ -3,127 +3,56 @@ import UIKit
 import WebKit
 
 struct BrowserView: View {
-    @StateObject private var browser = BrowserModel()
+    @StateObject private var session = BrowserSession()
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ActiveBrowserView(session: session, browser: session.selected)
+            .id(session.selectedID)
+            .fullScreenCover(isPresented: $session.showingTabs) {
+                TabOverview(session: session)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase != .active { session.save() }
+            }
+    }
+}
+
+private struct ActiveBrowserView: View {
+    @ObservedObject var session: BrowserSession
+    @ObservedObject var browser: BrowserModel
     @State private var input = ""
     @State private var keyboardVisible = false
-    @FocusState private var editingAddress: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var keepExpanded: Bool {
-        editingAddress || keyboardVisible || voiceOverEnabled || dynamicTypeSize.isAccessibilitySize
-    }
-
-    private var collapsed: Bool {
-        browser.controlsCollapsed && !keepExpanded && browser.errorMessage == nil
-    }
-
     var body: some View {
-        ZStack(alignment: .bottom) {
-            BrowserSurface(browser: browser)
-                .ignoresSafeArea(.container)
-
-            VStack(spacing: 8) {
-                if let error = browser.errorMessage {
-                    HStack {
-                        Text(error).font(.callout)
-                        Button("Dismiss") { browser.errorMessage = nil }
+        GeometryReader { geometry in
+            ZStack(alignment: .bottom) {
+                BrowserSurface(browser: browser, fullWidth: session.fullWidth, showRegions: session.showRegions)
+                    .ignoresSafeArea(.container)
+                VStack(spacing: 8) {
+                    if let error = browser.errorMessage {
+                        HStack {
+                            Text(error).font(.callout)
+                            Button("Dismiss") { browser.errorMessage = nil }
+                        }
+                        .padding(12)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
+                        .padding(.horizontal, 12)
                     }
-                    .padding(12)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    BrowserToolbar(session: session, browser: browser, chrome: browser.chrome,
+                                   input: $input, keyboardVisible: keyboardVisible,
+                                   bottomSafeArea: geometry.safeAreaInsets.bottom,
+                                   accessibilityExpanded: voiceOverEnabled || dynamicTypeSize.isAccessibilitySize)
                 }
-
-                if collapsed {
-                    Button {
-                        browser.revealControls()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Text(browser.siteName)
-                                .font(.footnote.weight(.medium))
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Image(systemName: "chevron.up")
-                                .font(.caption2.weight(.semibold))
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(.regularMaterial, in: Capsule())
-                        .frame(minWidth: 140, maxWidth: 260, minHeight: 44)
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Show browser controls for \(browser.siteName)")
-                    .accessibilityHint("Expands the address field and navigation buttons")
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
-                } else {
-                    HStack(spacing: 0) {
-                        Button { browser.webView.goBack() } label: {
-                            Image(systemName: "chevron.backward").frame(width: 44, height: 44)
-                        }
-                        .disabled(!browser.canGoBack)
-                        .accessibilityLabel("Back")
-
-                        TextField("Search or enter website", text: $input)
-                            .font(.callout)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.webSearch)
-                            .submitLabel(.go)
-                            .focused($editingAddress)
-                            .onSubmit {
-                                editingAddress = false
-                                browser.navigate(to: input)
-                            }
-                            .accessibilityLabel("Website address or search")
-
-                        Button {
-                            if browser.isLoading { browser.webView.stopLoading() }
-                            else { browser.webView.reload() }
-                        } label: {
-                            Image(systemName: browser.isLoading ? "xmark" : "arrow.clockwise")
-                                .frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel(browser.isLoading ? "Stop loading" : "Reload")
-
-                        Menu {
-                            Toggle("Full-width page", isOn: $browser.fullWidth)
-                            Toggle("Show reserved regions", isOn: $browser.showRegions)
-                            Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }
-                                .disabled(!browser.canGoForward)
-                            Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
-                            Text("Camera avoidance is not implemented yet.")
-                        } label: {
-                            Image(systemName: "ellipsis").frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("Browser options")
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .background(.regularMaterial, in: Capsule())
-                    .overlay(alignment: .top) {
-                        if browser.isLoading {
-                            ProgressView(value: browser.progress)
-                                .padding(.horizontal, 24)
-                                .accessibilityLabel("Page loading")
-                        }
-                    }
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
-                }
+                .padding(.bottom, 8)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
-            .frame(maxWidth: 620)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: collapsed)
+            // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
+            .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .statusBarHidden(browser.fullWidth)
-        .onChange(of: browser.address) { _, newValue in
-            if !editingAddress { input = newValue }
-        }
-        .onChange(of: keepExpanded, initial: true) { _, value in
-            browser.keepControlsExpanded = value
-        }
+        .statusBarHidden(session.fullWidth)
+        .onAppear { input = browser.address }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             keyboardVisible = true
             browser.revealControls()
@@ -135,15 +64,17 @@ struct BrowserView: View {
 }
 
 private struct BrowserSurface: UIViewRepresentable {
-    @ObservedObject var browser: BrowserModel
+    let browser: BrowserModel
+    let fullWidth: Bool
+    let showRegions: Bool
 
     func makeUIView(context: Context) -> ViewportView {
         ViewportView(webView: browser.webView)
     }
 
     func updateUIView(_ view: ViewportView, context: Context) {
-        view.fullWidth = browser.fullWidth
-        view.showRegions = browser.showRegions
+        view.fullWidth = fullWidth
+        view.showRegions = showRegions
         view.setNeedsLayout()
     }
 }

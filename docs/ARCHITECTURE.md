@@ -52,3 +52,11 @@ Keep certificate validation and platform transport protections intact. Handle ne
 Safari-level quality is a product goal, not a property inherited by wrapping WKWebView. Treat passkeys/autofill, media, WebRTC, downloads, content blockers, default-browser eligibility, and accessibility as separate verified capabilities. Do not assume access to Safari's private Reading List, iCloud tabs, extension store, or history.
 
 No account or cloud AI service is needed for the first experiment. Collect local synthetic-fixture diagnostics by default; redact URLs and page contents from any shared evidence. See ROADMAP.md for measurable acceptance criteria.
+
+## Implemented tabs and chrome — October 26, 2026
+
+`BrowserSession` owns one `BrowserModel`/`WKWebView` per open tab and a selected UUID. Switching reparents the same web view; it does not reload the page. Restored background tabs defer navigation until selected. A validated local archive stores URLs, order, IDs, fixture state, and selection. It excludes non-HTTP(S) destinations and credential-bearing URLs. This is basic URL restoration, not full back-forward or form-state restoration.
+
+Tab previews use `WKWebView.takeSnapshot`, are downsampled, and remain in memory. Snapshot generations reject stale completion after closure. Closing releases observation/delegate hooks and stops loading. There is no private mode in this implementation, no snapshot upload, and no page text collection.
+
+`ScrollChromeState` produces continuous progress with a reversal deadband and endpoint settling. A separate observable chrome object updates only `BrowserToolbar`, keeping per-scroll updates away from WebKit layout. One persistent domain label and native `glassEffect(.regular)` capsule change together; side controls fade at the outside and are removed before compact mode. The toolbar reclaims horizontal safe-area width while retaining keyboard and bottom placement. System Liquid Glass rendering handles material appearance, with no hardcoded gray blur or tint.

@@ -13,6 +13,13 @@
 - Follow-up: removed the default right-hand blank strip by enabling full-width rendering and hiding the status bar. Rebuilt and installed on DuoBrowser QA; visually confirmed Apple's website spans the closed display. See VALIDATION.md for remaining checks.
 - Scrolling follow-up: moved the native indicator to the right edge and added a compact URL pill on downward scrolling, with upward-scroll/tap restoration. Build and 16 policy checks passed; native closed-display collapse, restoration, and keyboard interactions passed. Other poses, accessibility settings, and hardware remain to verify; see VALIDATION.md.
 
+## Glass controls and tabs — October 26, 2026
+
+- Centered bottom controls across the full display, using native Liquid Glass without a forced material tint or appearance.
+- Added a continuous domain-capsule collapse, with separate compact/expanded vertical positions. Side controls fade near the outer edges and are absent when compact; tap or reverse scrolling restores them.
+- Added multiple tabs with stable web views, page previews, close/new/select, tab search, and basic URL/order/selection restoration. Background restored tabs load when selected. Private browsing, tab groups, full session recovery, and memory-pressure eviction remain later work.
+- Build and 33 portable behavior checks passed. Closed-Duo native creation, URL entry, selection, closing, relaunch restoration, full-width overview, and compact/restored controls were exercised. See VALIDATION.md for detailed evidence and remaining checks.
+
 ## 1. Prove the available space
 
 The starter `DuoBrowser.xcodeproj` now has a SwiftUI iOS app target, shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.

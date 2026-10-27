@@ -51,3 +51,8 @@ These references do not establish that a particular adaptation design will recei
 `xcodebuild -version` reported Xcode 27.1 (27A9275). `xcrun simctl list devices available` listed iOS 27.1 Duo devices, including an already booted iPhone Duo. After the owner approved the design direction, a starter app was added and its simulator build passed. A dedicated DuoBrowser QA simulator was created. See VALIDATION.md for runtime verification and remaining gaps.
 
 The app's current project tool inventory supports listing projects and moving chats to existing projects, but not creating a local project. Computer Use returned: “Computer Use is not allowed to use the app 'com.openai.codex' for safety reasons.” No bypass or app-state edit was attempted. [Official project documentation](https://learn.chatgpt.com/docs/projects) describes associating local folders with projects.
+
+## Native glass and tabs follow-up
+
+- [Apple's custom Liquid Glass guidance](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) documents `glassEffect`, the regular material, and `GlassEffectContainer`. The browser uses those native APIs with no tint or forced color scheme. Test system appearance and accessibility settings on hardware before claiming visual equivalence to Safari.
+- [Safari tab guidance](https://support.apple.com/guide/iphone/open-and-close-tabs-iph489b9313f/ios) informed the familiar open/select/close overview. The owner's screenshots govern the separate back button, center address capsule, overlapping-squares button, and compact domain pill. Safari's private implementation is not reused.

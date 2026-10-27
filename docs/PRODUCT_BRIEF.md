@@ -21,7 +21,7 @@ Follow the content-first direction in ../.impeccable.md: calm native chrome, cle
 - Outer display: full-width web canvas by default, a compact floating address/control cluster, and no permanently reserved full-height browser rail. The owner explicitly requested removing the right-hand blank strip; native full-width mode also hides the status bar. Safe-area mode remains an optional fallback.
 - Inner display: preserve control relationships and page state; show optional tab navigation only when space supports it. Do not automatically split the website or reload it on opening.
 - Exclusions: derive camera, expanded system occlusion, fold, keyboard, and browser-control areas from current geometry. Reclaim space around these areas, not underneath essential interaction.
-- Proposal: bottom address entry on both displays; compare its reachability against a compact edge alternative during the first prototype.
+- Approved refinement: centered native Liquid Glass bottom address controls, separate Back/Tabs circles, and a compact domain pill that sits just above the bottom screen edge. Use a familiar Safari-style tab overview.
 
 ## 5. Key states
 
