@@ -18,6 +18,10 @@ Open `DuoBrowser.xcodeproj` in Xcode 27.1, select the **DuoBrowser** scheme and 
 
 It includes URL/search entry (DuckDuckGo for searches), back/forward, reload/stop, a local viewport fixture, full-width mode, and reserved-region overlays. It starts in full-width mode with the status bar hidden. Turn off “Full-width page” in Browser options to compare the safe-area layout. Camera avoidance, tab management, and AI are not implemented yet.
 
+The native scroll indicator follows the web view's right edge. Scrolling down collapses the URL controls into a compact site-name pill; scrolling up, returning to the top, or tapping the pill restores them. Text entry, VoiceOver, and accessibility text sizes keep the controls expanded. Reduce Motion disables the transition. The web viewport and bottom content inset stay stable during the transition, avoiding page jumps.
+
+Run the [scroll behavior checks](Tests/README.md) when changing that policy.
+
 Build from the repo root:
 
 ```sh
@@ -49,4 +53,4 @@ Name the project **DuoBrowser**, and move this planning chat into it. The repo i
 
 ## Current boundaries
 
-This is the foundation for planning and implementation, not a Safari replacement yet. Full-width behavior, site compatibility, AI quality, animation performance, and App Store eligibility require implementation and validation. The owner approved the proposed design direction in this chat. Product naming and later release decisions remain open.
+This is the foundation for planning and implementation, not a Safari replacement yet. Broader device and site compatibility, AI quality, animation performance, and App Store eligibility still require implementation or validation. The owner approved the proposed design direction in this chat. Product naming and later release decisions remain open.

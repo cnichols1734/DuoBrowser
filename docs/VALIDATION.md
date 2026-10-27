@@ -34,6 +34,17 @@ The starter has no automated UI suite yet. Camera-avoidance behavior, AI, native
 - Camera avoidance is still separate work: this change removes the full-height gutter, but does not relocate arbitrary site controls around the physical camera.
 - A follow-up attempt to select the local test page was rejected after a user UI change. No new CSS-width measurement, open-pose, keyboard, pinch-zoom, or automated interaction result is claimed for this pass.
 
+## Scrolling controls follow-up — October 26, 2026
+
+- Disabled automatic safe-area adjustment of the native vertical scroll indicator and set its right inset to zero. During native scrolling, the indicator was visually confirmed at the display's right edge, including with the keyboard open.
+- Added a direction-aware scroll policy: sustained downward movement collapses the controls to a site-name pill; upward movement, returning to the top, tapping the pill, navigation, or an error restores the controls. Separate thresholds avoid flicker on small reversals. Page dimensions and the bottom content inset remain stable during the transition.
+- A native fast-fling check exposed a first-event overshoot at the page bottom. The policy now compares clamped offsets, counting the real travel while ignoring elastic bounce. Regression checks cover both overshoot and rebound.
+- All 16 portable scroll-policy checks passed. They cover directions, thresholds, bounce, fast flings, short pages, programmatic scrolling, tap-to-reveal during deceleration, and expansion suppression. See `Tests/README.md`.
+- The final Debug simulator build passed with no Swift compiler warnings; the AppIntents metadata notice is expected. Installed and relaunched the resulting app on DuoBrowser QA.
+- Native interaction checks passed on the closed Duo fixture: downward scroll collapsed the controls; tapping the pill restored them; a new downward scroll collapsed them again; upward scroll restored them. URL editing showed the keyboard and kept full controls visible during further scrolling. Submitting the empty field dismissed the keyboard without navigation.
+- The full-width fixture reported **466 × 678 CSS pixels at scale 1** with the keyboard closed, and **466 × 413** with URL entry active. This is a fixture measurement, not a Safari comparison or a usable-area percentage.
+- The transition respects Reduce Motion in code, and VoiceOver/accessibility text sizes keep controls expanded. Native VoiceOver, larger-text, Reduce Motion, pinch zoom, rotation, open/partially folded poses, and physical-device motion/performance checks remain outstanding for this change.
+
 ## Project registration
 
 The Git repo and Xcode project exist locally. They have not been registered as a project in the chat app, and this chat has not been moved. The available tools cannot create a local project; Computer Use explicitly disallows controlling the Codex app. Add the repo folder manually using the path in README.md.

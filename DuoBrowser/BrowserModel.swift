@@ -1,9 +1,10 @@
 import Combine
 import Foundation
+import UIKit
 import WebKit
 
 @MainActor
-final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
+final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate, UIScrollViewDelegate {
     let webView = WKWebView(frame: .zero)
     @Published var address = ""
     @Published var canGoBack = false
@@ -13,13 +14,27 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
     @Published var errorMessage: String?
     @Published var fullWidth = true
     @Published var showRegions = false
+    @Published private(set) var controlsCollapsed = false
+    var keepControlsExpanded = false {
+        didSet { if keepControlsExpanded { revealControls() } }
+    }
+    private var scrollChrome = ScrollChromeState()
     private var observations: [NSKeyValueObservation] = []
+
+    var siteName: String {
+        guard let url = webView.url, !url.isFileURL, let host = url.host else {
+            return "DuoBrowser"
+        }
+        return host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+    }
 
     override init() {
         super.init()
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
+        webView.scrollView.delegate = self
         observations = [
             webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] _, _ in
                 Task { @MainActor in self?.refreshState() }
@@ -81,6 +96,7 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         errorMessage = nil
+        revealControls()
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
@@ -93,11 +109,50 @@ final class BrowserModel: NSObject, ObservableObject, WKNavigationDelegate {
 
     private func report(_ error: Error) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
+        revealControls()
         errorMessage = error.localizedDescription
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        revealControls()
         errorMessage = "The page stopped responding. Reload to try again."
+    }
+
+    func revealControls() {
+        scrollChrome.reveal()
+        publishChromeIfChanged()
+    }
+
+    private func publishChromeIfChanged() {
+        if controlsCollapsed != scrollChrome.isCollapsed {
+            controlsCollapsed = scrollChrome.isCollapsed
+        }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        scrollChrome.beginDragging(at: scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        let insets = scrollView.adjustedContentInset
+        let maximum = scrollView.contentSize.height + insets.top + insets.bottom - scrollView.bounds.height
+        scrollChrome.update(offset: scrollView.contentOffset.y + insets.top,
+                            maximumOffset: maximum,
+                            userScrolling: scrollView.isDragging || scrollView.isDecelerating,
+                            keepExpanded: keepControlsExpanded || scrollView.isZooming || errorMessage != nil)
+        publishChromeIfChanged()
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { scrollChrome.resetTracking() }
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        scrollChrome.resetTracking()
+    }
+
+    func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
+        revealControls()
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,

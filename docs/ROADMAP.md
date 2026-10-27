@@ -11,6 +11,7 @@
 - Native Xcode project created with a shared DuoBrowser scheme, iOS 27.1 app target, local fixture, URL/search navigation, full-width toggle, and reserved-region overlay.
 - Debug build passed for both simulator architectures. A dedicated DuoBrowser QA simulator was created; installation and launch succeeded. Interaction testing remains open; see VALIDATION.md.
 - Follow-up: removed the default right-hand blank strip by enabling full-width rendering and hiding the status bar. Rebuilt and installed on DuoBrowser QA; visually confirmed Apple's website spans the closed display. See VALIDATION.md for remaining checks.
+- Scrolling follow-up: moved the native indicator to the right edge and added a compact URL pill on downward scrolling, with upward-scroll/tap restoration. Build and 16 policy checks passed; native closed-display collapse, restoration, and keyboard interactions passed. Other poses, accessibility settings, and hardware remain to verify; see VALIDATION.md.
 
 ## 1. Prove the available space
 

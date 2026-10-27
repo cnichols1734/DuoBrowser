@@ -5,6 +5,16 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+		"030053585739E548397F415E" = {
+			"isa" = "PBXFileReference";
+			"lastKnownFileType" = "sourcecode.swift";
+			"path" = "ScrollChromeState.swift";
+			"sourceTree" = "<group>";
+		};
+		"E52494181822B80E3505C2DA" = {
+			"isa" = "PBXBuildFile";
+			"fileRef" = "030053585739E548397F415E";
+		};
 		"1B172DB0E1409A383FFDBFA9" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
@@ -58,6 +68,7 @@
 				"1B172DB0E1409A383FFDBFA9",
 				"DC6E03491E473D6150654B34",
 				"F0DDEC4061E452CE6E19989D",
+				"030053585739E548397F415E",
 				"7D173ECD5CD1D808C0AE7796",
 			);
 			"path" = "DuoBrowser";
@@ -86,6 +97,7 @@
 				"F360E0675207D175A12214E6",
 				"A58ACDC7E2BA8C191B8AABE8",
 				"9088E8A43DC789E9511587D1",
+				"E52494181822B80E3505C2DA",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
