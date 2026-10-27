@@ -1,5 +1,5 @@
 // Real CSS layout tests. All requests are fulfilled with synthetic HTML; no live YouTube traffic.
-async function runYouTubeLayoutTests(page, source) {
+async function runPageLayoutTests(page, source) {
     const p = await page.context().newPage();
     const results = [];
     let fixture = '';
@@ -31,13 +31,13 @@ async function runYouTubeLayoutTests(page, source) {
         });
         await p.evaluate(source);
     }
-    const update = value => p.evaluate(value => globalThis.__duoYouTubeLayout?.update(value), value);
+    const update = value => p.evaluate(value => globalThis.__duoPageLayout?.update(value), value);
     const measure = () => p.evaluate(() => ({
         app: document.querySelector('ytm-app')?.getBoundingClientRect().width,
         padding: getComputedStyle(document.body).paddingRight,
         left: getComputedStyle(document.body).paddingLeft,
         header: getComputedStyle(document.querySelector('ytm-mobile-topbar-renderer,ytm-header')).paddingRight,
-        state: globalThis.__duoYouTubeLayout?.inspect().state,
+        state: globalThis.__duoPageLayout?.inspect().state,
         styles: document.querySelectorAll('style').length
     }));
     async function test(name, run) { await run(); results.push(name); }
@@ -69,16 +69,16 @@ async function runYouTubeLayoutTests(page, source) {
             await setup({ extraCSS: 'ytm-app{max-width:382px}' }); await update(true);
             const m = await measure(); assert(m.padding === '84px' && m.state === 'fallback', JSON.stringify(m));
         });
-        await test('other origins receive no adapter or mutation', async () => {
-            await setup({ host: 'example.com' }); assert(await update(true) === undefined, 'origin gate');
-            assert((await measure()).styles === 1, 'unexpected style');
+        await test('same safe-area pattern works on an unrelated origin', async () => {
+            await setup({ host: 'example.com' }); await update(true);
+            assert((await measure()).app === 466, 'host-specific behavior');
         });
         await test('subframes receive no adapter', async () => {
             await setup();
             await p.evaluate(() => { const frame = document.createElement('iframe'); frame.srcdoc = '<p>Frame</p>'; document.body.appendChild(frame); });
             const handle = await p.locator('iframe').elementHandle();
             const frame = await handle.contentFrame(); await frame.evaluate(source);
-            assert(await frame.evaluate(() => typeof globalThis.__duoYouTubeLayout) === 'undefined', 'subframe gate');
+            assert(await frame.evaluate(() => typeof globalThis.__duoPageLayout) === 'undefined', 'subframe gate');
         });
         await test('contenteditable defers reflow', async () => {
             await setup();
@@ -93,7 +93,7 @@ async function runYouTubeLayoutTests(page, source) {
         await test('late app insertion is handled', async () => {
             await setup({ contents: false }); await update(true);
             await p.evaluate(() => { document.body.innerHTML = '<ytm-app><ytm-mobile-topbar-renderer>Header</ytm-mobile-topbar-renderer><article>Feed</article></ytm-app>'; });
-            await p.waitForFunction(() => globalThis.__duoYouTubeLayout.inspect().state === 'fitted');
+            await p.waitForFunction(() => globalThis.__duoPageLayout.inspect().state === 'fitted');
             assert((await measure()).app === 466, 'late app');
         });
         await test('SPA header replacement revalidates and restores unsafe layout', async () => {
@@ -102,28 +102,28 @@ async function runYouTubeLayoutTests(page, source) {
                 const header = document.createElement('ytm-mobile-topbar-renderer'); header.style.padding = '0';
                 document.querySelector('ytm-mobile-topbar-renderer').replaceWith(header);
             });
-            await p.waitForFunction(() => globalThis.__duoYouTubeLayout.inspect().state === 'unsupported');
+            await p.waitForFunction(() => globalThis.__duoPageLayout.inspect().state === 'unsupported');
             assert((await measure()).app === 382, 'replacement not revalidated');
         });
         await test('typing defers reflow and preserves input value', async () => {
             await setup(); await p.locator('input').focus(); await update(true);
             assert((await measure()).app === 382, 'reflow while editing');
             await p.locator('input').blur();
-            await p.waitForFunction(() => globalThis.__duoYouTubeLayout.inspect().state === 'fitted');
+            await p.waitForFunction(() => globalThis.__duoPageLayout.inspect().state === 'fitted');
             assert(await p.locator('input').inputValue() === 'kept', 'lost form');
         });
         await test('pinch zoom defers adaptation until normal scale', async () => {
             await setup(); await p.evaluate(() => { window.testScale = 2; }); await update(true);
             assert((await measure()).app === 382, 'reflow while pinching');
             await p.evaluate(() => { window.testScale = 1; visualViewport.dispatchEvent(new Event('resize')); });
-            await p.waitForFunction(() => globalThis.__duoYouTubeLayout.inspect().state === 'fitted');
+            await p.waitForFunction(() => globalThis.__duoPageLayout.inspect().state === 'fitted');
         });
         await test('side changes use current geometry', async () => {
             await setup({ padding: '0 0 0 60px', headerPadding: '0 0 0 60px' });
             await p.evaluate(() => { window.testInsets = { left:60, right:0 }; });
             await update(true); const m = await measure(); assert(m.app === 466 && m.left === '0px', JSON.stringify(m));
             await p.evaluate(() => { window.testInsets = { left:0, right:0 }; window.dispatchEvent(new Event('resize')); });
-            await p.waitForFunction(() => globalThis.__duoYouTubeLayout.inspect().state === 'no-side-inset');
+            await p.waitForFunction(() => globalThis.__duoPageLayout.inspect().state === 'no-side-inset');
             assert((await measure()).left === '60px', 'pose did not restore');
         });
         await test('no ongoing DOM mutation loop after layout settles', async () => {
@@ -132,12 +132,59 @@ async function runYouTubeLayoutTests(page, source) {
             await p.waitForTimeout(600); assert(await p.evaluate(() => window.mutations) === 0, 'mutation loop');
             assert((await measure()).styles === 2, 'duplicate styles');
         });
+        await test('ordinary header and wrapper elements work without site selectors', async () => {
+            await setup({ padding:'0', headerTag:'header', extraCSS:'header{position:fixed;left:0;top:0;width:100%;height:48px;padding-right:84px}' });
+            await p.evaluate(() => {
+                const app = document.querySelector('ytm-app');
+                const container = document.createElement('section'); container.style.paddingRight = '84px';
+                while (app.firstChild) container.appendChild(app.firstChild);
+                app.replaceWith(container);
+            });
+            const result = await update(true); assert(result.after === 466, JSON.stringify(result));
+            await update(false);
+            assert(await p.locator('section').evaluate(e => getComputedStyle(e).paddingRight) === '84px', 'wrapper not restored');
+        });
+        await test('ordinary non-safe-area websites stay unchanged', async () => {
+            await setup({ host:'news.example', padding:'0', extraCSS:'article{max-width:320px;margin:auto}' });
+            await update(true); assert((await measure()).styles === 1, 'changed ordinary article');
+            assert(await p.locator('article').evaluate(e => e.getBoundingClientRect().width) === 320, 'max width lost');
+        });
+        await test('transformed pages are left alone', async () => {
+            await setup({ extraCSS:'body{transform:translateX(1px)}' }); await update(true);
+            assert((await measure()).app === 382, 'changed transformed page');
+        });
+        await test('header child movement rolls back even when outer header stays still', async () => {
+            await setup({ extraCSS:'ytm-mobile-topbar-renderer button{position:relative;left:10cqw}body{container-type:inline-size}' });
+            await update(true); const m = await measure();
+            assert(m.app === 382 && m.state === 'fallback', JSON.stringify(m));
+        });
+        await test('new horizontal overflow rolls back', async () => {
+            await setup({ extraCSS:'article{container-type:inline-size}article:after{content:"";display:block;width:120cqw;height:1px}' });
+            await update(true); assert((await measure()).app === 382, 'overflow committed');
+        });
+        await test('multiple root wrappers are not guessed between', async () => {
+            await setup({ padding:'0', extraCSS:'section{padding-right:84px}main{height:200px}' });
+            await p.evaluate(() => { document.querySelector('ytm-app').innerHTML += '<section><main></main></section><section><main></main></section>'; });
+            const result = await update(true); assert(result.state === 'unsupported', JSON.stringify(result));
+        });
+        await test('header scan budget causes a conservative fallback', async () => {
+            await setup();
+            await p.evaluate(() => { document.querySelector('ytm-mobile-topbar-renderer').innerHTML = '<span></span>'.repeat(100); });
+            await update(true); assert((await measure()).state === 'scan-limit', 'scan budget not enforced');
+        });
+        await test('header action remains clickable and form data is unchanged', async () => {
+            await setup();
+            await p.evaluate(() => { window.clicked = 0; document.querySelector('button').onclick = () => window.clicked++; });
+            await update(true); await p.locator('button').click();
+            assert(await p.evaluate(() => window.clicked) === 1, 'header action failed');
+            assert(await p.locator('input').inputValue() === 'kept', 'input changed');
+        });
         return { passed: results.length, tests: results };
     } finally { await p.close(); }
 }
 
 if (typeof module !== 'undefined') {
-    module.exports = runYouTubeLayoutTests;
+    module.exports = runPageLayoutTests;
     if (require.main === module) {
         const fs = require('node:fs');
         const path = require('node:path');
@@ -145,8 +192,8 @@ if (typeof module !== 'undefined') {
             const browser = await require('playwright').chromium.launch({ headless: true });
             try {
                 const page = await browser.newPage();
-                const source = fs.readFileSync(path.join(__dirname, '../DuoBrowser/YouTubeLayout.js'), 'utf8');
-                console.log(await runYouTubeLayoutTests(page, source));
+                const source = fs.readFileSync(path.join(__dirname, '../DuoBrowser/PageLayout.js'), 'utf8');
+                console.log(await runPageLayoutTests(page, source));
             } finally { await browser.close(); }
         })().catch(error => { console.error(error); process.exitCode = 1; });
     }

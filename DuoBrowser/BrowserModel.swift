@@ -21,16 +21,16 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         configuration.allowsInlineMediaPlayback = true
         return WKWebView(frame: .zero, configuration: configuration)
     }()
-    private var youtubeLayout: YouTubeLayoutAdapter!
-    @Published var originalYouTubeLayout = false {
-        didSet { updateYouTubeLayout() }
+    private var pageLayout: PageLayoutAdapter!
+    @Published var originalPageLayout = false {
+        didSet { updatePageLayout() }
     }
     var fullWidthLayout = true {
-        didSet { updateYouTubeLayout() }
+        didSet { updatePageLayout() }
     }
 
-    private func updateYouTubeLayout() {
-        youtubeLayout?.setEnabled(fullWidthLayout && !originalYouTubeLayout)
+    private func updatePageLayout() {
+        pageLayout?.setEnabled(fullWidthLayout && !originalPageLayout)
     }
     @Published var address = ""
     @Published var canGoBack = false
@@ -57,7 +57,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         startsWithFixture = fixture && url == nil
         super.init()
         title = siteName
-        youtubeLayout = YouTubeLayoutAdapter(webView: webView)
+        pageLayout = PageLayoutAdapter(webView: webView)
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
@@ -193,7 +193,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        youtubeLayout.applyToCurrentDocument()
+        pageLayout.applyToCurrentDocument()
     }
 
     private func report(_ error: Error) {

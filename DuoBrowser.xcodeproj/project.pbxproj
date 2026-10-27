@@ -8,7 +8,7 @@
 		"A8D627F57636C97D96D5E52A" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.javascript";
-			"path" = "YouTubeLayout.js";
+			"path" = "PageLayout.js";
 			"sourceTree" = "<group>";
 		};
 		"B81E92E7689834E497F90266" = {
@@ -18,7 +18,7 @@
 		"27FE0606548118518F503C28" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.swift";
-			"path" = "YouTubeLayoutAdapter.swift";
+			"path" = "PageLayoutAdapter.swift";
 			"sourceTree" = "<group>";
 		};
 		"9E4BE3069E2B082E6F70BA50" = {

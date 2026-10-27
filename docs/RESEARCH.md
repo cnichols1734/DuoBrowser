@@ -56,3 +56,13 @@ The app's current project tool inventory supports listing projects and moving ch
 
 - [Apple's custom Liquid Glass guidance](https://developer.apple.com/documentation/swiftui/applying-liquid-glass-to-custom-views) documents `glassEffect`, the regular material, and `GlassEffectContainer`. The browser uses those native APIs with no tint or forced color scheme. Test system appearance and accessibility settings on hardware before claiming visual equivalence to Safari.
 - [Safari tab guidance](https://support.apple.com/guide/iphone/open-and-close-tabs-iph489b9313f/ios) informed the familiar open/select/close overview. The owner's screenshots govern the separate back button, center address capsule, overlapping-squares button, and compact domain pill. Safari's private implementation is not reused.
+
+## Automatic layout and on-device selection — October 27, 2026
+
+Rechecked Apple's current Foundation Models documentation and the installed iOS 27.1 Swift interface. `SystemLanguageModel.default` is the on-device model, with runtime availability checks. Guided generation can return constrained Swift types. Foundation Models now also supports server models and Private Cloud Compute; using the framework alone does not establish on-device execution.
+
+- [SystemLanguageModel](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
+- [Generating content and performing tasks](https://developer.apple.com/documentation/FoundationModels/generating-content-and-performing-tasks-with-foundation-models)
+- [Foundation Models framework overview](https://developer.apple.com/foundation-models-framework/)
+
+Apple's task guidance lists code generation among uses the on-device model may not suit. Our design inference is to let the model select among implemented operations after deterministic geometry analysis. Runtime layout measurement and rollback remain authoritative. This architecture is a proposal; no model efficacy or inference performance was measured in this pass.

@@ -28,6 +28,13 @@
 - Simulator build, 16 synthetic browser layout checks, 21 scroll checks, and 12 archive checks passed. Native feed/search, scrolling, menu reachability, restore/reapply, and playback checks are recorded in VALIDATION.md.
 - The watch-page player's separate inset, general camera avoidance, native pinch/accessibility, broad pose coverage, and hardware profiling remain open.
 
+## Automatic gutter fitting — October 27, 2026
+
+- Replaced the YouTube-specific module with `PageLayout`: no host or site-element rules remain. Detect one matching body/root-wrapper gutter with a responsive child and protected fixed/sticky top bar. Validate header descendants and horizontal overflow; roll back failures.
+- Added the universal “Original page layout” control. Generalized the regression suite to 24 real-browser synthetic scenarios, including unrelated origins and standard HTML containers; all passed.
+- Updated the native viewport lab to exercise the same safe-area pattern without YouTube markup. See VALIDATION.md for actual native results.
+- Confirmed current Apple Foundation Models APIs and documented the bounded on-device selection experiment in ARCHITECTURE.md. No AI runtime integration or universal camera avoidance is claimed. Native pinch/collision validation, additional safe operations, held-out evaluation, and eligible physical hardware precede AI enablement.
+
 ## 1. Prove the available space
 
 The starter `DuoBrowser.xcodeproj` now has a SwiftUI iOS app target, shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.

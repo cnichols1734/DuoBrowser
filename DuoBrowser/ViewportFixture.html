@@ -5,8 +5,8 @@
 <title>DuoBrowser viewport lab</title>
 <style>
   :root { color-scheme: light dark; font: 17px/1.55 system-ui; }
-  body { margin: 0; color: light-dark(#202e32, #e2e8e7); background: light-dark(#f1f4f2, #172026); }
-  header { display: flex; justify-content: space-between; align-items: center; padding: 16px; background: light-dark(#dce8e1, #253d35); }
+  body { box-sizing: border-box; padding: 76px env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); margin: 0; color: light-dark(#202e32, #e2e8e7); background: light-dark(#f1f4f2, #172026); }
+  header { box-sizing: border-box; position: fixed; inset: 0 0 auto; z-index: 2; display: flex; justify-content: space-between; align-items: center; padding: 16px max(16px, env(safe-area-inset-right, 0px)) 16px max(16px, env(safe-area-inset-left, 0px)); background: light-dark(#dce8e1, #253d35); }
   button, input { font: inherit; min-height: 44px; }
   main { padding: 24px; max-width: 65ch; margin: auto; }
   h1 { font-size: 2rem; line-height: 1.1; }
@@ -18,11 +18,11 @@
 <div class="ruler" aria-hidden="true"></div>
 <main>
   <h1>A wider view.</h1>
-  <p>This local page helps compare safe-area and full-width rendering. Open browser options to switch modes and display the system's reserved regions.</p>
+  <p>This page deliberately adds safe-area padding to its body and separately protects its header. Automatic layout should widen the content. Turn on Original page layout in browser options to restore the gutter.</p>
   <output id="metrics" aria-label="Viewport dimensions"></output>
   <p id="result" aria-live="polite">The test action has not been pressed.</p>
   <section><h2>What this proves</h2><p>The browser can load a page, keep a stable WebKit view, and query real display regions. The ruler spans the page's available width.</p></section>
-  <section><h2>What comes next</h2><p>Camera avoidance, reversible page adjustments, tabs, and on-device intelligence are planned. They are not implemented in this starter.</p></section>
+  <section><h2>What comes next</h2><p>Automatic gutter fitting and tabs are implemented. General camera-control relocation and on-device intelligence remain future work.</p></section>
   <section><h2>Keyboard check</h2><label>Type something <input placeholder="Your text stays in this page"></label><p>Check focus and scrolling with the keyboard open, then change the device pose.</p></section>
   <section><h2>Navigation check</h2><p><a href="https://www.apple.com/">Visit Apple</a>, then use Back to return here. Pinch to zoom and inspect the measurement changes.</p></section>
   <section><h2>End of page</h2><p>These final lines should be reachable above the browser controls.</p></section>
@@ -31,8 +31,9 @@
 const metrics = document.getElementById('metrics');
 function measure() {
   const v = visualViewport;
-  metrics.textContent = `Layout: ${innerWidth} × ${innerHeight} CSS px. Visual: ${v.width.toFixed(0)} × ${v.height.toFixed(0)}. Scale: ${v.scale.toFixed(2)}.`;
+  metrics.textContent = `Layout: ${innerWidth} × ${innerHeight} CSS px. Visual: ${v.width.toFixed(0)} × ${v.height.toFixed(0)}. Scale: ${v.scale.toFixed(2)}. Content: ${document.querySelector('main').getBoundingClientRect().width.toFixed(0)} CSS px.`;
 }
+new ResizeObserver(measure).observe(document.querySelector('main'));
 window.addEventListener('resize', measure);
 visualViewport.addEventListener('resize', measure);
 document.getElementById('test').addEventListener('click', () => {

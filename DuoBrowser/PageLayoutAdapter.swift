@@ -1,9 +1,9 @@
 import WebKit
 
-/// Owns a single, bounded compatibility rule in a separate JavaScript world.
+/// Owns bounded, site-independent layout rules in a separate JavaScript world.
 @MainActor
-final class YouTubeLayoutAdapter {
-    static let world = WKContentWorld.world(name: "DuoBrowser.YouTubeLayout")
+final class PageLayoutAdapter {
+    static let world = WKContentWorld.world(name: "DuoBrowser.PageLayout")
     private weak var webView: WKWebView?
     private var installedScript: WKUserScript?
     private(set) var enabled = true
@@ -11,7 +11,7 @@ final class YouTubeLayoutAdapter {
 
     init(webView: WKWebView) {
         self.webView = webView
-        source = Bundle.main.url(forResource: "YouTubeLayout", withExtension: "js")
+        source = Bundle.main.url(forResource: "PageLayout", withExtension: "js")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         installScript()
     }
@@ -29,7 +29,7 @@ final class YouTubeLayoutAdapter {
         let others = controller.userScripts.filter { $0 !== installedScript }
         controller.removeAllUserScripts()
         others.forEach(controller.addUserScript)
-        let script = WKUserScript(source: source + "\nglobalThis.__duoYouTubeLayout?.update(\(enabled));",
+        let script = WKUserScript(source: source + "\nglobalThis.__duoPageLayout?.update(\(enabled));",
                                   injectionTime: .atDocumentEnd, forMainFrameOnly: true,
                                   in: Self.world)
         controller.addUserScript(script)
@@ -38,7 +38,7 @@ final class YouTubeLayoutAdapter {
 
     func applyToCurrentDocument() {
         guard let webView else { return }
-        webView.callAsyncJavaScript("return globalThis.__duoYouTubeLayout?.update(enabled);",
+        webView.callAsyncJavaScript("return globalThis.__duoPageLayout?.update(enabled);",
                                    arguments: ["enabled": enabled], in: nil, in: Self.world) { _ in }
     }
 }
