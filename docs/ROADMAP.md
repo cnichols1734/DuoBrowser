@@ -37,6 +37,10 @@
 
 ## 1. Prove the available space
 
+### Owner's eight-site smoke test — October 27, 2026
+
+All eight supplied sites were exercised in the native QA simulator; [results and coverage limits](SITE_QA_2026-10-27.md). Prioritize general camera-control protection and browser/site bottom-UI collision handling, then diagnose Google/Meta gutters and the native Open Link path that launched Safari. Logged-in flows, complete sticky/infinite-scroll coverage, and the broader device/accessibility matrix remain open. No runtime fix or AI integration was added in this test pass.
+
 The starter `DuoBrowser.xcodeproj` now has a SwiftUI iOS app target, shared scheme, UIKit/WebKit integration, and iOS 27.1 deployment target. Put app sources under `DuoBrowser/`, synthetic web fixtures under `Tests/Fixtures/`, and meaningful geometry tests under `DuoBrowserTests/`. Use no third-party dependencies initially. Keep the signing team unset for local simulator builds.
 
 Build a diagnostic browser shell with URL entry, back/forward, reload/stop, and a full-width mode. Expose reserved-region and viewport overlays only in development UI. Make a dedicated DuoBrowser QA simulator so existing QA sessions are not disturbed.
