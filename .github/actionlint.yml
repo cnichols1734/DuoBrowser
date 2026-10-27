@@ -1,0 +1,5 @@
+# Public GitHub-hosted preview label, not a self-hosted runner.
+# Remove this compatibility entry when actionlint recognizes it natively.
+self-hosted-runner:
+  labels:
+    - xcode-27

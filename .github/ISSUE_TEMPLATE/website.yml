@@ -1,0 +1,61 @@
+{
+  "name": "Website compatibility",
+  "description": "Report a website interaction or rendering problem.",
+  "labels": [
+    "website compatibility"
+  ],
+  "body": [
+    {
+      "type": "markdown",
+      "attributes": {
+        "value": "Do not post credentials, personal browsing data or exploitable vulnerabilities. For vulnerabilities, follow SECURITY.md."
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "problem",
+      "attributes": {
+        "label": "Website and failing interaction",
+        "description": "Use a public URL without tokens. Describe search, forms, navigation, media or scrolling that fails."
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "input",
+      "id": "environment",
+      "attributes": {
+        "label": "Environment",
+        "description": "App commit/version, Xcode/iOS version, simulator or hardware, and display pose."
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "textarea",
+      "id": "evidence",
+      "attributes": {
+        "label": "Evidence and verification",
+        "description": "Reproduction steps and redacted screenshots. State whether Original Layout changes the result; distinguish tested behavior from assumptions."
+      },
+      "validations": {
+        "required": true
+      }
+    },
+    {
+      "type": "checkboxes",
+      "id": "privacy",
+      "attributes": {
+        "label": "Before submitting",
+        "options": [
+          {
+            "label": "I removed personal data and this is not a private vulnerability report.",
+            "required": true
+          }
+        ]
+      }
+    }
+  ]
+}

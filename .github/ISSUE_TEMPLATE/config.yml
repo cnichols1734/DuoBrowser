@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/cnichols1734/DuoBrowser/blob/main/SECURITY.md
+    about: Do not disclose exploitable vulnerabilities in public issues.
+  - name: Questions and discussion
+    url: https://github.com/cnichols1734/DuoBrowser/discussions
+    about: Discuss ideas and ask general questions.

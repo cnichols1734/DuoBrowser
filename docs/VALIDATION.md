@@ -6,7 +6,7 @@ October 26, 2026, America/Chicago.
 
 - Xcode 27.1 Debug simulator build succeeded for arm64 and x86_64 using the shared DuoBrowser scheme and iOS 27.1 deployment target.
 - No Swift compiler warnings remained after correcting the WebKit navigation decision-handler actor annotation. Xcode emitted its standard AppIntents metadata-skipped notice because this app has no AppIntents dependency.
-- A dedicated **DuoBrowser QA** iOS 27.1 simulator was created and booted. Identifier: `3ABC97EF-86C9-42F1-A7CF-63089F2FD617`.
+- A dedicated **DuoBrowser QA** iOS 27.1 simulator was created and booted.
 - `simctl install` succeeded and `simctl appinfo` confirmed `dev.local.DuoBrowser`, version 0.1.0 (1).
 - `simctl launch` succeeded and returned process ID 73046. This confirms launch, not completed interaction testing.
 - Local documentation links and Git whitespace checks passed.

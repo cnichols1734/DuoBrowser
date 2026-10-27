@@ -23,4 +23,4 @@ For browser implementation, build the simulator target and exercise the affected
 
 Check closed/open/partially folded poses, rotation, keyboard, pinch zoom, Reduce Motion, VoiceOver, larger text, and system occlusion changes. Simulator checks do not replace hardware checks for touch, battery, performance, or Apple Intelligence.
 
-Keep scratch files and build products in ignored work/ or DerivedData/. Record outcomes and remaining gaps in the roadmap. Do not create remotes, publish, or upload browsing data as part of local setup.
+Keep scratch files and build products in ignored work/ or DerivedData/. Record outcomes and remaining gaps in the roadmap. Never upload browsing data. The owner authorized preparation of the existing private GitHub repository for open source on a dedicated branch and PR. Do not change visibility without explicit final approval. All changes go through PRs; the owner retains merge and release authority. Follow CONTRIBUTING.md, SECURITY.md and RELEASING.md. Do not weaken protections, add collaborators or publish an App Store build to work around a blocked review.

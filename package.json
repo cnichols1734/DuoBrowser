@@ -1,0 +1,12 @@
+{
+  "name": "duobrowser-development-checks",
+  "private": true,
+  "version": "0.0.0",
+  "license": "MIT",
+  "scripts": {
+    "test": "node Tests/run-layout-tests.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.64.1"
+  }
+}

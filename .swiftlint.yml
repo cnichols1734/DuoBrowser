@@ -1,0 +1,14 @@
+# Start with correctness checks; avoid a source-format rewrite during transition.
+only_rules:
+  - duplicate_imports
+  - duplicate_enum_cases
+  - duplicate_conditions
+  - unused_control_flow_label
+  - unused_optional_binding
+included:
+  - DuoBrowser
+  - Tests
+excluded:
+  - work
+  - DerivedData
+  - node_modules

@@ -10,4 +10,16 @@ xcuserdata/
 !.env.example
 *.p12
 *.mobileprovision
+*.provisionprofile
+*.pem
+*.key
+*.p8
+*.cer
+*.ipa
+*.xcarchive
+*.xcconfig
+ExportOptions*.plist
+node_modules/
+playwright-report/
+test-results/
 
