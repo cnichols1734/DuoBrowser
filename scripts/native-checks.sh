@@ -39,6 +39,7 @@ python3 - <<'PY'
 import socket
 for port in (8765, 8443):
     with socket.socket() as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(('127.0.0.1', port))
 PY
 openssl req -x509 -newkey rsa:2048 -nodes -keyout work/native-ci/fixture-key.pem \
