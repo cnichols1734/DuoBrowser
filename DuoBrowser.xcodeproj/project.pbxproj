@@ -5,6 +5,8 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"41D68964F29244DDA0000001" = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>";};
+"41D68964F29244DDA0000002" = {isa = PBXBuildFile; fileRef = "41D68964F29244DDA0000001";};
 "AABB11223344556677880003" = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/NativeBrowserChecks.swift"; sourceTree = "<group>";};
 "AABB11223344556677880004" = {isa = PBXBuildFile; fileRef = "AABB11223344556677880003";};
 "AABB11223344556677880001" = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = CameraAvoidance.js; sourceTree = "<group>";};
@@ -141,6 +143,7 @@
 		"482182478A3ECD4745BEA917" = {
 			"isa" = "PBXGroup";
 			"children" = (
+				"41D68964F29244DDA0000001",
 				"80E262EA78178C607CB98FD6",
 				"B7F643DAAB884B9ACBDD9281",
 				"D4047B891DE2FE8B64BC4CE2",
@@ -207,6 +210,7 @@
 			"isa" = "PBXResourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+				"41D68964F29244DDA0000002",
 				"280EC78FD2F34318F57091C8",
 				"AABB11223344556677880002",
 "B81E92E7689834E497F90266",
@@ -243,6 +247,7 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
                 "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
                 "INFOPLIST_KEY_NSMicrophoneUsageDescription" = "Allow websites you approve to use the microphone for calls or recording.";
                 "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription" = "Allow websites you approve to use your location while browsing.";
@@ -283,6 +288,7 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
+				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
                 "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
                 "INFOPLIST_KEY_NSMicrophoneUsageDescription" = "Allow websites you approve to use the microphone for calls or recording.";
                 "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription" = "Allow websites you approve to use your location while browsing.";

@@ -109,3 +109,7 @@ The immediate next release dependencies are signed credential/passkey eligibilit
 Added adaptive large-text browser/tab/library controls, constrained address editing, explicit accessibility traits/order, dynamic bottom obscuration and error announcements. Preview images now have a 640-pixel dimension ceiling and 8 MiB cache budget with recent-tab priority. Reclamation uses isolated, bounded DOM checks and protects inline-event pages as well as forms/scripts. See [measured results and remaining gates](ACCESSIBILITY_MEMORY_2026-10-27.md) and [the owner device credential checklist](IPHONE_PASSWORD_PASSKEY_CHECKLIST.md). Physical spoken/gesture coverage, WebKit-inclusive memory/energy endurance and correctly provisioned arbitrary-site passkeys remain separate release work.
 
 - Rotated native controls now use active system occlusion geometry to avoid the bottom camera without narrowing the page; final Debug/Release builds and 30 native checks passed. See the accessibility/memory follow-up for limits.
+
+## App icon — October 27, 2026
+
+Added the first compass app icon: blue field, ivory ring, vermilion needle. Asset catalog compilation and simulator build passed; installed and visually checked at Home Screen size on DuoBrowser QA. See [artwork and prompt](APP_ICON.md). The original 1024-pixel opaque raster is wired into Debug and Release; custom dark/tinted layers and hardware appearance remain unverified.
