@@ -15,7 +15,9 @@ Only Christopher Nichols (`@cnichols1734`) may authorize an official release or 
 
 ## Protection and review edge cases
 
-Require PRs, CI, code-owner review, one approval, stale-review dismissal, resolved conversations, and no force pushes/deletions where GitHub supports them. Owner-authored PRs cannot be self-approved. With admin enforcement and no second authorized reviewer, such a PR remains blocked; the owner must explicitly decide how to handle that governance constraint. Automation must not weaken protection or add a collaborator to bypass it.
+Every change must go through a PR with passing, up-to-date CI and resolved conversations. Force pushes and branch deletion remain blocked, including for the owner. A separate review ruleset requires approval and code-owner review, dismisses stale approvals, and requires approval after the latest push. Its only bypass actor is Christopher Nichols (`@cnichols1734`), and the bypass works only through PRs. He may merge his own PRs without another reviewer or make the final review decision on community PRs. This exception does not bypass the separate CI/PR/integrity protections and does not authorize anyone else to merge or publish releases.
+
+GitHub may present the review exception as a bypass confirmation in the merge UI. The owner can use it after the mandatory checks pass. Automation must not weaken protection, add bypass actors or assume that owner bypass privileges authorize a merge; explicit owner authorization is still required for agent-initiated merges and releases.
 
 Repository administrators can change settings; GitHub configuration cannot remove the owner's ultimate administrative authority. Outside contributors receive no repository write/admin rights or release credentials. Keep auto-merge disabled, including for Dependabot. See `docs/OPEN_SOURCE_PREPARATION.md` for verified settings and any plan/API limitations.
 

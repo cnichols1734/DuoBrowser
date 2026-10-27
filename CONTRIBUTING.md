@@ -10,7 +10,7 @@ Help make everyday browsing reliable on the Duo's outer display. Small, focused 
 4. Make a focused change and run the relevant [checks](Tests/README.md).
 5. Push your branch and open a pull request against `main`. Explain the problem, solution, verification, and any remaining gaps. Include before/after screenshots for UI changes, with personal data removed.
 
-Every contribution goes through a pull request. Passing checks or submitting a PR does not guarantee acceptance. Christopher Nichols (`@cnichols1734`) retains final authority over direction, merges, and releases. Other maintainers receive authority only through an explicit owner decision. Do not merge, enable auto-merge, or publish a release on the owner's behalf.
+Every contribution goes through a pull request. Passing checks or submitting a PR does not guarantee acceptance. Christopher Nichols (`@cnichols1734`) retains final authority over direction, merges, and releases. His account has a review-only exception for merging PRs without a second reviewer; PRs and passing CI remain mandatory. Other maintainers receive authority only through an explicit owner decision. Do not merge, enable auto-merge, or publish a release on the owner's behalf without explicit authorization.
 
 ## Coding conventions
 

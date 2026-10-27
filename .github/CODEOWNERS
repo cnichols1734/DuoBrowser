@@ -1,2 +1,2 @@
-# Owner review is required for every change, including CI and release policy.
+# All changes route to the owner; his review-only ruleset bypass retains final authority.
 * @cnichols1734

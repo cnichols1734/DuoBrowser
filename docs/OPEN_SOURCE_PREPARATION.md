@@ -2,7 +2,7 @@
 
 Pre-publication snapshot, October 27, 2026. Repository: `cnichols1734/DuoBrowser`. Preparation branch: `chore/open-source-preparation`. The repository was private when the settings below were audited. This document records preparation-time findings, not live repository status. No App Store publication is authorized or configured.
 
-The owner subsequently authorized a one-time review exception for PR #1, restoration of the original protections immediately after merging, and public visibility only after restoration. That exception does not authorize future review bypasses or App Store distribution. Public security settings must be verified after the visibility change.
+The owner subsequently approved public visibility and merging PR #1. He then replaced the proposed one-time exception with an explicit permanent owner-only review exception: the `Main review - owner final authority` ruleset names only user `cnichols1734` (ID 69216272), with bypass permitted only through pull requests. Separate classic protection continues to enforce PRs, passing up-to-date CI, resolved conversations, linear history and no force pushes/deletions, including for administrators. No one-time weakening/restoration is needed under this final policy. Public security settings must still be verified after the visibility change. App Store distribution remains separately authorized work.
 
 ## What changed
 
@@ -40,7 +40,7 @@ There are no changes to application source, app assets, entitlements, bundle ID,
 1. **Secret scanning/push protection:** GitHub rejected enablement with “Secret scanning is not available for this repository.” These native controls are not enabled. The redacted Gitleaks CI scan is additional protection, not a pre-push block. Re-enable and verify both native settings immediately after separately approved public visibility, or use an eligible private plan/product.
 2. **Private vulnerability reporting:** the private-repository endpoint returned 404. Public launch must enable and verify the form. Email disclosure is usable now and remains the fallback; no public issue is requested for vulnerabilities.
 3. **Public fork approval policy:** GitHub rejected the all-external-contributors setting while private (422). The private-fork policy is enabled now. Set and verify `all_external_contributors` after publication, before approving external workflow runs. Do not expose secrets or use self-hosted runners.
-4. **Owner-authored PRs:** one-review protection plus admin enforcement prevents self-approval. This preparation PR is submitted under the owner's account, and there is no second authorized reviewer. It cannot satisfy its own approval requirement. Do not bypass or weaken protection automatically; the owner must explicitly resolve this governance issue before merge. No new collaborator was added.
+4. **Owner-authored PRs (resolved by owner decision):** the original one-review policy blocked self-approval. The owner explicitly approved a permanent review-only exception for his individual account. The review ruleset still applies to everyone else; the separate PR/CI/integrity protection applies to the owner too. No new collaborator or broad administrator bypass was added. See `RELEASING.md` for the final governance policy.
 5. **Personal history:** historical commits retain the author email, prior workspace path and local simulator identifier. No secrets were detected. Preserving history was recommended because these are not credentials; the final visibility approval must take this exposure into account.
 6. **Runner availability:** `xcode-27` is a GitHub-hosted public-preview runner. Its published inventory includes Xcode 27.1 and the Duo 27.1 simulator. CI selects that toolchain explicitly and fails rather than silently skipping if it is unavailable. Public runner/billing availability is subject to the repository's account; do not replace it with a personal credential-bearing machine.
 7. **Licensing policy:** the official project remains free, without ads/subscriptions/tracking. MIT still permits downstream commercial forks. Third-party website content in screenshots and Apple's SDKs/trademarks are not relicensed.
@@ -55,7 +55,7 @@ The final full-history Gitleaks scan after adding the preparation commit found z
 
 ## Publication checklist — requires explicit approval
 
-- Resolve the preparation PR's owner-authored-review constraint; review and merge its contents under an explicitly approved process.
+- Use the approved owner-only review exception to merge the preparation PR after its final CI passes; verify both protection layers before changing visibility.
 - Confirm the final code/license/docs/screenshots and green hosted CI, and acknowledge retained historical metadata.
 - Obtain explicit owner approval to change the existing repository to public. Neither this document nor the preparation request is that approval.
 - After approval, change visibility once, verify anonymous repository access, README/license/templates, and rerun/check CI.
