@@ -5,6 +5,22 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"AABB11223344556677880003" = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/NativeBrowserChecks.swift"; sourceTree = "<group>";};
+"AABB11223344556677880004" = {isa = PBXBuildFile; fileRef = "AABB11223344556677880003";};
+"AABB11223344556677880001" = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = CameraAvoidance.js; sourceTree = "<group>";};
+"AABB11223344556677880002" = {isa = PBXBuildFile; fileRef = "AABB11223344556677880001";};
+"E6C3760F5F3110DD8FE0F733" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrivacyCurtain.swift; sourceTree = "<group>"; };
+"7F955E30291338E4D69E375F" = { isa = PBXBuildFile; fileRef = "E6C3760F5F3110DD8FE0F733"; };
+"59E959EB10D984CD4F00890A" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressField.swift; sourceTree = "<group>"; };
+"63C063A68990F1D3559C68D2" = { isa = PBXBuildFile; fileRef = "59E959EB10D984CD4F00890A"; };
+"499E8B100639209979D2F241" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserLibrary.swift; sourceTree = "<group>"; };
+"8AD28E05760063DD7CB8F2FC" = { isa = PBXBuildFile; fileRef = "499E8B100639209979D2F241"; };
+"D4047B891DE2FE8B64BC4CE2" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserDownloads.swift; sourceTree = "<group>"; };
+"8706D5B2472C6173E7D3BED0" = { isa = PBXBuildFile; fileRef = "D4047B891DE2FE8B64BC4CE2"; };
+"B7F643DAAB884B9ACBDD9281" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPresentation.swift; sourceTree = "<group>"; };
+"633D407FA64D304DEE8BABB4" = { isa = PBXBuildFile; fileRef = "B7F643DAAB884B9ACBDD9281"; };
+"80E262EA78178C607CB98FD6" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserData.swift; sourceTree = "<group>"; };
+"06B4A2B885D6259AD4F62EDE" = { isa = PBXBuildFile; fileRef = "80E262EA78178C607CB98FD6"; };
 		"A8D627F57636C97D96D5E52A" = {
 			"isa" = "PBXFileReference";
 			"lastKnownFileType" = "sourcecode.javascript";
@@ -125,11 +141,19 @@
 		"482182478A3ECD4745BEA917" = {
 			"isa" = "PBXGroup";
 			"children" = (
-				"1B172DB0E1409A383FFDBFA9",
+				"80E262EA78178C607CB98FD6",
+				"B7F643DAAB884B9ACBDD9281",
+				"D4047B891DE2FE8B64BC4CE2",
+				"499E8B100639209979D2F241",
+				"59E959EB10D984CD4F00890A",
+				"E6C3760F5F3110DD8FE0F733",
+				"AABB11223344556677880003",
+"1B172DB0E1409A383FFDBFA9",
 				"DC6E03491E473D6150654B34",
 				"F0DDEC4061E452CE6E19989D",
 				"030053585739E548397F415E",
-				"A8D627F57636C97D96D5E52A",
+				"AABB11223344556677880001",
+"A8D627F57636C97D96D5E52A",
 				"27FE0606548118518F503C28",
 				"087AA246BB6F0D9BA26D04E8",
 				"5C3BCA4109E699E3ED6C8AAA",
@@ -160,7 +184,14 @@
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
-				"F360E0675207D175A12214E6",
+				"06B4A2B885D6259AD4F62EDE",
+				"633D407FA64D304DEE8BABB4",
+				"8706D5B2472C6173E7D3BED0",
+				"8AD28E05760063DD7CB8F2FC",
+				"63C063A68990F1D3559C68D2",
+				"7F955E30291338E4D69E375F",
+				"AABB11223344556677880004",
+"F360E0675207D175A12214E6",
 				"A58ACDC7E2BA8C191B8AABE8",
 				"9088E8A43DC789E9511587D1",
 				"E52494181822B80E3505C2DA",
@@ -177,7 +208,8 @@
 			"buildActionMask" = 2147483647;
 			"files" = (
 				"280EC78FD2F34318F57091C8",
-				"B81E92E7689834E497F90266",
+				"AABB11223344556677880002",
+"B81E92E7689834E497F90266",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
@@ -211,6 +243,9 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
+                "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
+                "INFOPLIST_KEY_NSMicrophoneUsageDescription" = "Allow websites you approve to use the microphone for calls or recording.";
+                "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription" = "Allow websites you approve to use your location while browsing.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
 				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -248,6 +283,9 @@
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
+                "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
+                "INFOPLIST_KEY_NSMicrophoneUsageDescription" = "Allow websites you approve to use the microphone for calls or recording.";
+                "INFOPLIST_KEY_NSLocationWhenInUseUsageDescription" = "Allow websites you approve to use your location while browsing.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
 				"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
 				"INFOPLIST_KEY_UISupportedInterfaceOrientations" = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";

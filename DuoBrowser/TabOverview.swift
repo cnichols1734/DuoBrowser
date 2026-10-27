@@ -7,16 +7,20 @@ struct TabOverview: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var filteredTabs: [BrowserModel] {
-        session.tabs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
+        session.visibleTabs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
             || $0.siteName.localizedCaseInsensitiveContains(search) }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Tabs")
+            Text(session.privateMode ? "Private Tabs" : "Tabs")
                 .font(.title2.weight(.bold))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 20)
+            if session.privateMode {
+                Text("Private tabs are not saved. Closing them clears this private session.")
+                    .font(.footnote).foregroundStyle(.secondary).padding(.horizontal, 24).padding(.bottom, 8)
+            }
             HStack(spacing: 10) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("Search Tabs", text: $search)
@@ -48,10 +52,19 @@ struct TabOverview: View {
                 if filteredTabs.isEmpty { ContentUnavailableView.search(text: search) }
             }
             ZStack {
-                Text("\(session.tabs.count) \(session.tabs.count == 1 ? "Tab" : "Tabs")")
-                    .font(.subheadline.weight(.semibold))
-                    .padding(.horizontal, 22).frame(height: 48)
-                    .glassEffect(.regular, in: Capsule())
+                Menu {
+                    Button("Tabs") { session.switchMode(false) }
+                    Button("Private") { session.switchMode(true) }
+                    if session.privateMode {
+                        Button("Close All Private Tabs", role: .destructive) { session.closePrivateTabs() }
+                    }
+                } label: {
+                    Text(session.privateMode ? "Private · \(session.visibleTabs.count)" : "\(session.visibleTabs.count) \(session.visibleTabs.count == 1 ? "Tab" : "Tabs")")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 22).frame(height: 48)
+                }
+                .glassEffect(.regular.interactive(), in: Capsule())
+                .accessibilityLabel("Browsing mode, \(session.privateMode ? "Private" : "Tabs"), \(session.visibleTabs.count) open")
                 HStack {
                     Button { session.newTab() } label: {
                         Image(systemName: "plus").font(.title2).frame(width: 48, height: 48)
@@ -71,6 +84,7 @@ struct TabOverview: View {
             .frame(maxWidth: .infinity)
         }
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+
         .ignoresSafeArea(.container, edges: .horizontal)
         .statusBarHidden(true)
     }

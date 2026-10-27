@@ -23,7 +23,7 @@ struct BrowserToolbar: View {
         GeometryReader { geometry in
             let width = min(620, max(240, geometry.size.width - 24))
             let expandedWidth = width - 124
-            let compactWidth = min(expandedWidth, max(110, CGFloat(browser.siteName.count) * 7 + 32))
+            let compactWidth = min(expandedWidth, max(110, CGFloat((browser.transportLabel + browser.privateLabel + browser.siteName).count) * 7 + 32))
             let p = progress
             let capsuleWidth = expandedWidth + (compactWidth - expandedWidth) * p
             GlassEffectContainer(spacing: 8) {
@@ -47,33 +47,24 @@ struct BrowserToolbar: View {
 
                     ZStack {
                         if showingAddress {
-                            TextField("Search or enter website", text: $input)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                                .keyboardType(.webSearch)
-                                .submitLabel(.go)
-                                .focused($editing)
-                                .onAppear { editing = true }
+                            AddressField(text: $input, submit: {
+                                showingAddress = false
+                                browser.navigate(to: input)
+                            }, cancel: { showingAddress = false })
                                 .padding(.horizontal, 14)
-                                .onSubmit {
-                                    editing = false
-                                    showingAddress = false
-                                    browser.navigate(to: input)
-                                }
-                                .accessibilityLabel("Website address or search")
                         } else {
                             Button {
                                 if p > 0.1 { browser.revealControls() }
                                 else { input = browser.address; showingAddress = true }
                             } label: {
-                                Text(browser.siteName)
-                                    .font(.system(size: 17 - 5 * p, weight: .medium))
+                                Text(browser.transportLabel + browser.privateLabel + browser.siteName)
+                                    .font(accessibilityExpanded ? .body.weight(.medium) : .system(size: 17 - 5 * p, weight: .medium))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
-                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.siteName)" : "Address, \(browser.siteName)")
+                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
                             HStack(spacing: 0) {
                                 pageMenu.frame(width: 44, height: 44)
                                 Spacer(minLength: 0)
@@ -119,7 +110,7 @@ struct BrowserToolbar: View {
                         .scaleEffect(1 - 0.2 * p)
                         .allowsHitTesting(p < 0.1)
                         .accessibilityHidden(p > 0.1)
-                        .accessibilityLabel("Tabs, \(session.tabs.count) open")
+                        .accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
                         .contextMenu {
                             Button("New Tab", systemImage: "plus") { session.newTab() }
                             Button("Close This Tab", systemImage: "xmark") { session.close(browser.id) }
@@ -153,10 +144,31 @@ struct BrowserToolbar: View {
             Button("New Tab", systemImage: "plus") { session.newTab() }
             Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }
                 .disabled(!browser.canGoForward)
-            Toggle("Full-width page", isOn: $session.fullWidth)
-            Toggle("Original page layout", isOn: $browser.originalPageLayout)
-            Toggle("Show reserved regions", isOn: $session.showRegions)
-            Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
+            if let url = browser.restorationURL {
+                Button("Share", systemImage: "square.and.arrow.up") { browser.presentation.share(url) }
+                Button("Save Bookmark", systemImage: "bookmark") { session.addBookmark() }
+                Button("Find on Page", systemImage: "doc.text.magnifyingglass") {
+                    browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
+                }
+            }
+            Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
+            Menu("This Website", systemImage: "globe") {
+                Toggle("Original Layout", isOn: $browser.originalPageLayout)
+                Toggle("Desktop Website", isOn: $browser.desktopSite)
+                Toggle("Full-width Page", isOn: $browser.fullWidthLayout)
+            }
+            if browser.availableDownloads > 0 {
+                Button("Save Download to Files", systemImage: "arrow.down.doc") { browser.downloads.exportNext() }
+            }
+            if browser.activeDownloads > 0 {
+                Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
+            }
+            #if DEBUG
+            Menu("Developer") {
+                Toggle("Show reserved regions", isOn: $session.showRegions)
+                Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
+            }
+            #endif
         } label: {
             Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
         }

@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import Combine
 
 struct BrowserView: View {
     @StateObject private var session = BrowserSession()
@@ -12,8 +13,9 @@ struct BrowserView: View {
             .fullScreenCover(isPresented: $session.showingTabs) {
                 TabOverview(session: session)
             }
+            .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
             .onChange(of: scenePhase) { _, phase in
-                if phase != .active { session.save() }
+                if phase != .active { session.background() }
             }
     }
 }
@@ -29,7 +31,7 @@ private struct ActiveBrowserView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
-                BrowserSurface(browser: browser, fullWidth: session.fullWidth, showRegions: session.showRegions)
+                BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
                     .ignoresSafeArea(.container)
                 VStack(spacing: 8) {
                     if let error = browser.errorMessage {
@@ -51,7 +53,7 @@ private struct ActiveBrowserView: View {
             // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
             .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .statusBarHidden(session.fullWidth)
+        .statusBarHidden(browser.fullWidthLayout)
         .onAppear { input = browser.address }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillShowNotification)) { _ in
             keyboardVisible = true
@@ -69,11 +71,10 @@ private struct BrowserSurface: UIViewRepresentable {
     let showRegions: Bool
 
     func makeUIView(context: Context) -> ViewportView {
-        ViewportView(webView: browser.webView)
+        ViewportView(browser: browser)
     }
 
     func updateUIView(_ view: ViewportView, context: Context) {
-        browser.fullWidthLayout = fullWidth
         view.fullWidth = fullWidth
         view.showRegions = showRegions
         view.setNeedsLayout()
@@ -82,12 +83,17 @@ private struct BrowserSurface: UIViewRepresentable {
 
 private final class ViewportView: UIView {
     let webView: WKWebView
+    private weak var browser: BrowserModel?
+    private var lastGeometry = ""
     var fullWidth = true
     var showRegions = false
     private let regionsLayer = CAShapeLayer()
+    private var chromeObserver: AnyCancellable?
+    private var collapse = 0.0
 
-    init(webView: WKWebView) {
-        self.webView = webView
+    init(browser: BrowserModel) {
+        self.browser = browser
+        self.webView = browser.webView
         super.init(frame: .zero)
         backgroundColor = .systemBackground
         addSubview(webView)
@@ -95,6 +101,10 @@ private final class ViewportView: UIView {
         regionsLayer.strokeColor = UIColor.systemOrange.cgColor
         regionsLayer.lineWidth = 2
         layer.addSublayer(regionsLayer)
+        chromeObserver = browser.chrome.$progress.sink { [weak self] progress in
+            self?.collapse = progress
+            self?.updateObscuredArea()
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(webView:)") }
@@ -108,22 +118,35 @@ private final class ViewportView: UIView {
         super.layoutSubviews()
         webView.frame = fullWidth ? bounds : safeAreaLayoutGuide.layoutFrame
         // Reserve scrollable space beneath our floating controls, without narrowing the page.
-        webView.scrollView.contentInset.bottom = 76 + (fullWidth ? safeAreaInsets.bottom : 0)
+        updateObscuredArea()
         // Keep the native indicator at the actual web-view edge, not the Duo's camera-safe inset.
         webView.scrollView.automaticallyAdjustsScrollIndicatorInsets = false
-        webView.scrollView.verticalScrollIndicatorInsets = UIEdgeInsets(
-            top: 0, left: 0, bottom: webView.scrollView.contentInset.bottom, right: 0
-        )
         regionsLayer.frame = bounds
         regionsLayer.isHidden = !showRegions
         let path = UIBezierPath()
         for region in reservedRegions(kind: .occlusion) + reservedRegions(kind: .division) {
-            let area = CGRect(x: region.frame.minX - region.margins.left,
-                              y: region.frame.minY - region.margins.top,
-                              width: region.frame.width + region.margins.left + region.margins.right,
-                              height: region.frame.height + region.margins.top + region.margins.bottom)
+            let area = region.frame
             path.append(UIBezierPath(rect: area))
         }
         regionsLayer.path = path.cgPath
+        let regions: [[String: Double]] = fullWidth ? reservedRegions(kind: .occlusion).filter(\.isActive).map { region in
+            let r = convert(region.frame, to: webView)
+            return ["x": Double(r.minX), "y": Double(r.minY), "width": Double(r.width), "height": Double(r.height)]
+        } : []
+        let key = "\(webView.bounds.size)-\(regions)"
+        if key != lastGeometry {
+            lastGeometry = key
+            browser?.updateGeometry(width: webView.bounds.width, height: webView.bounds.height, regions: regions)
+        }
+    }
+
+    private func updateObscuredArea() {
+        let expanded = 60 + (fullWidth ? safeAreaInsets.bottom : 0)
+        let bottom = expanded + (38 - expanded) * collapse
+        // This public WebKit API moves fixed/sticky page controls above browser chrome.
+        let inset = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+        if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
+        webView.scrollView.contentInset.bottom = 0
+        webView.scrollView.verticalScrollIndicatorInsets = inset
     }
 }

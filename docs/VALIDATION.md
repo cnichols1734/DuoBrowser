@@ -96,3 +96,8 @@ The Git repo and Xcode project exist locally. They have not been registered as a
 ## Eight-site native smoke test — October 27, 2026
 
 Exercised Amazon, Reddit, Google, Wikipedia, Facebook, Instagram, NY Times, and Walmart in the installed app. See [the full site matrix](SITE_QA_2026-10-27.md) for exact interactions, findings, and limits. Main open findings are camera/control collisions, bottom site UI overlapping browser chrome, Google's remaining results gutter, left-weighted Meta login layouts, and a native link-menu path opening Safari. All eight loaded, but this is not an eight-site pass: authenticated flows and some sticky/infinite-scroll states remain unverified. Walmart's cart survived an open/closed fold check. No application code changed; no new build or automated-test result is claimed for this documentation-only pass.
+
+
+## Production foundations — October 27, 2026
+
+The audit was committed before code changes. See [the implementation and verification report](PRODUCTION_IMPLEMENTATION_2026-10-27.md) for current feature statuses, sources, all test limits, and the prioritized remaining release gates. Debug/Release simulator builds passed; 52 portable Swift, 38 DOM-layout and 25 native WebKit checks passed. A separate process-restart test preserved persistent cookie/localStorage. Native file export/import, find, library/share presentation, private grouping and a form-preserving closed/open/partial/closed cycle were exercised. All eight requested public sites loaded with a 466px viewport and zero horizontal overflow in a navigation/layout smoke pass. This is not authenticated-site, hardware, credential-provider, full accessibility or production-readiness certification.

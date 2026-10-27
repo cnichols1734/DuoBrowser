@@ -84,3 +84,11 @@ Generate a small set of permitted operations from measured geometry first: keep 
 Revalidate document identity, element identity, viewport geometry, clipping, focus, hit targets, and collisions after selection. Cancel stale requests on navigation/pose changes, enforce a deadline, keep ephemeral decisions local, and fall back immediately on unavailable/refused/invalid responses. Model requests belong on new ambiguous layouts, not scrolling or animation frames. Do not block browsing while waiting.
 
 Before enabling this layer, evaluate the deterministic collision operations on a varied held-out fixture corpus and eligible physical hardware. Compare successful repairs, broken actions, fallback rate, latency, and energy with and without AI. Keep AI only if it improves those outcomes. No model-quality or hardware-performance claim has been established by the current simulator work.
+
+## Production foundations — October 27, 2026
+
+The [production implementation report](PRODUCTION_IMPLEMENTATION_2026-10-27.md) supersedes the initial tab/storage description above. Models now create web views lazily, profiles separate persistent and private stores, and validated atomic app archives contain only normal tab records, history, bookmarks and normal site preferences. Private state and opaque interaction state never enter the archive. Static-only background reclamation preserves interactive/unsent work; it is a soft memory target, not an OOM guarantee.
+
+WKUIDelegate provides native dialogs, origin prompts, context actions and supplied-configuration child windows. WKDownload uses unique temporary destinations and native Files export. WebKit retains default file/photo upload presentation and certificate verification. No arbitrary native message bridge is added.
+
+`ViewportView` forwards actual occlusion frames (which already include system margins) into a named JavaScript content world. `CameraAvoidance.js` samples bounded hit-test locations and attempts only local verified control translations. Existing gutter fitting remains separate and reversible. Public `obscuredContentInsets` replaces the earlier bottom scroll-padding workaround so WebKit can reposition fixed/sticky website controls. No AI inference occurs.

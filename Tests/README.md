@@ -29,3 +29,34 @@ node Tests/PageLayoutTests.cjs
 The app has no Playwright dependency. The same exported suite ran through the available browser tool. All 24 cases passed, covering unrelated origins, generic HTML and custom elements, body/root-wrapper padding, both header variants, restoration of newer author styles, ordinary article spacing, header movement, overflow, failed expansion, scan budgets, ambiguity, subframe isolation, editing/zoom deferral, hydration, SPA replacement, disable cancellation, side changes, convergence, and header actions.
 
 The original 16-case YouTube suite is retained in Git history; its regression scenarios are incorporated here. Native WebKit checks use the bundled viewport lab, which intentionally declares safe-area body padding and an independently padded fixed header without any site-specific markup. The lab reports actual content width and keeps its header action and input available for rollback/focus checks. Chromium fixtures do not establish native pinch, hardware, or universal website compatibility.
+
+## Production data / policy checks
+
+```sh
+swiftc DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/BrowserDataTests.swift -o work/browser-data-tests
+work/browser-data-tests
+```
+
+These cover host/port/search parsing, unsafe schemes/credentials, bounded archives, unknown versions, corrupt-primary recovery, deletion of both history generations and invalid scroll positions. `CameraAvoidanceTests.cjs` supplies 14 real-layout checks via `runCameraTests(page, source)`: free destinations, hit testing, rollback, author styles/transforms, occupied space, editing, zoom, geometry conversion and mutation convergence. Its CommonJS export is the function itself, as is `PageLayoutTests.cjs`.
+
+## Native WebKit integration harness (Debug only)
+
+`NativeBrowserChecks.swift` is compiled only in Debug. `--browser-checks` replaces the normal app view with a harness using synthetic loopback fixtures, isolated defaults and temporary archives. It does not read normal history or modify default-profile cookies. The persistent-cookie test uses a separate named WebKit data store and clears its data after verification.
+
+1. Start `python3 Tests/native_fixture_server.py` (binds only `127.0.0.1:8765`). For the fail-closed TLS check, generate a temporary self-signed fixture certificate and start the second loopback server in another terminal:
+
+   ```sh
+   openssl req -x509 -newkey rsa:2048 -nodes -keyout work/fixture-key.pem -out work/fixture-cert.pem -days 1 -subj '/CN=localhost' -addext 'subjectAltName=IP:127.0.0.1'
+   python3 Tests/native_fixture_server.py work/fixture-cert.pem work/fixture-key.pem
+   ```
+
+   Do not trust or install this certificate; rejection is the expected test result.
+2. Build/install the Debug app on the **DuoBrowser QA** simulator (`3ABC97EF-86C9-42F1-A7CF-63089F2FD617`).
+3. Launch `xcrun simctl launch 3ABC97EF-86C9-42F1-A7CF-63089F2FD617 dev.local.DuoBrowser --browser-checks` and inspect the rendered results. Its receipt is in the app data container at `Library/Caches/NativeBrowserChecks.txt`. A rerun requires terminating the running app first; check that the receipt has changed.
+4. To verify disk persistence across actual process termination, launch with `--browser-checks --persistent-cookie-write`, wait for `Library/Caches/PersistentCookieChecks.txt`, terminate the app, then launch with `--browser-checks --persistent-cookie-read`. The read phase verifies cookie/localStorage retention and clears that test profile.
+5. Optional live smoke pass: `--browser-checks --site-checks`. This visits only the eight owner-supplied public sites in an ephemeral profile and records viewport/overflow/scroll metrics plus navigation errors in `Library/Caches/LiveSiteChecks.txt`. It never logs in or submits forms. A “loaded” record is a navigation smoke result, not a functional or authenticated-site pass.
+6. Relaunch without arguments to return to the normal browser. Stop the fixture server when finished.
+
+Native checks cover private cookie/localStorage boundaries, private archive exclusion and teardown, live form preservation, supplied-configuration POST windows/opener/close, exactly-once dialog cancellation, fixed-footer obscuration, protected interactive tabs, static-page reclamation/scroll restoration, crash-recovery messaging, download filename sanitization and lazy cold restoration. The process-termination error callback is invoked directly for its message test; that assertion does not simulate an actual WebKit crash. UI tests of alerts, find, share, library, file export/import and fold/pose are recorded in the production implementation report.
+
+The normal UI remains available in Debug without test arguments. The harness and developer menu cannot be invoked in Release. No test result substitutes for signed-device password/passkey, hardware permissions, assistive-technology or performance testing.

@@ -96,3 +96,9 @@ For each comparison, record device/runtime, pose, site/fixture version, zoom, br
 ## Next owner input
 
 The owner approved PRODUCT_BRIEF.md's direction, including bottom floating controls and the initial opt-in adaptation experiment. Add this folder as a local project in the app, then move the planning chat into that project. Supply frequently visited sites when convenient; synthetic fixtures can proceed independently.
+
+## Production audit and implementation — October 27, 2026
+
+The requested P0/P1/Duo gap analysis was completed before code changes: [frozen audit and dependency plan](PRODUCTION_AUDIT_2026-10-27.md). Subsequent profile/privacy, durable-state, navigation, transfer, library and geometry work is described in [implementation and release gates](PRODUCTION_IMPLEMENTATION_2026-10-27.md). That report supersedes earlier “future work” descriptions for those features, without converting unverified credential/hardware behavior into a pass.
+
+The immediate next release dependencies are signed credential/passkey eligibility, physical permissions and accessibility, hostile/complex layout fallback, and low-memory/endurance validation. There is still no on-device AI implementation or reason to require it for basic browsing.
