@@ -12,7 +12,7 @@ work/tab-archive-tests
 
 The 21 scrolling checks cover continuous progress, settling, direction reversal, small jitter, programmatic movement, tap-to-reveal during momentum, short pages, keyboard/accessibility suppression, elastic bounce, and fast overshooting flings.
 
-The 12 archive checks cover stable IDs and selection, ordered restoration, duplicate IDs, missing selections, invalid/unsafe destinations, and restoring 100 tab records without truncation.
+The 12 archive checks cover stable IDs and selection, ordered restoration, duplicate IDs, missing selections, invalid/unsafe destinations, and restoring 102 tab records without truncation.
 
 These portable tests do not prove UI interaction, live tab lifecycle, animation frame rate, native accessibility, or glass appearance. Verify those in the running app; see `docs/VALIDATION.md` for results and gaps.
 
@@ -43,9 +43,9 @@ These cover host/port/search parsing, unsafe schemes/credentials, bounded archiv
 
 `CameraSettlingTests.cjs` adds 50 synthetic Chromium checks: horizontal animation positions, no added top gap or glyph scaling, stable line rectangles during scrolling, natural paragraph spacing, reading offset, live links, held touch/momentum, interruption, repeated settling, growing/removed regions, Reduce Motion, VoiceOver policy, editing/selection/zoom deferral, complex-layout fallback, cancellation, invalid geometry, observer convergence, author edits, privacy, grouped controls, hit testing, scan limits, left-side fitting, partially visible paragraphs, full-width-island fallback, removal of offscreen fitting, anchored animation frames, reverse scrolling, site smooth-scroll CSS and visible-word anchoring through width changes.
 
-`NestedNewsTests.cjs` adds eleven checks using `/nested-news`: compact sticky headers with closed offcanvas navigation, nested grid article shells, link behavior, repeated settling, restoration, and visible-word anchoring below sticky site chrome.
+`NestedNewsTests.cjs` adds thirteen checks using `/nested-news`: compact sticky headers with closed offcanvas navigation, nested grid article shells, link behavior, repeated settling, restoration, and visible-word anchoring below sticky site chrome.
 
-The native harness's `--browser-checks --settling-checks` mode runs 29 checks against the exact bundled script in WKWebView's isolated content world. It writes `Library/Caches/CameraSettlingChecks.txt`; the normal `scripts/native-checks.sh` run includes it. Its synthetic region updates and pointer events establish layout behavior, not physical touch or system geometry reporting.
+The native harness's `--browser-checks --settling-checks` mode runs 30 checks against the exact bundled script in WKWebView's isolated content world. It writes `Library/Caches/CameraSettlingChecks.txt`; the normal `scripts/native-checks.sh` run includes it. Its synthetic region updates and pointer events establish layout behavior, not physical touch or system geometry reporting.
 
 For actual system occlusion, build the separate [Island Lab companion](IslandLab/README.md), start its Live Activity and return to the browser's loopback `/settling` fixture. The companion is intentionally outside the shipping app. Results and remaining manual/hardware coverage belong in the [settling validation report](../docs/SCROLL_SETTLING_2026-10-28.md).
 

@@ -9,10 +9,11 @@ module.exports = async function (page, source) {
   const send=(enabled=true)=>p.evaluate(enabled=>__duoCamera.update({enabled,width:466,height:678,regions:[{x:382,y:0,width:84,height:220}]}),enabled);
   try {
     await p.goto('https://nested.example/');await p.evaluate(source);
-    const before=await box('reading'),sign=await box('signin'),drawer=await box('closed-menu');
+    const before=await box('reading'),sign=await box('signin'),drawer=await box('closed-menu'),widget=await box('fixed-widget');
     await send();await p.waitForTimeout(900);
     check((await box('signin')).right<=374 && (await box('signin')).y===sign.y,'sticky header control moves sideways without moving its header');
     check((await box('reading')).right<=374 && Math.abs((await box('reading')).y-before.y)<1,'deep article inside grid shells fits without lifting text');
+    check(JSON.stringify(await box('fixed-widget'))===JSON.stringify(widget),'complex following content preserves its fixed descendant while text fits');
     check(JSON.stringify(await box('closed-menu'))===JSON.stringify(drawer),'closed offcanvas navigation retains its original geometry');
     for(let i=0;i<3;i++){await p.evaluate(()=>dispatchEvent(new Event('scroll')));await p.waitForTimeout(850)}
     check((await box('signin')).right<=374,'sticky header stays fitted across repeated settling passes');
@@ -26,6 +27,11 @@ module.exports = async function (page, source) {
     await p.evaluate(()=>__duoCamera.update({enabled:true,width:466,height:678,regions:[]}));await p.waitForTimeout(950);
     check(await p.evaluate(()=>![...document.querySelector('.toolbar').attributes].some(a=>a.name.startsWith('data-duo-camera-'))),'removing the island releases owned header sizing');
     await send(false);check((await box('reading')).width===before.width && (await box('signin')).x===sign.x,'original layout restores nested article and sticky header');
+    await p.evaluate(()=>scrollTo(0,document.getElementById('reading').getBoundingClientRect().bottom+scrollY-45));
+    const followingTop=(await box('following')).y;
+    await send();await p.waitForTimeout(950);
+    check((await box('following')).right<=374 && Math.abs((await box('following')).y-followingTop)<1 && (await box('reading')).width===before.width,'a paragraph hidden by sticky chrome cannot roll back the visible paragraph fit');
+    await send(false);
     await p.evaluate(()=>{
       const n=document.getElementById('reading');
       n.innerHTML='Earlier words fill the lines above the visible reading position. '.repeat(3)+'<br><span id="keptWord">Keep</span> these visible words while the earlier lines rewrap beside the camera.';

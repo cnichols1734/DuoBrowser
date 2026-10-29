@@ -171,6 +171,8 @@
     // Follow a bounded local block flow through nested site shells. Grid/flex
     // ancestors are allowed only around that flow, with measured geometry guards.
     // Offscreen subtrees need no animation or descendant walk.
+    // Complex siblings can follow natural flow without a transform that would
+    // reparent their fixed descendants; their outer geometry is still validated.
     const result = [el], guards = [], ancestors = [];
     let inspected = 0;
     for (let current = el, depth = 0; current !== document.body && depth < 24; depth++) {
@@ -337,7 +339,7 @@
       [...before].every(([n, a]) => {
         const b = rect(n), delta = b.top-a.top;
         return near(a.left, b.left) && near(a.width, b.width) && near(a.height, b.height) &&
-          (near(delta, 0) || near(delta, growth) && (a.top >= innerHeight || a.bottom <= 0 || followers.includes(n))) &&
+          (near(delta, 0) || near(delta, growth)) &&
           (a.top < box.bottom || b.top >= after.bottom-1);
       }) && [...shells].every(([n, a]) => {
         const b = rect(n);
@@ -444,7 +446,7 @@
       for (const el of stable ? nodes : []) {
         if ([...ledger.keys()].some(p => p.contains(el) || el.contains(p)) || !safe(el) || !canAnimateUnit(el)) continue;
         const isText = el.matches(textBlocks);
-        if (isText && geometry.voiceOver) continue;
+        if (isText && (geometry.voiceOver || !reachable(el, true))) continue;
         if (!move(el, regions, isText)) {
           if (isText) fitTextSide(el, regions, followers.get(el));
           else fitControlRow(rows.get(el), regions);
