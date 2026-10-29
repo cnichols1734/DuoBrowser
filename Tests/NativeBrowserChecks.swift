@@ -247,6 +247,33 @@ private final class NativeCheckRunner {
             try await camera(compact); try await pause()
             try check(try await js(model, "document.getElementById('draft').value") as? String == "unsent native draft", "native fitting preserves the form draft")
             try check(try await js(model, "localStorage.length===0 && sessionStorage.length===0") as? Bool == true, "native fitting persists no page content")
+            try await load(model, "nested-news")
+            let newsWidth = try await measure("width")
+            let newsTop = try await measure("top")
+            let signTop = try await measure("top", "signin")
+            let rail = [["x": Double(model.webView.bounds.width)-84, "y": 0.0, "width": 84.0, "height": 250.0]]
+            try await camera(rail); try await pause()
+            let fittedSignTop = try await measure("top", "signin")
+            let fittedNewsTop = try await measure("top")
+            try check((try await measure("right", "signin")) <= model.webView.bounds.width-91 &&
+                abs(fittedSignTop-signTop)<1, "WebKit compacts a sticky header row horizontally")
+            try check((try await measure("right")) <= model.webView.bounds.width-91 &&
+                abs(fittedNewsTop-newsTop)<1, "WebKit fits a deeply nested article inside grid shells")
+            _ = try await js(model, "document.getElementById('signin').click()")
+            try check(try await js(model, "location.hash") as? String == "#signin-result", "WebKit adapted header link remains functional")
+            _ = try await js(model, "document.getElementById('article-link').click()")
+            try check(try await js(model, "location.hash") as? String == "#link-result", "WebKit adapted article link remains functional")
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('following').getBoundingClientRect().top+scrollY-90);dispatchEvent(new Event('pointerup'))")
+            let newsReadingTop = try await measure("top", "following")
+            try await pause()
+            let newsReadingRight = try await measure("right", "following")
+            try check(abs((try await measure("top", "following"))-newsReadingTop)<1 &&
+                newsReadingRight <= model.webView.bounds.width-91, "WebKit retains reading position while nested paragraphs settle")
+            try await camera([]); try await pause()
+            try check(try await js(model, "![...document.querySelector('.toolbar').attributes].some(a=>a.name.startsWith('data-duo-camera-'))") as? Bool == true, "WebKit releases header sizing when the island disappears")
+            try await camera([], enabled: false)
+            try check(abs((try await measure("width"))-newsWidth)<1, "Original Layout restores nested article width")
+
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)

@@ -6,7 +6,7 @@ The implementation waits for touch release and 240 ms without a scroll event, th
 
 The remaining text width must be at least 180 CSS pixels and 60% of the original. The maximum width reduction is 180 pixels. A large expanded island spanning nearly the full viewport has no useful horizontal destination, so fitting falls back instead of pushing content down. Editing, selected text, fullscreen and pinch zoom defer fitting. Original Layout restores the author's styles. Reduce Motion removes animation; VoiceOver keeps reading blocks in their original layout.
 
-This original implementation follows the requested interaction and a review of `hyungchulc/duowide` at `7070b4da2a419a99fc9e3d942a1e756453d7ac9e`. It remains local, deterministic and isolated. No runtime dependency, model call, persistence, page-content telemetry or new native bridge was added.
+This original implementation follows the requested interaction and a review of `hyungchulc/duowide` at `7070b4da2a419a100fc9e3d942a1e756453d7ac9e`. It remains local, deterministic and isolated. No runtime dependency, model call, persistence, page-content telemetry or new native bridge was added.
 
 ## Automated evidence
 
@@ -21,7 +21,7 @@ Convergence checks caught a stylesheet `load` event scheduling another adjustmen
 
 ## Simulator review
 
-Dedicated simulator: **DuoBrowser Motion QA**, iPhone Duo, iOS 27.1. All page content and drafts are synthetic. The existing DuoBrowser QA simulator and its data were preserved.
+Dedicated simulator: **DuoBrowser Motion QA**, iPhone Duo, iOS 27.1. The initial fixture review used only synthetic page content and drafts. A later owner-reported live news layout was inspected locally; no live article content or screenshots are checked in. The existing DuoBrowser QA simulator and its data were preserved.
 
 The runtime has no Clock app, so the separate `Tests/IslandLab` ActivityKit app provides a real timer Live Activity. Its generated project and products stay in ignored `work/`; it is not in DuoBrowser's shipping target. Enable **Page options → Developer → Show system status** to display it while retaining a full-width web view. The switch is Debug-only and session-local; Release keeps its existing status-area policy. Press and hold the compact island to expand it.
 
@@ -48,6 +48,26 @@ The owner reproduced text moving up and out of view while it fitted sideways. A 
 The transaction now anchors the first visible reading block before restoring old styles. For a partially visible paragraph, it anchors a real visible character so line wrapping above the viewport cannot lose the reading position. The scroll correction is synchronous, ignores author smooth-scroll CSS and is excluded from user-scroll interruption handling. The anchored text's animation uses horizontal displacement only. Corrections are bounded and rolled back if a document edge or a newly obstructed destination prevents a safe fit.
 
 New browser regressions sample every animation frame for the 8 px reproduction, offscreen cleanup, reverse scrolling, convergence, smooth-scroll CSS, and a visible word during narrowing/restoration. The native harness includes the same paragraph and visible-word cases. Follow-up validation passed: Debug and Release builds; 89 Chromium layout checks; 52 portable assertions and strict SwiftLint; and the full native run (30 browser, 22 settling, three persistence and 11 memory checks). Native frame assertions compare the actual pre-settle text position with less than one CSS pixel of tolerance for WebKit scroll quantization. On the installed build, the synthetic Read more link placed its heading at the viewport top; the heading remained visible after preceding paragraphs were restored and adjacent text fitted sideways. Native scrolling was also exercised with the real compact activity visible. The earlier hosted CI run failed while waiting for the fixture server to start, before native assertions; the updated PR triggers a fresh run.
+
+## Nested news layout follow-up
+
+The live news article exposed gaps that the original fixtures missed: a sticky header, a closed offcanvas drawer inside that header, deeply nested grid shells, and a large stationary section above the current paragraph. These made the engine fall back even where a safe sideways adjustment was possible.
+
+The engine now supports local block flow through at most 24 ancestors, checking at most 192 sibling elements. Visible movable siblings animate; stationary or offscreen sections are checked without walking and transforming their entire subtrees. Shell widths, paragraph gaps, sibling geometry and document growth are validated before retaining a fit. Direct grid text, transformed/clipped reading containers, and unsupported changes still fall back.
+
+A compact flex/grid control row can reclaim up to 120 pixels of width while retaining at least 60%. Every visible action must retain its size and vertical position, remain tappable, and avoid both other controls and reserved regions. Closed offcanvas panels must keep their geometry. Only individual actions animate, so the header's fixed descendants retain their containing block. Repeated settling retains the row's visible actions as candidates. Existing sticky page bars are excluded when choosing the real visible character to anchor.
+
+The rebuilt app was inspected on the same live article with the real compact Live Activity and status rail. The header logo/sign-in controls and the colliding article paragraph fitted to the side; the header stayed fitted through a native swipe. The temporary CSS-only investigation was removed from the app and its local cache deleted. No site-specific selectors, article content, browsing export or telemetry were added.
+
+`NestedNewsTests.cjs` adds eleven regressions using an original synthetic news fixture: nested grid shells, a large offscreen drawer, unchanged drawer geometry, header and article links, repeated settling, restoration, subsequent scrolling and visible-word anchoring below sticky chrome. All 100 Chromium checks and the 29 native WebKit settling assertions pass, including the seven new nested-layout assertions. The broader native run passed 30 browser, three persistence and 11 memory checks. Debug and Release builds, 52 portable assertions and strict SwiftLint also pass. The first new native-fixture attempt exposed a test-server route error; correcting that route allowed the complete settling suite to run.
+
+| Original layout — synthetic geometry | Fitted header and article — synthetic geometry |
+| --- | --- |
+| ![Nested news original layout](images/nested-news-original.png) | ![Nested news fitted layout](images/nested-news-fitted.png) |
+
+These two captures are Chromium fixture renders with a labelled test region, not screenshots of system island geometry or a live article.
+
+The preceding hosted CI run (`40801254953`) failed in the general native browser harness, before settling tests. Its log did not include the failed assertion. The test script now prints its bounded synthetic failure receipt to make future CI failures diagnosable; no checks are skipped or weakened.
 
 ## Remaining limits
 

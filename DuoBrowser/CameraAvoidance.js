@@ -44,8 +44,8 @@
     sheet.textContent = [...ledger].map(([el, p]) => `[${marker}="${p.id}"]{${p.css};transition:none!important}`).join('\n');
     if (!sheet.isConnected) document.documentElement.appendChild(sheet);
   }
-  function own(el, css, side = null) {
-    const p = {id:++serial, css, side};
+  function own(el, css, side = null, actions = null) {
+    const p = {id:++serial, css, side, actions};
     el.setAttribute(marker, String(p.id)); ledger.set(el, p); rules();
   }
   function undo(el) {
@@ -79,9 +79,9 @@
     const css = getComputedStyle(el);
     if (!plain(css) || css.visibility !== 'visible' || Number(css.opacity) < .9 || css.position === 'sticky' ||
         css.writingMode !== 'horizontal-tb' || authorMotion(el)) return false;
-    for (let p = el.parentElement, depth = 0; p && depth < 12; p = p.parentElement, depth++) {
+    for (let p = el.parentElement, depth = 0; p && depth < 24; p = p.parentElement, depth++) {
       const c = getComputedStyle(p);
-      if (!plain(c) || c.position === 'sticky' || /hidden|clip|auto|scroll/.test(c.overflowX + c.overflowY) ||
+      if (!plain(c) || (c.position === 'sticky' && el.matches(textBlocks)) || /hidden|clip|auto|scroll/.test(c.overflowX + c.overflowY) ||
           p.isContentEditable || authorMotion(p)) return false;
       if (p === document.body) return true;
     }
@@ -103,8 +103,36 @@
     }
     return el;
   }
+  function controlRow(el) {
+    for (let p = el.parentElement, depth = 0; p && p !== document.body && depth < 4; p = p.parentElement, depth++) {
+      const r = rect(p), c = getComputedStyle(p);
+      if (r.height > 100) break;
+      if (r.width <= 180 || !['flex', 'grid'].includes(c.display) || !safe(p)) continue;
+      if (p.children.length > 64) return null;
+      const actions = [], guards = [], pending = [...p.children];
+      let visited = 0;
+      while (pending.length) {
+        if (++visited > 64) return null;
+        const n = pending.pop(), style = getComputedStyle(n), box = rect(n);
+        if (style.display === 'none') { guards.push(n); continue; }
+        // Closed offcanvas navigation often lives inside the header. Changing
+        // row width must leave that panel unchanged; never transform its parent.
+        if ((box.right <= 0 || box.left >= innerWidth || box.bottom <= 0 || box.top >= innerHeight) &&
+            (!plain(style) || ['absolute', 'fixed'].includes(style.position)) && !authorMotion(n)) {
+          guards.push(n); continue;
+        }
+        if (n.matches(textBlocks + ',input,textarea,select,video,iframe,canvas') ||
+            !plain(style, animations.has(n)) || authorMotion(n) || actions.length >= 12) return null;
+        if (n.matches(controls) && box.width && box.height) actions.push(n);
+        if (pending.length+n.children.length+visited > 64) return null;
+        pending.push(...n.children);
+      }
+      if (actions.length >= 2 && actions.every(canAnimateUnit)) return {el:p, actions, guards};
+    }
+    return null;
+  }
   function candidates(regions, old) {
-    const found = new Set(old.keys());
+    const found = new Set([...old.keys(), ...[...old.values()].flatMap(p => p.actions ?? [])]);
     for (const r of regions) {
       const steps = Math.min(10, Math.max(2, Math.ceil((r.bottom-r.top)/18)));
       const heights = Array.from({length:steps+1}, (_, i) => r.top+1+(r.bottom-r.top-2)*i/steps);
@@ -113,7 +141,7 @@
           for (const hit of document.elementsFromPoint(x, y).slice(0, 6)) {
             const text = hit.closest(textBlocks), control = hit.closest(controls);
             if (text) found.add(text);
-            else if (control) found.add(group(control));
+            else if (control) { found.add(group(control)); found.add(control); }
           }
         }
       }
@@ -140,25 +168,34 @@
     return lines.length && lines.length <= 64 ? lines : null;
   }
   function flowFollowers(el) {
-    // Only ordinary block flow. Snapshot subsequent siblings at each ancestor so moving
-    // one paragraph never makes the next paragraph/footer jump or overlap it.
-    const result = [el];
-    for (let current = el, depth = 0; current !== document.body && depth < 8; depth++) {
+    // Follow a bounded local block flow through nested site shells. Grid/flex
+    // ancestors are allowed only around that flow, with measured geometry guards.
+    // Offscreen subtrees need no animation or descendant walk.
+    const result = [el], guards = [], ancestors = [];
+    let inspected = 0;
+    for (let current = el, depth = 0; current !== document.body && depth < 24; depth++) {
       const parent = current.parentElement;
       if (!parent) return null;
       const css = getComputedStyle(parent);
-      if (!plain(css) || !['block', 'flow-root'].includes(css.display) || css.columnCount !== 'auto' ||
-          css.columnWidth !== 'auto' || css.height === '0px' || parent.children.length > MAX_NODES) return null;
-      if ([...parent.childNodes].some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim())) return null;
-      for (let next = current.nextElementSibling; next; next = next.nextElementSibling) {
-        if (/^(SCRIPT|STYLE|LINK|META)$/.test(next.tagName)) continue;
-        const c = getComputedStyle(next);
-        if (c.display === 'none' || c.position === 'fixed') continue;
-        if (!plain(c, animations.has(next)) || !['static', 'relative'].includes(c.position) || c.float !== 'none' || authorMotion(next)) return null;
+      if (!plain(css) || (depth === 0 && !['block', 'flow-root'].includes(css.display)) ||
+          !['block', 'flow-root', 'grid', 'flex'].includes(css.display) ||
+          css.columnCount !== 'auto' || css.columnWidth !== 'auto' || css.height === '0px') return null;
+      if (parent.childNodes.length > 192 ||
+          [...parent.childNodes].some(n => n.nodeType === Node.TEXT_NODE && n.textContent.trim())) return null;
+      ancestors.push(parent);
+      for (let next = parent.firstElementChild; next; next = next.nextElementSibling) {
+        if (++inspected > 192) return null;
+        if (next === current || /^(SCRIPT|STYLE|LINK|META)$/.test(next.tagName)) continue;
+        const c = getComputedStyle(next), r = rect(next);
+        if (c.display === 'none' || !r.width || !r.height) continue;
+        guards.push(next);
+        if (r.bottom <= 0 || r.top >= innerHeight || c.position === 'fixed' || c.position === 'sticky') continue;
+        if (!plain(c, animations.has(next)) || !['static', 'relative'].includes(c.position) ||
+            c.float !== 'none' || authorMotion(next) || !canAnimateUnit(next)) continue;
         result.push(next);
         if (result.length > MAX_NODES) return null;
       }
-      if (parent === document.body) return result;
+      if (parent === document.body) return Object.assign(result, {guards, ancestors});
       current = parent;
     }
     return null;
@@ -181,23 +218,37 @@
     // Sample the destination densely enough for text lines and small neighbouring controls.
     for (let y = target.top+2; y < target.bottom; y += Math.max(6, (target.bottom-target.top)/12)) {
       for (let x = target.left+2; x < target.right; x += Math.max(8, (target.right-target.left)/12)) {
-        for (const hit of document.elementsFromPoint(x, y).slice(0, 6)) {
-          if (hit === el || el.contains(hit) || hit.contains(el)) continue;
-          if (hit.matches(controls + ',' + textBlocks + ',img,video,iframe,canvas,svg') ||
-              hit.childElementCount === 0 && hit.textContent.trim()) return false;
-        }
+        // Check the foreground hit: a sticky toolbar can cover
+        // article text underneath without that text occupying this destination.
+        const hit = document.elementFromPoint(x, y);
+        if (!hit || hit === el || el.contains(hit) || hit.contains(el)) continue;
+        if (hit.closest(controls + ',' + textBlocks + ',img,video,iframe,canvas,svg') ||
+            hit.childElementCount === 0 && hit.textContent.trim()) return false;
       }
     }
     return true;
   }
+  function pageChrome(hit) {
+    // Existing compact sticky bars legitimately cover article lines. Do not
+    // mistake those hidden lines for a broken destination or a reading anchor.
+    for (let n = hit, depth = 0; n && depth < 8; n = n.parentElement, depth++) {
+      const c = getComputedStyle(n), r = rect(n), inset = parseFloat(c.top);
+      if (['fixed', 'sticky'].includes(c.position) && Number.isFinite(inset) &&
+          r.top <= inset+1 && r.width >= innerWidth*.75 && r.height <= innerHeight*.4) return true;
+    }
+    return false;
+  }
   function reachable(el, isText) {
-    const boxes = isText ? textRects(el) : [rect(el), ...[...el.querySelectorAll(controls)].map(rect)];
-    return boxes?.every(r => {
-      if (r.bottom <= 0 || r.top >= innerHeight) return true;
+    const boxes = isText ? textRects(el) : [rect(el), ...(ledger.get(el)?.actions ?? [...el.querySelectorAll(controls)]).map(rect)].filter(r => r.width > 0 && r.height > 0);
+    let visible = 0;
+    const valid = boxes?.every(r => {
+      if (r.bottom <= 0 || r.top >= innerHeight || r.right <= 0 || r.left >= innerWidth) return true;
       const y = Math.max(.5, Math.min(innerHeight-.5, (r.top+r.bottom)/2));
       const hit = document.elementFromPoint((r.left+r.right)/2, y);
-      return hit === el || el.contains(hit);
+      if (hit === el || el.contains(hit)) { visible++; return true; }
+      return isText && pageChrome(hit);
     });
+    return valid && visible > 0;
   }
   function move(el, regions, isText) {
     const box = rect(el), lines = isText ? textRects(el) : [box];
@@ -223,13 +274,41 @@
     }
     return false;
   }
+  function fitControlRow(row, regions) {
+    if (!row || [...ledger.keys()].some(n => row.el.contains(n))) return false;
+    const box = rect(row.el), height = document.documentElement.scrollHeight;
+    const css = getComputedStyle(row.el);
+    const blocked = regions.filter(r => overlaps(box, r));
+    if (!blocked.length) return false;
+    let left = box.left, right = box.right;
+    for (const r of blocked) {
+      if (r.left-box.left >= box.right-r.right) right = Math.min(right, r.left-8);
+      else left = Math.max(left, r.right+8);
+    }
+    if (right-left < box.width*.6 || box.width-(right-left) > 120) return false;
+    const sizes = row.actions.map(n => rect(n));
+    const guardBoxes = row.guards.map(rect);
+    own(row.el, `box-sizing:border-box!important;width:${right-left}px!important;max-width:${right-left}px!important;` +
+      `margin-left:${(parseFloat(css.marginLeft)||0)+left-box.left}px!important`, null, row.actions);
+    const after = rect(row.el), boxes = row.actions.map(rect);
+    const valid = near(after.left,left) && near(after.right,right) && near(after.top,box.top) && near(after.height,box.height) &&
+      document.documentElement.scrollHeight === height && row.guards.every((n,i) => {
+        const a = guardBoxes[i], b = rect(n);
+        return near(a.left,b.left) && near(a.top,b.top) && near(a.width,b.width) && near(a.height,b.height);
+      }) && boxes.every((r,i) =>
+        near(r.width,sizes[i].width) && near(r.height,sizes[i].height) && near(r.top,sizes[i].top) &&
+        within(r,regions) && reachable(row.actions[i],false) && !boxes.some((b,j) => i !== j && overlaps(r,b)));
+    if (valid) return true;
+    undo(row.el); return false;
+  }
   function fitTextSide(el, regions, followers) {
     if (!followers || geometry.voiceOver || !followers.every(canAnimateUnit)) return false;
     const box = rect(el), lines = textRects(el), css = getComputedStyle(el);
     if (!lines || !['static', 'relative'].includes(css.position) || css.float !== 'none' ||
         css.display !== 'block' || box.height > 320) return false;
     if (!lines.some(line => regions.some(r => overlaps(line, r)))) return false;
-    const before = new Map(followers.map(n => [n, rect(n)]));
+    const before = new Map(followers.guards.map(n => [n, rect(n)]));
+    const shells = new Map(followers.ancestors.map(n => [n, rect(n)]));
     const beforeHeight = document.documentElement.scrollHeight;
     const minimum = Math.max(180, box.width * .6);
     let left = box.left, right = box.right, side = null;
@@ -255,11 +334,15 @@
     const valid = side && near(after.top, box.top) && near(after.left, left) && near(after.right, right) &&
       growth >= -1 && growth <= 160 && after.height <= 480 && !regions.some(r => overlaps(after, r)) &&
       document.documentElement.scrollWidth <= innerWidth+1 && document.documentElement.scrollHeight <= beforeHeight+growth+1 &&
-      followers.every(n => {
-        if (n === el) return true;
-        const a = before.get(n), b = rect(n);
+      [...before].every(([n, a]) => {
+        const b = rect(n), delta = b.top-a.top;
         return near(a.left, b.left) && near(a.width, b.width) && near(a.height, b.height) &&
-          near(b.top-a.top, growth);
+          (near(delta, 0) || near(delta, growth) && (a.top >= innerHeight || a.bottom <= 0 || followers.includes(n))) &&
+          (a.top < box.bottom || b.top >= after.bottom-1);
+      }) && [...shells].every(([n, a]) => {
+        const b = rect(n);
+        return near(a.left, b.left) && near(a.top, b.top) && near(a.width, b.width) &&
+          b.height >= a.height-1 && b.height <= a.height+growth+1;
       });
     if (valid && reachable(el, true)) return true;
     undo(el); return false;
@@ -291,10 +374,15 @@
       ['static', 'relative'].includes(getComputedStyle(el).position));
     visible.sort((a, b) => a[1].top-b[1].top);
     for (const [el, box] of visible) {
-      if (box.top >= 0) return {el, top:box.top, measure:() => rect(el).top};
-      // In a partly scrolled paragraph, anchor a real visible character rather
-      // than the offscreen block edge. Rewrapping earlier lines can move that word.
-      const line = textRects(el)?.find(r => r.bottom > 0 && r.top < innerHeight);
+      const lines = textRects(el);
+      const line = lines?.find(r => {
+        if (r.bottom <= 0 || r.top >= innerHeight) return false;
+        const hit = document.elementFromPoint((r.left+r.right)/2, Math.max(.5,Math.min(innerHeight-.5,(r.top+r.bottom)/2)));
+        return hit === el || el.contains(hit);
+      });
+      if (box.top >= 0 && line && line === lines[0]) return {el, top:box.top, measure:() => rect(el).top};
+      // Anchor a real visible character when earlier lines are above the screen
+      // or behind the site's sticky header; keep that word fixed as lines rewrap.
       if (!line) continue;
       const range = document.caretRangeFromPoint?.(Math.max(.5, line.left+1),
         Math.max(.5, Math.min(innerHeight-.5, (line.top+line.bottom)/2)));
@@ -328,7 +416,12 @@
     const regions = regionsNow(), old = new Map(ledger), nodes = candidates(regions, old);
     const motion = new Set([...old.keys(), ...animations.keys(), ...nodes]);
     // Pause/cancel only our animations; author animation remains a conservative fallback.
-    const followers = new Map();
+    const followers = new Map(), rows = new Map();
+    for (const el of nodes) {
+      if (el.matches(textBlocks)) continue;
+      const row = controlRow(el);
+      if (row) { rows.set(el, row); for (const action of row.actions) motion.add(action); }
+    }
     for (const el of nodes) {
       if (!el.matches(textBlocks)) continue;
       // Running owned animations must not prevent us finding their ordinary flow siblings.
@@ -352,7 +445,10 @@
         if ([...ledger.keys()].some(p => p.contains(el) || el.contains(p)) || !safe(el) || !canAnimateUnit(el)) continue;
         const isText = el.matches(textBlocks);
         if (isText && geometry.voiceOver) continue;
-        if (!move(el, regions, isText) && isText) fitTextSide(el, regions, followers.get(el));
+        if (!move(el, regions, isText)) {
+          if (isText) fitTextSide(el, regions, followers.get(el));
+          else fitControlRow(rows.get(el), regions);
+        }
         if (!keepReadingPosition(reading, scroll)) { stable = false; break; }
       }
       if (stable) stable = [...ledger.keys()].every(el => {
