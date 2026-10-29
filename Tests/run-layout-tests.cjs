@@ -9,6 +9,7 @@ const path = require('node:path');
             ['PageLayoutTests.cjs', 'PageLayout.js'],
             ['CameraAvoidanceTests.cjs', 'CameraAvoidance.js'],
             ['CameraSettlingTests.cjs', 'CameraAvoidance.js'],
+            ['NestedNewsTests.cjs', 'CameraAvoidance.js'],
         ]) {
             const context = await browser.newContext();
             const page = await context.newPage();

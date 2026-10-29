@@ -1,5 +1,6 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
@@ -18,8 +19,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')
             self.end_headers(); self.wfile.write(b'Synthetic browser download.\n'); return
         self.send_header('Content-Type','text/html'); self.end_headers()
+        if self.path.startswith('/nested-news'):
+            self.wfile.write((Path(__file__).parent / 'Fixtures' / 'nested-news.html').read_bytes())
+            return
         if self.path.startswith('/settling'):
-            from pathlib import Path
             self.wfile.write((Path(__file__).parent / 'Fixtures' / 'settling.html').read_bytes())
         elif self.path.startswith('/reading'):
             self.wfile.write(b'<meta name="viewport" content="width=device-width"><title>Reading fixture</title><main style="height:2400px">Synthetic reading page</main>')

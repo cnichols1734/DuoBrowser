@@ -74,7 +74,9 @@ p=pathlib.Path(sys.argv[1]); minimum=int(sys.argv[2])
 for attempt in range(180):
     if p.exists():
         text=p.read_text()
-        if 'FAIL:' in text: raise SystemExit('Native harness reported a failure: '+p.name)
+        if 'FAIL:' in text:
+            print(text[:16000])  # This harness writes only synthetic fixture results.
+            raise SystemExit('Native harness reported a failure: '+p.name)
         passed=sum(line.startswith('PASS:') for line in text.splitlines())
         if passed < minimum: raise SystemExit(f'Incomplete receipt {p.name}: {passed}/{minimum}')
         print(f'{p.name}: {passed} checks passed'); break
@@ -83,7 +85,7 @@ else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
 run_receipt NativeBrowserChecks.txt 30
-run_receipt CameraSettlingChecks.txt 22 --settling-checks
+run_receipt CameraSettlingChecks.txt 29 --settling-checks
 run_receipt PersistentCookieChecks.txt 1 --persistent-cookie-write
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-read
 run_receipt MemoryChecks.txt 11 --memory-checks
