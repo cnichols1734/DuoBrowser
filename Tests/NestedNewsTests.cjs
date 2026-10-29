@@ -19,7 +19,8 @@ module.exports = async function (page, source) {
     check((await box('signin')).right<=374,'sticky header stays fitted across repeated settling passes');
     await p.locator('#signin').click();check(new URL(p.url()).hash==='#signin-result','adapted sticky header action remains clickable');
     await p.locator('#article-link').click();check(new URL(p.url()).hash==='#link-result','adapted nested article link remains clickable');
-    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('following').getBoundingClientRect().top+scrollY-90)});
+    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('following').getBoundingClientRect().top+scrollY-56)});
+    // Keep the previous paragraph fully under the 52px sticky header regardless of platform font metrics.
     const top=(await box('following')).y;
     await p.evaluate(()=>dispatchEvent(new Event('pointerup')));await p.waitForTimeout(1000);
     check(Math.abs((await box('following')).y-top)<1 && (await box('following')).right<=374,'nested article retains visible reading position after another scroll');

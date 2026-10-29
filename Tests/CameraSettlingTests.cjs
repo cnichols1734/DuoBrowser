@@ -163,6 +163,35 @@ module.exports = async function runSettlingTests(page, source) {
       await send(geometry(regions));await p.waitForTimeout(1200);
       assert(await p.evaluate(y=>wordSamples.every(top=>Math.abs(top-y)<1),wordTop), regions.length ? 'partly visible text stays anchored throughout refitting' : 'partly visible text stays anchored throughout width restoration');
     }
+    await setup();
+    await p.evaluate(()=>{
+      dispatchEvent(new TouchEvent('touchstart',{touches:[new Touch({identifier:1,target:document.body,clientX:50,clientY:50})]}));
+      dispatchEvent(new PointerEvent('pointercancel',{pointerType:'touch'}));
+    });
+    await send(geometry());await settled();
+    assert((await box('reading')).width===434,'touch pointercancel does not release an ongoing finger gesture');
+    await p.evaluate(()=>dispatchEvent(new TouchEvent('touchend',{touches:[]})));await settled();
+    assert(await fitted(),'touchend releases the deferred fitting');
+
+    await setup('main{position:relative}#following{opacity:0}', '<div id="absolute-follower"><button id="absolute-control" style="position:absolute;right:0;top:300px">Absolute</button></div>');
+    const absolute=await box('absolute-control');
+    await p.evaluate(()=>{
+      window.safetySamples=[];const until=performance.now()+1100;
+      requestAnimationFrame(function sample(){
+        const a=document.querySelector('#reading').getBoundingClientRect(),b=document.querySelector('#following').getBoundingClientRect();
+        safetySamples.push({gap:b.top-a.bottom,opacity:getComputedStyle(document.querySelector('#following')).opacity,
+          control:document.querySelector('#absolute-control').getBoundingClientRect().top});
+        if(performance.now()<until)requestAnimationFrame(sample);
+      });
+    });
+    await send(geometry());await p.waitForTimeout(1200);
+    assert(await p.evaluate(()=>safetySamples.every(s=>s.gap>=0)),'reflow followers never overlap the resized paragraph during animation');
+    assert(await p.evaluate(()=>safetySamples.every(s=>Number(s.opacity)===0)),'authored hidden follower opacity is never exposed');
+    assert(await p.evaluate(y=>safetySamples.every(s=>Math.abs(s.control-y)<1),absolute.y),'absolute descendant keeps its authored containing block during settling');
+
+    await setup();await p.locator('#reading').evaluate(n=>n.innerHTML='<span style="white-space:nowrap">A nonwrapping span must never escape its newly narrowed paragraph</span> '+n.innerHTML);
+    await send(geometry());await settled();
+    assert((await box('reading')).width===434,'overflowing nonwrapping text rolls back the attempted fit');
     return {passed:results.length,tests:results};
   } finally { await p.close(); }
 };

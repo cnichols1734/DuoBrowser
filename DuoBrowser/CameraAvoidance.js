@@ -203,11 +203,11 @@
     return null;
   }
   function canAnimateUnit(el) {
-    // A transform changes the containing block of fixed descendants. Never animate
+    // A transform can change the containing block of positioned descendants. Never animate
     // such a subtree or inspect an unbounded article just to prove it safe.
     const walker = document.createTreeWalker(el, NodeFilter.SHOW_ELEMENT);
     for (let n = 0; walker.nextNode(); n++) {
-      if (n >= 96 || /fixed|sticky/.test(getComputedStyle(walker.currentNode).position)) return false;
+      if (n >= 96 || /absolute|fixed|sticky/.test(getComputedStyle(walker.currentNode).position)) return false;
     }
     return true;
   }
@@ -346,7 +346,9 @@
         return near(a.left, b.left) && near(a.top, b.top) && near(a.width, b.width) &&
           b.height >= a.height-1 && b.height <= a.height+growth+1;
       });
-    if (valid && reachable(el, true)) return true;
+    const fittedLines = valid ? textRects(el) : null;
+    if (fittedLines && fittedLines.every(r => r.left >= after.left-1 && r.right <= after.right+1 &&
+        !regions.some(region => overlaps(r, region))) && reachable(el, true)) return true;
     undo(el); return false;
   }
   function animateFrom(before, old, reading) {
@@ -358,14 +360,17 @@
       const dx = resized && side === 'right' ? start.right-end.right : start.left-end.left;
       // The visible character is already anchored. Replaying the block's old
       // top would undo that correction when lines above it have rewrapped.
-      const dy = el === reading?.el ? 0 : start.top-end.top;
+      // Reflow already paints the new text height. Replaying follower Y offsets
+      // would overlap that text; preserve final natural-flow spacing throughout.
+      const dy = 0;
       if (Math.abs(dx)+Math.abs(dy) < .5 || Math.abs(dx)+Math.abs(dy) > MAX_MOVE*2 ||
           (!resized && (!near(start.width, end.width) || !near(start.height, end.height))) ||
           (start.bottom < 0 && end.bottom < 0) || (start.top > innerHeight && end.top > innerHeight) ||
           getComputedStyle(el).transform !== 'none') continue;
       // The final layout is validated once. Only a compositor transform changes per frame.
-      const a = el.animate([{transform:`translate(${dx}px,${dy}px)`, opacity:resized ? .8 : 1},
-        {transform:'translate(0px,0px)', opacity:1}],
+      const opacity = Number(getComputedStyle(el).opacity);
+      const a = el.animate([{transform:`translate(${dx}px,${dy}px)`, opacity:resized ? opacity*.8 : opacity},
+        {transform:'translate(0px,0px)', opacity}],
         {duration:DURATION, easing:'cubic-bezier(0.22, 1, 0.36, 1)'});
       animations.set(el, a);
       a.onfinish = () => { if (animations.get(el) === a) animations.delete(el); };
@@ -495,8 +500,8 @@
   addEventListener('resize', () => { moving(); });
   addEventListener('touchstart', () => { touching = true; moving(); }, {passive:true, capture:true});
   for (const name of ['touchend','touchcancel']) addEventListener(name, e => { touching = e.touches.length > 0; schedule(); }, {passive:true, capture:true});
-  addEventListener('pointerdown', () => { touching = true; moving(); }, {passive:true, capture:true});
-  for (const name of ['pointerup','pointercancel']) addEventListener(name, () => { touching = false; schedule(); }, {passive:true, capture:true});
+  addEventListener('pointerdown', e => { if (e.pointerType === 'touch') return; touching = true; moving(); }, {passive:true, capture:true});
+  for (const name of ['pointerup','pointercancel']) addEventListener(name, e => { if (e.pointerType === 'touch') return; touching = false; schedule(); }, {passive:true, capture:true});
   addEventListener('focusin', moving, {capture:true});
   addEventListener('focusout', schedule);
   addEventListener('pagehide', () => { clearTimeout(timer); stopped = true; reset(); });
