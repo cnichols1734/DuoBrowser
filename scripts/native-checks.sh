@@ -50,14 +50,21 @@ http_pid=$!
 python3 Tests/native_fixture_server.py work/native-ci/fixture-cert.pem work/native-ci/fixture-key.pem > work/native-ci/tls.log 2>&1 &
 tls_pid=$!
 python3 - <<'PY'
-import socket,time
-for port in (8765,8443):
-    for attempt in range(50):
+import pathlib,socket,time
+# A freshly booted hosted simulator can starve the fixture processes during import.
+# Wait for actual readiness with a wall-clock bound; never proceed against a missing server.
+for port,log in ((8765,'http.log'),(8443,'tls.log')):
+    deadline=time.monotonic()+120
+    while True:
         try:
-            with socket.create_connection(('127.0.0.1',port),timeout=0.2): break
+            with socket.create_connection(('127.0.0.1',port),timeout=0.5): break
         except OSError:
-            if attempt == 49: raise
-            time.sleep(0.1)
+            if time.monotonic() >= deadline:
+                path=pathlib.Path('work/native-ci')/log
+                print(f'Synthetic fixture port {port} did not become ready within 120 seconds',flush=True)
+                if path.exists(): print(path.read_text()[-4000:],flush=True)
+                raise
+            time.sleep(0.25)
 PY
 xcrun simctl install "$device" "$derived/Build/Products/Debug-iphonesimulator/DuoBrowser.app"
 container=$(xcrun simctl get_app_container "$device" dev.local.DuoBrowser data)
