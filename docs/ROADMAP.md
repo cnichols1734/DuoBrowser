@@ -128,3 +128,10 @@ Debug/Release builds, 102 browser-layout checks, portable checks and lint passed
 - Reading-position follow-up: reproduced a 24 px upward jump when restoring an offscreen paragraph. Fitting now anchors visible text across reflow and excludes internal scroll corrections from animation interruption. Added browser and native regressions for the paragraph's screen position and partially visible words; see the same validation report for results.
 
 The live news-layout follow-up now handles compact sticky control rows (including closed offcanvas drawers) and local paragraph flow inside deeply nested grid shells. The same live article was inspected with the compact system activity: header controls and paragraph text fitted sideways. A synthetic fixture adds thirteen regressions for links, restoration, repeated settling and visible-word anchoring below sticky page bars. Native verification and CI status are recorded in the [settling report](SCROLL_SETTLING_2026-10-28.md). Clipped scrolling tickers and other unsupported structures may still remain behind the system region.
+
+
+## Browser productivity upgrades — October 29, 2026
+
+Implemented local unified search, normal-tab workspaces and pins, interactive Peek with same-web-view promotion, native text Reader, and a conservative bundled third-party ad/tracker blocker. Existing glass controls and camera-layout engines are preserved. The feature branch is stacked on PR #4 for owner review; no merge or release is performed.
+
+Debug/Release builds, 62 portable assertions, 118 browser/DOM assertions and the 106-assertion native suite passed. See [feature usage, privacy boundaries, UI evidence and remaining validation](BROWSER_UPGRADES_2026-10-29.md). Full manual pose/accessibility coverage and hardware acceptance remain open; the blocker is a 19-domain baseline and Reader is text-only.

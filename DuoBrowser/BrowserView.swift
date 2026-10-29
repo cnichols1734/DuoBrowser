@@ -14,6 +14,10 @@ struct BrowserView: View {
                 TabOverview(session: session)
             }
             .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
+            .sheet(isPresented: $session.showingWorkspaces) { WorkspaceView(session: session) }
+            .sheet(item: $session.peek, onDismiss: { session.dismissPeek() }) { model in
+                PeekView(session: session, browser: model)
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -77,10 +81,11 @@ private struct ActiveBrowserView: View {
     }
 }
 
-private struct BrowserSurface: UIViewRepresentable {
+struct BrowserSurface: UIViewRepresentable {
     let browser: BrowserModel
     let fullWidth: Bool
     let showRegions: Bool
+    var reservesBrowserControls = true
 
     func makeUIView(context: Context) -> ViewportView {
         ViewportView(browser: browser)
@@ -89,16 +94,18 @@ private struct BrowserSurface: UIViewRepresentable {
     func updateUIView(_ view: ViewportView, context: Context) {
         view.fullWidth = fullWidth
         view.showRegions = showRegions
+        view.reservesBrowserControls = reservesBrowserControls
         view.setNeedsLayout()
     }
 }
 
-private final class ViewportView: UIView {
+final class ViewportView: UIView {
     let webView: WKWebView
     private weak var browser: BrowserModel?
     private var lastGeometry = ""
     var fullWidth = true
     var showRegions = false
+    var reservesBrowserControls = true
     private let regionsLayer = CAShapeLayer()
     private var chromeObserver: AnyCancellable?
     private var collapse = 0.0
@@ -172,7 +179,7 @@ private final class ViewportView: UIView {
         let expanded = expandedHeight + 8 + (fullWidth ? safeAreaInsets.bottom : 0)
         let bottom = expanded + (38 - expanded) * collapse + bottomControlLift
         // This public WebKit API moves fixed/sticky page controls above browser chrome.
-        let inset = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+        let inset = UIEdgeInsets(top: 0, left: 0, bottom: reservesBrowserControls ? bottom : 0, right: 0)
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
         webView.scrollView.contentInset.bottom = 0
         webView.scrollView.verticalScrollIndicatorInsets = inset

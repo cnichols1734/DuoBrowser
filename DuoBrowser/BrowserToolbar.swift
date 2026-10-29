@@ -38,6 +38,10 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingAddress) {
+            BrowserSearch(session: session, browser: browser, query: input)
+        }
+        .sheet(item: $browser.readerArticle) { ReaderView(article: $0) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
 
     }
@@ -70,9 +74,7 @@ struct BrowserToolbar: View {
                     }
 
                     ZStack {
-                        if showingAddress {
-                            addressEditor.padding(.horizontal, 14)
-                        } else {
+                        Group {
                             Button {
                                 if p > 0.1 { browser.revealControls() }
                                 else { input = browser.address; showingAddress = true }
@@ -155,24 +157,10 @@ struct BrowserToolbar: View {
 
     private func endEditing() { showingAddress = false; addressFocused = true }
 
-    private var addressEditor: some View {
-        HStack(spacing: 0) {
-            AddressField(text: $input, submit: {
-                browser.navigate(to: input)
-                endEditing()
-            }, cancel: { endEditing() })
-                .frame(maxWidth: .infinity).clipped()
-            Button(action: endEditing) {
-                Image(systemName: "xmark").font(.system(size: 17)).frame(width: 44, height: 44)
-            }.accessibilityLabel("Cancel address editing")
-        }
-    }
-
     private var accessibleControls: some View {
         VStack(spacing: 8) {
             Group {
-                if showingAddress { addressEditor }
-                else {
+                Group {
                     Button {
                         input = browser.address; showingAddress = true
                     } label: {
@@ -228,8 +216,14 @@ struct BrowserToolbar: View {
                     browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
                 }
             }
+            Button(browser.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: browser.isPinned ? "pin.slash" : "pin") { session.togglePin(browser) }
+            Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
+            Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
+                .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
             Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
             Menu("This Website", systemImage: "globe") {
+                Button(browser.blockAds ? "Turn Off Blocking & Reload" : "Turn On Blocking & Reload") { browser.blockAds.toggle() }
+                Text(browser.blockingStatus)
                 Toggle("Original Layout", isOn: $browser.originalPageLayout)
                 Toggle("Desktop Website", isOn: $browser.desktopSite)
                 Toggle("Full-width Page", isOn: $browser.fullWidthLayout)

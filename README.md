@@ -16,11 +16,18 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
+- Unified local search across tabs, bookmarks and history, with private-search isolation.
+- Named workspaces and pinned tabs, with normal-session restoration.
+- Interactive link Peek that can become a tab without reloading.
+- Local text-only Reader with typography and appearance controls.
+- Basic bundled ad/tracker blocking with per-site exceptions.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 
 Layout fitting is local and deterministic. There are no AI calls or site-specific repair rules. Ambiguous layouts fall back without alteration; not every website can be repaired safely.
+
+See the [upgrade guide and limitations](docs/BROWSER_UPGRADES_2026-10-29.md) for coverage and privacy details.
 
 ## Screenshots
 
