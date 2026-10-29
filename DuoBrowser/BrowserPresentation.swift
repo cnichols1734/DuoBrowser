@@ -72,7 +72,11 @@ extension BrowserModel: WKUIDelegate {
         guard popupDates.count < 3 else { errorMessage = "Additional pop-up windows were blocked."; return nil }
         popupDates.append(Date())
         // WebKit loads the original request, including POST body and window.opener, in this returned view.
-        return onOpenWindow?(configuration)
+        guard let onOpenWindow else {
+            errorMessage = "Keep this preview as a tab to open this window."
+            return nil
+        }
+        return onOpenWindow(configuration)
     }
 
     func webViewDidClose(_ webView: WKWebView) { onClose?() }
@@ -112,6 +116,7 @@ extension BrowserModel: WKUIDelegate {
         completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
             UIMenu(children: [
                 UIAction(title: "Open", image: UIImage(systemName: "arrow.up.right")) { [weak self] _ in self?.navigate(to: url.absoluteString) },
+                UIAction(title: "Peek", image: UIImage(systemName: "rectangle.on.rectangle"), attributes: self?.onPeek == nil ? .hidden : []) { [weak self] _ in self?.onPeek?(url) },
                 UIAction(title: "Open in New Tab", image: UIImage(systemName: "plus.square.on.square")) { [weak self] _ in self?.onOpenLink?(url) },
                 UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.url = url },
                 UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.presentation.share(url) }

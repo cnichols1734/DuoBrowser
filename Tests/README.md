@@ -86,3 +86,7 @@ Run `bash scripts/check.sh` for the portable Swift assertions, Swift parsing, Ja
 GitHub CI uses the public-preview `xcode-27` hosted runner and selects Xcode 27.1 explicitly. The published runner inventory currently includes the 27.1 Duo simulator. Runner availability can change; missing SDK/runtime support fails the native job and the required gate rather than silently skipping tests. Portable tests still help diagnose failures, but are not a substitute for the native build. Never fall back to a credential-bearing self-hosted runner.
 
 CI validates workflows with actionlint, checks pinned tool digests, scans full Git history with redacted Gitleaks output, and audits the locked npm graph. No release credentials or browsing artifacts are uploaded. SwiftLint initially enables a narrow set of correctness rules; it does not impose a wholesale format rewrite. Patch whitespace is checked separately.
+
+## Browser productivity checks
+
+`npm test` includes the 16-check bounded Reader extraction suite. The native script also runs `--browser-checks --upgrade-checks` and requires 33 passing assertions in `Library/Caches/UpgradeChecks.txt`. This covers workspace/pin restoration, local search and private boundaries, Reader cancellation and untouched forms/scroll, Peek lifetime and same-view promotion, and actual WKContentRuleList blocking/exception/first-party behavior using loopback fixtures. A Debug-only host substitution makes the production rule flags testable without external ad requests. No normal browsing data is used.

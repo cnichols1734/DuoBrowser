@@ -30,6 +30,7 @@ struct SitePreference: Codable, Equatable {
     var originalLayout = false
     var desktop = false
     var fullWidth: Bool? = nil
+    var blockAds: Bool? = nil
 }
 
 struct LibraryEntry: Codable, Identifiable {
@@ -45,11 +46,24 @@ struct BrowserArchive: Codable {
     var history: [LibraryEntry] = []
     var bookmarks: [LibraryEntry] = []
     var sites: [String: SitePreference] = [:]
+    var workspaces: [Workspace]? = nil
 
     func validated() -> BrowserArchive? {
         guard version == 1, let session = session.validated() else { return nil }
         var result = self
         result.session = session
+        var workspaceIDs = Set<UUID>([Workspace.defaultID])
+        let defaultName = workspaces?.first { $0.id == Workspace.defaultID }?.name.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Personal"
+        let standard = Workspace(id: Workspace.defaultID, name: defaultName.isEmpty ? "Personal" : String(defaultName.prefix(40)))
+        result.workspaces = [standard] + (workspaces ?? []).filter {
+            $0.id != Workspace.defaultID && workspaceIDs.insert($0.id).inserted && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.prefix(19).map { Workspace(id: $0.id, name: String($0.name.prefix(40))) }
+        let allowed = Set((result.workspaces ?? []).map(\.id))
+        result.session.tabs = result.session.tabs.map { tab in
+            var tab = tab
+            if !allowed.contains(tab.workspaceID ?? Workspace.defaultID) { tab.workspaceID = nil }
+            return tab
+        }
         func clean(_ entries: [LibraryEntry], limit: Int) -> [LibraryEntry] {
             var seen = Set<UUID>()
             return Array(entries.filter { WebAddress.valid(URL(string: $0.address)) != nil && seen.insert($0.id).inserted }
@@ -107,5 +121,40 @@ final class BrowserArchiveStore {
         #if os(iOS)
         try manager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: backup.path)
         #endif
+    }
+}
+
+struct Workspace: Codable, Identifiable, Equatable {
+    static let defaultID = UUID(uuidString: "00000000-0000-4000-8000-000000000001")!
+    static let standard = Workspace(id: defaultID, name: "Personal")
+    var id = UUID()
+    var name: String
+}
+
+struct SearchResult: Identifiable {
+    enum Kind: Int { case tab, bookmark, history }
+    var id: String
+    var title: String
+    var address: String
+    var kind: Kind
+    var tabID: UUID? = nil
+    var detail = ""
+}
+
+enum UnifiedSearch {
+    static func results(_ query: String, candidates: [SearchResult]) -> [SearchResult] {
+        let terms = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().split(whereSeparator: \.isWhitespace)
+        var seen = Set<String>()
+        return Array(candidates.enumerated().filter { _, item in
+            let haystack = (item.title + " " + item.address + " " + item.detail).lowercased()
+            return terms.allSatisfy { haystack.contains($0) }
+        }.sorted { lhs, rhs in
+            if lhs.element.kind != rhs.element.kind { return lhs.element.kind.rawValue < rhs.element.kind.rawValue }
+            return lhs.offset < rhs.offset
+        }.map(\.element).filter {
+            // Keep distinct open tabs, but suppress library duplicates of already-open destinations.
+            if $0.kind == .tab { seen.insert($0.address); return true }
+            return seen.insert($0.address).inserted
+        }.prefix(30))
     }
 }

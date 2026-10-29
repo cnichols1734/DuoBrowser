@@ -7,6 +7,7 @@ const path = require('node:path');
     try {
         for (const [suite, source] of [
             ['PageLayoutTests.cjs', 'PageLayout.js'],
+            ['ReaderTests.cjs', 'Reader.js'],
             ['CameraAvoidanceTests.cjs', 'CameraAvoidance.js'],
             ['CameraSettlingTests.cjs', 'CameraAvoidance.js'],
             ['NestedNewsTests.cjs', 'CameraAvoidance.js'],

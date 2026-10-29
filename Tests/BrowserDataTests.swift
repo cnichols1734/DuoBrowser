@@ -42,6 +42,29 @@ import Foundation
         check(invalid.validated()?.session.tabs.count == 200, "bounded tabs")
         invalid.session.tabs = [TabRecord(id: id, address: nil, fixture: false, scrollY: .infinity)]
         check(invalid.validated()?.session.tabs.first?.scrollY == nil, "invalid scroll")
+        let legacyData = try JSONEncoder().encode(archive)
+        let legacy = try JSONDecoder().decode(BrowserArchive.self, from: legacyData).validated()
+        check(legacy?.workspaces == [Workspace.standard], "legacy archive gains default workspace")
+        archive.workspaces = [Workspace(id: Workspace.defaultID, name: "Everyday")]
+        check(archive.validated()?.workspaces?.first?.name == "Everyday", "renamed default workspace persists")
+        let workspace = Workspace(name: "Research")
+        archive.workspaces = [Workspace.standard, workspace, workspace]
+        archive.session.tabs[0].workspaceID = workspace.id
+        archive.session.tabs[0].pinned = true
+        try store.replace(archive)
+        check(store.load()?.workspaces?.count == 2, "workspace IDs are deduplicated")
+        check(store.load()?.session.tabs.first?.workspaceID == workspace.id, "workspace persists")
+        check(store.load()?.session.tabs.first?.pinned == true, "pin persists")
+        archive.session.tabs[0].workspaceID = UUID()
+        check(archive.validated()?.session.tabs.first?.workspaceID == nil, "orphan workspace returns to default")
+        let tab = SearchResult(id: "tab", title: "Garden notes", address: "https://example.com/", kind: .tab, tabID: UUID(), detail: "Research")
+        let bookmark = SearchResult(id: "bookmark", title: "Garden notes", address: tab.address, kind: .bookmark)
+        let history = SearchResult(id: "history", title: "Garden advice", address: "https://example.org/", kind: .history)
+        let search = UnifiedSearch.results("GARDEN", candidates: [history, bookmark, tab])
+        check(search.map(\.id) == ["tab", "history"], "tab first, duplicate bookmark suppressed")
+        check(UnifiedSearch.results("garden research", candidates: [tab, history]).map(\.id) == ["tab"], "all query terms match across title and workspace")
+        check(UnifiedSearch.results("missing", candidates: [tab]).isEmpty, "no unrelated results")
+        check(UnifiedSearch.results("", candidates: [tab]).first?.tabID == tab.tabID, "empty query provides recent tabs")
         print("\(checks) browser data checks passed")
     }
 }

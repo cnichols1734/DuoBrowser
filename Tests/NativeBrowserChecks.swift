@@ -329,7 +329,130 @@ private final class NativeCheckRunner {
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
     }
+    func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
+        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+    }
+    func upgradeChecks() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+        defer {
+            session.dismissPeek()
+            session.tabs.forEach { $0.close() }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        do {
+            let normal = session.selected
+            try await load(normal, "upgrades")
+            _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
+            let originalView = normal.webView
+            let originalScroll = originalView.scrollView.contentOffset.y
+            normal.openReader()
+            try await wait { normal.readerArticle != nil || normal.errorMessage != nil }
+            try check(normal.readerArticle?.blocks.count == 3, "Reader extracts article blocks without repeating the title")
+            try check(normal.readerArticle?.blocks.contains { $0.text.contains("FORM SECRET") } == false, "Reader excludes form content")
+            normal.cancelReader()
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Synthetic draft", "Reader preserves original input")
+            try check(abs(originalView.scrollView.contentOffset.y - originalScroll) < 2, "Reader preserves original scroll position")
+            normal.openReader()
+            normal.cancelReader()
+            try await Task.sleep(for: .milliseconds(250))
+            try check(normal.readerArticle == nil && !normal.readerLoading, "cancelled Reader extraction cannot reopen")
+            normal.openReader()
+            try await load(normal, "next")
+            try await Task.sleep(for: .milliseconds(250))
+            try check(normal.readerArticle == nil, "navigation invalidates stale Reader work")
+            normal.openReader()
+            try await wait { !normal.readerLoading }
+            try check(normal.readerArticle == nil && normal.errorMessage != nil, "unsupported page keeps original with Reader explanation")
+            try await load(normal, "upgrades")
+            try await wait { normal.title == "A quieter way to browse" }
+            session.togglePin(normal)
+            session.createWorkspace("Research")
+            let researchID = session.workspaceID
+            try check(session.visibleTabs.count == 1 && session.selected.id != normal.id, "new workspace has an independent tab")
+            let research = session.selected
+            try await load(research, "upgrades")
+            session.move(normal, to: researchID)
+            try check(session.visibleTabs.first?.id == normal.id, "pinned tab sorts before other workspace tabs")
+            session.select(research.id)
+            session.openPeek(URL(string: "http://127.0.0.1:8765/preview")!, from: research)
+            guard let peek = session.peek else { throw NSError(domain: "missing preview", code: 1) }
+            mount(peek)
+            try await wait {
+                guard peek.loadedWebView?.url?.path == "/preview", !peek.webView.isLoading else { return false }
+                return (try? await self.js(peek, "!!document.querySelector('#kept')")) as? Bool == true
+            }
+            _ = try await js(peek, "document.querySelector('#kept').value='Preview draft'")
+            let previewView = peek.webView
+            session.saveNow()
+            try check(store.load()?.session.tabs.contains { $0.address?.contains("/preview") == true } == false, "unkept Peek is absent from archive")
+            try check(!session.history.contains { $0.address.contains("/preview") }, "unkept Peek is absent from history")
+            session.keepPeek()
+            try check(session.selected.webView === previewView, "keeping Peek promotes the same web view")
+            try check(try await js(session.selected, "document.querySelector('#kept').value") as? String == "Preview draft", "Peek promotion preserves form state")
+            try check(session.selected.workspaceID == researchID, "Peek promotion keeps source workspace")
+            let privateTab = session.newTab(privateTab: true)
+            try await load(privateTab, "private-upgrade")
+            session.togglePin(privateTab)
+            let privateResults = session.searchResults("", isPrivate: true)
+            try check(privateResults.filter { $0.kind == .tab }.allSatisfy { $0.tabID == privateTab.id }, "private unified search excludes normal workspace tabs")
+            try check(!privateResults.contains { $0.kind == .history }, "private unified search excludes normal history")
+            try check(!session.searchResults("", isPrivate: false).contains { $0.tabID == privateTab.id }, "normal unified search excludes private tabs")
+            privateTab.blockAds = false
+            session.saveNow()
+            let saved = store.load()!
+            try check(!saved.session.tabs.contains { $0.id == privateTab.id }, "private pinned tabs never persist")
+            try check(saved.sites["127.0.0.1"]?.blockAds != false, "private blocking exception never persists")
+            session.openPeek(URL(string: "http://127.0.0.1:8765/private-peek")!, from: privateTab)
+            try check(session.peek?.isPrivate == true, "private Peek stays in private profile")
+            session.closePrivateTabs()
+            try check(session.peek == nil, "closing private session destroys its Peek")
+            let restored = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+            try check(restored.searchResults("quieter", isPrivate: false).contains { $0.kind == .tab && $0.address.hasSuffix("/upgrades") }, "search finds lazily restored tabs by locally saved title")
+            try check(restored.workspaces.contains { $0.id == researchID }, "workspace survives cold restoration")
+            try check(restored.tabs.first { $0.id == normal.id }?.isPinned == true, "pinned state survives cold restoration")
+            try check(restored.tabs.allSatisfy { !$0.isPrivate }, "restoration excludes all private upgrade state")
+            restored.tabs.forEach { $0.close() }
+            session.removeWorkspace(researchID)
+            try check(session.tabs.allSatisfy { $0.workspaceID == Workspace.defaultID }, "workspace removal keeps and relocates tabs")
+            mount(normal)
+            try await load(normal, "upgrades")
+            try check(normal.blockingStatus == "Basic protection on", "bundled content rules compile and attach before navigation")
+            // Substitute only the ad host with a loopback host; all rule flags and production installation remain identical.
+            let rulesURL = Bundle.main.url(forResource: "BlockingRules", withExtension: "json")!
+            let json = try String(contentsOf: rulesURL, encoding: .utf8)
+            let fixtureRules = json.replacingOccurrences(of: "doubleclick\\\\.net", with: "localhost")
+            ContentBlocking.useTestRules(fixtureRules)
+            try await load(normal, "upgrades")
+            let blocked = try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool
+            try check(blocked == true, "native blocker prevents third-party synthetic request")
+            normal.blockAds = false
+            try await wait { normal.blockingStatus == "Off for this site" && !normal.isLoading }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "site exception allows synthetic request after reload")
+            normal.blockAds = true
+            try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
+            normal.navigate(to: "http://localhost:8765/upgrades")
+            try await wait {
+                guard normal.webView.url?.host == "localhost", !normal.webView.isLoading else { return false }
+                return (try? await self.js(normal, "location.hostname === 'localhost' && document.readyState === 'complete'")) as? Bool == true
+            }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "blocking preserves first-party resources and main document")
+            let count = session.tabs.count
+            let closing = session.newTab(url: URL(string: "http://127.0.0.1:8765/closing")!)
+            session.close(closing.id)
+            try await Task.sleep(for: .milliseconds(300))
+            try check(session.tabs.count == count && closing.loadedWebView == nil, "closing during navigation cannot revive a tab")
+            ContentBlocking.useTestRules(nil)
+            try check(ReaderArticle.parse(["title": "Bad", "blocks": [["kind": "script", "text": "bad"], ["kind": "paragraph", "text": "ok"]]], source: URL(string: "https://example.com")!) == nil, "Reader rejects malformed extracted blocks")
+        } catch { results.append("FAIL: \(error)") }
+        let destination = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("UpgradeChecks.txt")
+        try? results.joined(separator: "\n").write(to: destination, atomically: true, encoding: .utf8)
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--upgrade-checks") { await upgradeChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--settling-checks") { await settlingChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--memory-checks") { await memoryChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--site-checks") {
