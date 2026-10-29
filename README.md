@@ -18,9 +18,9 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
 - Named workspaces and pinned tabs, with normal-session restoration.
-- Interactive link Peek that can become a tab without reloading.
+- Native floating link previews that can become tabs without reloading.
 - Local text-only Reader with typography and appearance controls.
-- Basic bundled ad/tracker blocking with per-site exceptions.
+- Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.

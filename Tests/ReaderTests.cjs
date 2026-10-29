@@ -3,12 +3,14 @@ module.exports = async (page, source) => {
     let passed = 0;
     const check = (value) => { assert.ok(value); passed++; };
     const paragraph = 'A calm reading experience keeps the original article intact and never reads form values. '.repeat(5);
-    await page.setContent(`<title>Reading fixture</title><article><h1>Heading</h1><p>${paragraph}</p><p>${paragraph}</p><form><input value="SECRET"><p>PRIVATE FORM</p></form><nav><p>Navigation</p></nav><p hidden>Hidden</p><p><textarea>NESTED SECRET</textarea></p><p>Text <span contenteditable>EDITABLE SECRET</span></p><p><script>window.nestedSecret=42</script></p><div contenteditable><p>UNSENT</p></div></article>`);
+    await page.setContent(`<title>Reading fixture</title><article><h1>Heading</h1><p>${paragraph}<span style="display:none">CSS HIDDEN SECRET</span><span style="visibility:hidden">INVISIBLE SECRET</span></p><p>${paragraph}</p><form><input value="SECRET"><p>PRIVATE FORM</p></form><nav><p>Navigation</p></nav><p hidden>Hidden</p><p><textarea>NESTED SECRET</textarea></p><p>Text <span contenteditable>EDITABLE SECRET</span></p><p><script>window.nestedSecret=42</script></p><div contenteditable><p>UNSENT</p></div></article>`);
     const before = await page.content();
     const article = await page.evaluate(source);
     check(article.blocks.length === 3);
     check(article.blocks[0].kind === 'heading');
     check(!JSON.stringify(article).includes('SECRET'));
+    check(!JSON.stringify(article).includes('CSS HIDDEN'));
+    check(!JSON.stringify(article).includes('INVISIBLE'));
     check(!JSON.stringify(article).includes('PRIVATE FORM'));
     check(!JSON.stringify(article).includes('UNSENT'));
     check(!JSON.stringify(article).includes('Navigation'));

@@ -337,7 +337,6 @@ private final class NativeCheckRunner {
         let store = BrowserArchiveStore(directory: directory)
         let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
         defer {
-            session.dismissPeek()
             session.tabs.forEach { $0.close() }
             try? FileManager.default.removeItem(at: directory)
         }
@@ -346,7 +345,11 @@ private final class NativeCheckRunner {
             try await load(normal, "upgrades")
             _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
             let originalView = normal.webView
-            let originalScroll = originalView.scrollView.contentOffset.y
+            let originalScroll = (try await js(normal, "Math.min(250, Math.max(0, document.documentElement.scrollHeight-innerHeight))") as? Double) ?? 0
+            try await wait {
+                let actual = (try? await self.js(normal, "window.scrollY")) as? Double
+                return actual.map { abs($0-originalScroll) < 2 } == true && abs(originalView.scrollView.contentOffset.y-originalScroll) < 2
+            }
             normal.openReader()
             try await wait { normal.readerArticle != nil || normal.errorMessage != nil }
             try check(normal.readerArticle?.blocks.count == 3, "Reader extracts article blocks without repeating the title")
@@ -354,6 +357,13 @@ private final class NativeCheckRunner {
             normal.cancelReader()
             try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Synthetic draft", "Reader preserves original input")
             try check(abs(originalView.scrollView.contentOffset.y - originalScroll) < 2, "Reader preserves original scroll position")
+            let pendingSource = normal.restorationURL!
+            normal.readerRequest = UUID()
+            normal.readerLoading = true
+            _ = try await js(normal, "history.replaceState(null,'','#reader-stale')")
+            normal.finishReaderExtraction(nil, request: normal.readerRequest, generation: normal.documentGeneration, view: normal.webView, source: pendingSource)
+            try check(!normal.readerLoading && normal.readerArticle == nil, "same-document URL change clears stale Reader loading")
+            _ = try await js(normal, "history.replaceState(null,'',location.pathname)")
             normal.openReader()
             normal.cancelReader()
             try await Task.sleep(for: .milliseconds(250))
@@ -371,13 +381,18 @@ private final class NativeCheckRunner {
             session.createWorkspace("Research")
             let researchID = session.workspaceID
             try check(session.visibleTabs.count == 1 && session.selected.id != normal.id, "new workspace has an independent tab")
-            let research = session.selected
+            let initialResearch = session.selected
+            let sibling = session.newTab()
+            session.select(initialResearch.id)
+            session.close(initialResearch.id)
+            try check(session.selected.id == sibling.id && session.workspaceID == researchID, "closing selected tab prefers its surviving workspace")
+            let research = sibling
             try await load(research, "upgrades")
             session.move(normal, to: researchID)
             try check(session.visibleTabs.first?.id == normal.id, "pinned tab sorts before other workspace tabs")
             session.select(research.id)
-            session.openPeek(URL(string: "http://127.0.0.1:8765/preview")!, from: research)
-            guard let peek = session.peek else { throw NSError(domain: "missing preview", code: 1) }
+            research.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/preview")!)?.loadViewIfNeeded()
+            guard let peek = research.presentation.previewModelForTesting else { throw NSError(domain: "missing preview", code: 1) }
             mount(peek)
             try await wait {
                 guard peek.loadedWebView?.url?.path == "/preview", !peek.webView.isLoading else { return false }
@@ -388,12 +403,16 @@ private final class NativeCheckRunner {
             session.saveNow()
             try check(store.load()?.session.tabs.contains { $0.address?.contains("/preview") == true } == false, "unkept Peek is absent from archive")
             try check(!session.history.contains { $0.address.contains("/preview") }, "unkept Peek is absent from history")
-            session.keepPeek()
+            try check(research.presentation.promoteLinkPreview(), "native preview promotion succeeds")
             try check(session.selected.webView === previewView, "keeping Peek promotes the same web view")
             try check(try await js(session.selected, "document.querySelector('#kept').value") as? String == "Preview draft", "Peek promotion preserves form state")
             try check(session.selected.workspaceID == researchID, "Peek promotion keeps source workspace")
             let privateTab = session.newTab(privateTab: true)
             try await load(privateTab, "private-upgrade")
+            research.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/discarded-preview")!)?.loadViewIfNeeded()
+            let discarded = research.presentation.previewModelForTesting
+            research.presentation.endLinkPreview()
+            try check(research.presentation.previewModelForTesting == nil && discarded?.loadedWebView == nil, "native context preview dismissal tears down its web view")
             session.togglePin(privateTab)
             let privateResults = session.searchResults("", isPrivate: true)
             try check(privateResults.filter { $0.kind == .tab }.allSatisfy { $0.tabID == privateTab.id }, "private unified search excludes normal workspace tabs")
@@ -404,10 +423,11 @@ private final class NativeCheckRunner {
             let saved = store.load()!
             try check(!saved.session.tabs.contains { $0.id == privateTab.id }, "private pinned tabs never persist")
             try check(saved.sites["127.0.0.1"]?.blockAds != false, "private blocking exception never persists")
-            session.openPeek(URL(string: "http://127.0.0.1:8765/private-peek")!, from: privateTab)
-            try check(session.peek?.isPrivate == true, "private Peek stays in private profile")
+            privateTab.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/private-peek")!)?.loadViewIfNeeded()
+            let privatePreview = privateTab.presentation.previewModelForTesting
+            try check(privatePreview?.isPrivate == true, "private Peek stays in private profile")
             session.closePrivateTabs()
-            try check(session.peek == nil, "closing private session destroys its Peek")
+            try check(privateTab.presentation.previewModelForTesting == nil && privatePreview?.loadedWebView == nil, "closing private session destroys its Peek")
             let restored = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
             try check(restored.searchResults("quieter", isPrivate: false).contains { $0.kind == .tab && $0.address.hasSuffix("/upgrades") }, "search finds lazily restored tabs by locally saved title")
             try check(restored.workspaces.contains { $0.id == researchID }, "workspace survives cold restoration")
@@ -439,6 +459,30 @@ private final class NativeCheckRunner {
                 return (try? await self.js(normal, "location.hostname === 'localhost' && document.readyState === 'complete'")) as? Bool == true
             }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "blocking preserves first-party resources and main document")
+            // Isolate navigation-policy state from popup blocking: only the synthetic probe path is blocked.
+            let popupRules = #"[{"trigger":{"url-filter":"^http://localhost:8765/probe","load-type":["third-party"]},"action":{"type":"block"}}]"#
+            ContentBlocking.useTestRules(popupRules)
+            // A target=_blank exception belongs to the child; opener protection must remain installed.
+            normal.blockAds = false
+            try await wait { normal.blockingStatus == "Off for this site" && !normal.webView.isLoading }
+            results.append("STEP: saved localhost blocking exception")
+            let opener = session.newTab()
+            try await load(opener, "upgrades")
+            results.append("STEP: protected opener loaded")
+            opener.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+            let beforeChild = session.tabs.count
+            _ = try await js(opener, "window.open('http://localhost:8765/upgrades','_blank');true")
+            try await wait { session.tabs.count > beforeChild }
+            results.append("STEP: excepted popup created")
+            let popup = session.selected
+            mount(popup)
+            try await wait { popup.webView.url?.host == "localhost" && !popup.webView.isLoading }
+            try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
+            try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
+            session.restoreBlocking(host: "localhost", isPrivate: false)
+            try check(!session.blockingExceptions(isPrivate: false).contains("localhost"), "restoring protection removes the saved site exception")
+            session.close(popup.id)
+            session.close(opener.id)
             let count = session.tabs.count
             let closing = session.newTab(url: URL(string: "http://127.0.0.1:8765/closing")!)
             session.close(closing.id)

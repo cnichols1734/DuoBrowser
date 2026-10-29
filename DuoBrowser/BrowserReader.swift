@@ -35,6 +35,16 @@ extension BrowserModel {
         readerLoading = false
         readerArticle = nil
     }
+    func finishReaderExtraction(_ value: Any?, request: UUID, generation: UUID, view: WKWebView, source: URL) {
+        guard readerRequest == request else { return }
+        readerLoading = false
+        guard documentGeneration == generation, loadedWebView === view, view.url == source else { return }
+        guard let article = ReaderArticle.parse(value, source: source) else {
+            errorMessage = "Reader is unavailable for this page. The original page is unchanged."
+            return
+        }
+        readerArticle = article
+    }
     func openReader() {
         guard !readerLoading, !isLoading, let view = loadedWebView, let source = restorationURL,
               let scriptURL = Bundle.main.url(forResource: "Reader", withExtension: "js"),
@@ -46,14 +56,7 @@ extension BrowserModel {
         Task { @MainActor [weak self, weak view] in
             guard let view else { return }
             let value = try? await view.evaluateJavaScript(script, in: nil, contentWorld: .world(name: "DuoBrowser.Reader"))
-            guard let self, self.readerRequest == request, self.documentGeneration == generation,
-                  self.loadedWebView === view, view.url == source else { return }
-            self.readerLoading = false
-            guard let article = ReaderArticle.parse(value, source: source) else {
-                self.errorMessage = "Reader is unavailable for this page. The original page is unchanged."
-                return
-            }
-            self.readerArticle = article
+            self?.finishReaderExtraction(value, request: request, generation: generation, view: view, source: source)
         }
     }
 }

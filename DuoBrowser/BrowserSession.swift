@@ -19,8 +19,6 @@ final class BrowserSession: ObservableObject {
     @Published var workspaces = [Workspace.standard]
     @Published var workspaceID = Workspace.defaultID
     @Published var showingWorkspaces = false
-    @Published var peek: BrowserModel?
-    private var peekWorkspaceID = Workspace.defaultID
     private var normalSites: [String: SitePreference] = [:]
     private var privateSites: [String: SitePreference] = [:]
     private var privateStore: WKWebsiteDataStore?
@@ -90,7 +88,7 @@ final class BrowserSession: ObservableObject {
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab, !tab.isPrivate else { return }
             // WebKit may publish the document title after didFinish records the visit.
-            if tab.title != tab.siteName, let address = tab.restorationURL?.absoluteString,
+            if !tab.isLoading, tab.title != tab.siteName, let address = tab.restorationURL?.absoluteString,
                let index = self.history.firstIndex(where: { $0.address == address }) {
                 self.history[index].title = String(tab.title.prefix(512))
             }
@@ -108,9 +106,29 @@ final class BrowserSession: ObservableObject {
             guard let self, let tab else { return }
             _ = self.newTab(url: url, privateTab: tab.isPrivate)
         }
-        tab.onPeek = { [weak self, weak tab] url in
-            guard let self, let tab else { return }
-            self.openPeek(url, from: tab)
+        tab.onCreatePreview = { [weak self, weak tab] url in
+            guard let self, let tab, WebAddress.valid(url) != nil else { return nil }
+            let preview = BrowserModel(url: url, isPrivate: tab.isPrivate, dataStore: self.store(isPrivate: tab.isPrivate))
+            preview.workspaceID = tab.workspaceID
+            self.connect(preview)
+            preview.onChange = nil
+            preview.onOpenWindow = nil
+            preview.onCreatePreview = nil
+            preview.onPromotePreview = nil
+            return preview
+        }
+        tab.onPromotePreview = { [weak self, weak tab] preview in
+            guard let self else { return false }
+            guard self.tabs.count < 200 else {
+                tab?.errorMessage = "Close a tab before opening this preview (200 tab limit)."
+                return false
+            }
+            self.connect(preview)
+            self.tabs.append(preview)
+            self.select(preview.id)
+            if let url = preview.restorationURL { preview.onVisit?(url, preview.title) }
+            self.saveNow()
+            return true
         }
         tab.onClose = { [weak self, weak tab] in if let tab { self?.close(tab.id) } }
         tab.onVisit = { [weak self, weak tab] url, title in
@@ -199,7 +217,6 @@ final class BrowserSession: ObservableObject {
         let tab = tabs.remove(at: index)
         tab.close()
         if !tabs.contains(where: \.isPrivate) {
-            if peek?.isPrivate == true { dismissPeek() }
             endPrivateSession()
         }
         if !tabs.contains(where: { !$0.isPrivate }) {
@@ -207,7 +224,8 @@ final class BrowserSession: ObservableObject {
             connect(replacement); tabs.append(replacement)
         }
         if selectedID == id {
-            let replacement = tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
+            let replacement = tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
+                ?? tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
             selectedID = replacement.id
             privateMode = replacement.isPrivate
             if !replacement.isPrivate { workspaceID = replacement.workspaceID }
@@ -218,7 +236,6 @@ final class BrowserSession: ObservableObject {
     }
 
     func closePrivateTabs() {
-        if peek?.isPrivate == true { dismissPeek() }
         let wasPrivate = privateMode
         let closing = tabs.filter(\.isPrivate)
         tabs.removeAll(where: \.isPrivate)
@@ -271,6 +288,20 @@ final class BrowserSession: ObservableObject {
         }
     }
     func showTabs() { selected.revealControls(); selected.captureSnapshot(); trimSnapshots(); showingTabs = true }
+
+    func blockingExceptions(isPrivate: Bool) -> [String] {
+        (isPrivate ? privateSites : normalSites).filter { $0.value.blockAds == false }.keys.sorted()
+    }
+    func restoreBlocking(host: String, isPrivate: Bool) {
+        let host = host.lowercased()
+        if isPrivate { privateSites[host]?.blockAds = true }
+        else { normalSites[host]?.blockAds = true }
+        for tab in tabs where tab.isPrivate == isPrivate && tab.restorationURL?.host?.lowercased() == host {
+            tab.blockAds = true
+        }
+        objectWillChange.send()
+        if !isPrivate { saveNow() }
+    }
 
     func searchResults(_ query: String, isPrivate: Bool) -> [SearchResult] {
         var savedTitles: [String: String] = [:]
@@ -337,39 +368,6 @@ final class BrowserSession: ObservableObject {
         objectWillChange.send()
         saveNow()
     }
-    func openPeek(_ url: URL, from source: BrowserModel) {
-        guard WebAddress.valid(url) != nil else { return }
-        dismissPeek()
-        source.presentation.cancel()
-        peekWorkspaceID = source.workspaceID
-        let model = BrowserModel(url: url, isPrivate: source.isPrivate, dataStore: store(isPrivate: source.isPrivate))
-        connect(model)
-        // A preview stays out of session archives, history and tab selection until promoted.
-        model.onChange = nil
-        model.onOpenWindow = nil
-        model.onOpenLink = { [weak self, weak model] url in
-            guard let self, let model else { return }
-            guard self.tabs.count < 199 else { model.errorMessage = "Close a tab before opening another from this preview."; return }
-            self.keepPeek()
-            self.newTab(url: url, privateTab: model.isPrivate)
-        }
-        model.onPeek = nil
-        model.onClose = { [weak self] in self?.dismissPeek() }
-        peek = model
-        model.activate()
-    }
-    func dismissPeek() { peek?.close(); peek = nil }
-    func keepPeek() {
-        guard let model = peek, tabs.count < 200 else { peek?.errorMessage = "Close a tab before keeping this preview."; return }
-        model.workspaceID = peekWorkspaceID
-        connect(model)
-        tabs.append(model)
-        peek = nil
-        select(model.id)
-        if let url = model.restorationURL { model.onVisit?(url, model.title) }
-        saveNow()
-    }
-
     func addBookmark() {
         guard let url = selected.restorationURL else { return }
         // Deliberate Save is allowed in private mode; automatic history is never recorded there.
@@ -387,8 +385,6 @@ final class BrowserSession: ObservableObject {
         saveNow(replaceBackup: true)
     }
     func background() {
-        peek?.presentation.cancel()
-        if peek?.isPrivate == true { peek?.clearSnapshot() }
         tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot(); $0.cancelReader() } }
         saveNow()
     }

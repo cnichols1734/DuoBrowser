@@ -5,10 +5,11 @@ struct BrowserToolbar: View {
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
     @Binding var input: String
+    @Binding var showingAddress: Bool
     let keyboardVisible: Bool
     let bottomSafeArea: CGFloat
     let accessibilityExpanded: Bool
-    @State private var showingAddress = false
+    @State private var showingProtection = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -38,9 +39,7 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
-        .sheet(isPresented: $showingAddress) {
-            BrowserSearch(session: session, browser: browser, query: input)
-        }
+        .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
         .sheet(item: $browser.readerArticle) { ReaderView(article: $0) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
 
@@ -221,9 +220,8 @@ struct BrowserToolbar: View {
             Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
                 .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
             Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
-            Menu("This Website", systemImage: "globe") {
-                Button(browser.blockAds ? "Turn Off Blocking & Reload" : "Turn On Blocking & Reload") { browser.blockAds.toggle() }
-                Text(browser.blockingStatus)
+            Button("Website Protection", systemImage: browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
+            Menu("Website Settings", systemImage: "globe") {
                 Toggle("Original Layout", isOn: $browser.originalPageLayout)
                 Toggle("Desktop Website", isOn: $browser.desktopSite)
                 Toggle("Full-width Page", isOn: $browser.fullWidthLayout)

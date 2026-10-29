@@ -15,9 +15,6 @@ struct BrowserView: View {
             }
             .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
             .sheet(isPresented: $session.showingWorkspaces) { WorkspaceView(session: session) }
-            .sheet(item: $session.peek, onDismiss: { session.dismissPeek() }) { model in
-                PeekView(session: session, browser: model)
-            }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -30,6 +27,8 @@ private struct ActiveBrowserView: View {
     @ObservedObject var viewport: BrowserViewportState
     @State private var input = ""
     @State private var keyboardVisible = false
+    @State private var showingSearch = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -46,6 +45,9 @@ private struct ActiveBrowserView: View {
             ZStack(alignment: .bottom) {
                 BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
                     .ignoresSafeArea(.container)
+                    .blur(radius: showingSearch ? 5 : 0)
+                    .accessibilityHidden(showingSearch)
+                    .allowsHitTesting(!showingSearch)
                 VStack(spacing: 8) {
                     if let error = browser.errorMessage {
                         VStack(alignment: .leading, spacing: 8) {
@@ -57,15 +59,31 @@ private struct ActiveBrowserView: View {
                         .padding(.horizontal, 12)
                     }
                     BrowserToolbar(session: session, browser: browser, chrome: browser.chrome,
-                                   input: $input, keyboardVisible: keyboardVisible,
+                                   input: $input, showingAddress: $showingSearch, keyboardVisible: keyboardVisible,
                                    bottomSafeArea: geometry.safeAreaInsets.bottom,
                                    accessibilityExpanded: voiceOverEnabled || dynamicTypeSize.isAccessibilitySize)
                 }
                 .padding(.bottom, 8 + viewport.bottomControlLift)
+                .opacity(showingSearch ? 0 : 1)
+                .allowsHitTesting(!showingSearch)
+                .accessibilityHidden(showingSearch)
+
+                if showingSearch {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea(.container)
+                        .onTapGesture { closeSearch() }
+                        .accessibilityHidden(true)
+                    BrowserSearch(session: session, browser: browser, query: $input,
+                                  availableHeight: geometry.size.height, dismiss: closeSearch)
+                        .padding(.horizontal, browser.fullWidthLayout ? 16 : max(16, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing)))
+                        .padding(.bottom, 12 + (keyboardVisible ? 0 : viewport.bottomControlLift))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                }
             }
             // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
             .ignoresSafeArea(.container, edges: .horizontal)
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: showingSearch)
         .statusBarHidden(hideSystemStatus)
         .onAppear { input = browser.address }
         .onChange(of: browser.errorMessage) { _, message in
@@ -78,6 +96,11 @@ private struct ActiveBrowserView: View {
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
             keyboardVisible = false
         }
+    }
+
+    private func closeSearch() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        showingSearch = false
     }
 }
 
