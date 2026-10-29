@@ -187,11 +187,46 @@ private final class NativeCheckRunner {
             let lineScript = "(()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));return JSON.stringify([...r.getClientRects()].map(q=>[q.width,q.height]))})()"
             let lines = try await js(model, lineScript) as? String
             let compact = [["x": Double(model.webView.bounds.width)-80, "y": 20.0, "width": 80.0, "height": 120.0]]
-            _ = try await js(model, "window.samples=[];window.sampleUntil=performance.now()+900;requestAnimationFrame(function sample(){const r=document.getElementById('reading').getBoundingClientRect();samples.push({x:r.x,y:r.y});if(performance.now()<sampleUntil)requestAnimationFrame(sample)})")
+            // Capture the real production animation in its isolated world. A busy hosted
+            // simulator can skip an entire wall-clock rAF window, so sample its actual
+            // WebKit-rendered interpolation at deterministic timeline positions instead.
+            _ = try await model.webView.evaluateJavaScript("""
+                (() => {
+                    const original = Element.prototype.animate;
+                    globalThis.__duoNativeMotion = null;
+                    Element.prototype.animate = function(...args) {
+                        const animation = original.apply(this, args);
+                        if (this.id === 'reading') {
+                            Element.prototype.animate = original;
+                            globalThis.__duoNativeMotion = animation;
+                            animation.pause();
+                        }
+                        return animation;
+                    };
+                })()
+                """, in: nil, contentWorld: PageLayoutAdapter.world)
             try await camera(compact)
-            try await pause()
+            try await wait {
+                (try? await model.webView.evaluateJavaScript("Boolean(globalThis.__duoNativeMotion)", in: nil,
+                    contentWorld: PageLayoutAdapter.world)) as? Bool == true
+            }
+            let interpolates = try await model.webView.evaluateJavaScript("""
+                (() => {
+                    const animation = globalThis.__duoNativeMotion;
+                    const duration = animation.effect.getTiming().duration;
+                    if (duration !== 420) return false;
+                    const samples = [0, .25, .5, .75, 1].map(fraction => {
+                        animation.currentTime = duration * fraction;
+                        const r = document.getElementById('reading').getBoundingClientRect();
+                        return {x:r.x, y:r.y};
+                    });
+                    animation.finish();
+                    delete globalThis.__duoNativeMotion;
+                    return samples.some(r=>r.x>17&&r.x<88) && samples.every(r=>Math.abs(r.y-24)<1);
+                })()
+                """, in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
             try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
-            try check(try await js(model, "samples.some(r=>r.x>17&&r.x<88)&&samples.every(r=>Math.abs(r.y-24)<1)") as? Bool == true, "WebKit renders horizontal frames without pushing text down")
+            try check(interpolates == true, "WebKit animation interpolates horizontally without pushing text down")
             try check(try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String == "18px", "WebKit fitting preserves font size")
             try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
             try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
