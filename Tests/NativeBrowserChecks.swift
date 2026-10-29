@@ -273,6 +273,13 @@ private final class NativeCheckRunner {
             try check(try await js(model, "![...document.querySelector('.toolbar').attributes].some(a=>a.name.startsWith('data-duo-camera-'))") as? Bool == true, "WebKit releases header sizing when the island disappears")
             try await camera([], enabled: false)
             try check(abs((try await measure("width"))-newsWidth)<1, "Original Layout restores nested article width")
+            _ = try await js(model, "scrollTo(0,document.getElementById('reading').getBoundingClientRect().bottom+scrollY-45)")
+            let chromeReadingTop = try await measure("top", "following")
+            try await camera(rail); try await pause()
+            let chromeReadingRight = try await measure("right", "following")
+            try check(abs((try await measure("top", "following"))-chromeReadingTop)<1 && chromeReadingRight <= model.webView.bounds.width-91,
+                "WebKit skips text hidden by sticky chrome without rolling back visible text")
+
 
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
