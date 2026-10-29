@@ -24,8 +24,13 @@ struct BrowserLibrary: View {
                 if dynamicTypeSize.isAccessibilitySize { sectionPicker.pickerStyle(.menu) }
                 else { sectionPicker.pickerStyle(.segmented) }
                 if entries.isEmpty {
-                    ContentUnavailableView(section == 0 ? "No Bookmarks" : "No History", systemImage: section == 0 ? "bookmark" : "clock",
-                        description: Text(section == 0 ? "Save a page from Page options." : "Private browsing never adds to history."))
+                    if !search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        ContentUnavailableView.search(text: search)
+                    } else {
+                        ContentUnavailableView(section == 0 ? "Your saved pages" : "Your recent pages",
+                            systemImage: section == 0 ? "bookmark" : "clock",
+                            description: Text(section == 0 ? "Save a bookmark from Page options to keep a page here." : "Pages you visit appear here. Private browsing never adds to history."))
+                    }
                 }
                 ForEach(entries) { entry in
                     Button {
@@ -33,10 +38,16 @@ struct BrowserLibrary: View {
                         dismiss()
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(entry.title.isEmpty ? entry.address : entry.title).foregroundStyle(.primary).lineLimit(2)
-                            Text(URL(string: entry.address)?.host ?? entry.address).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            Text(verbatim: entry.title.isEmpty ? entry.address : entry.title)
+                                .font(.body.weight(.medium)).foregroundStyle(.primary).lineLimit(2)
+                            Text(verbatim: URL(string: entry.address)?.host ?? entry.address)
+                                .font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
                         }
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                        .padding(.vertical, 4).contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Opens this page in the current tab")
                     .swipeActions {
                         Button("Delete", role: .destructive) {
                             if section == 0 { session.deleteBookmarks(ids: [entry.id]) }

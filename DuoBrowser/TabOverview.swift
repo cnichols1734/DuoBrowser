@@ -67,7 +67,17 @@ struct TabOverview: View {
                                 }
                             }
                         }
-                        if filteredTabs.isEmpty { ContentUnavailableView.search(text: search) }
+                        if filteredTabs.isEmpty {
+                            if search.isEmpty {
+                                ContentUnavailableView {
+                                    Label("A little room to explore", systemImage: "square.on.square")
+                                } description: {
+                                    Text("Open a new tab to start browsing in this workspace.")
+                                } actions: {
+                                    Button("New Tab", systemImage: "plus") { session.newTab() }.buttonStyle(.borderedProminent)
+                                }
+                            } else { ContentUnavailableView.search(text: search) }
+                        }
                     }.padding(20)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -152,6 +162,7 @@ private struct TabPreview: View {
             HStack(spacing: 6) {
                 Image(systemName: tab.isPinned ? "pin.fill" : "globe").font(.caption).foregroundStyle(.secondary)
                 Text(tab.title).font(.subheadline.weight(.medium)).lineLimit(1)
+                Spacer(minLength: 0)
             }
             .padding(.horizontal, 4).accessibilityHidden(true)
             ZStack(alignment: .topTrailing) {

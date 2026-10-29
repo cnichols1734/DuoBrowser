@@ -19,8 +19,8 @@ struct WorkspaceView: View {
                                 HStack(spacing: 12) {
                                     Image(systemName: "square.stack")
                                     VStack(alignment: .leading, spacing: 4) {
-                                        Text(verbatim: workspace.name).font(.headline)
-                                        Text("\(session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count) open")
+                                        Text(verbatim: workspace.name).font(.headline).lineLimit(2)
+                                        Text("\(session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count) tabs")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -56,35 +56,83 @@ struct WorkspaceView: View {
     }
 }
 
-struct PeekView: View {
+
+struct BrowserProtectionView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
+    @Environment(\.dismiss) private var dismiss
+    private var host: String? { browser.restorationURL?.host }
+    private var unavailable: Bool { browser.blockingStatus == "Protection unavailable" }
+    private var title: String {
+        guard host != nil else { return "Ready to protect" }
+        if !browser.blockAds { return "Off for this website" }
+        if unavailable { return "Protection unavailable" }
+        if browser.blockingStatus == "Preparing protection" { return "Preparing protection" }
+        return "Protection is on"
+    }
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                if browser.isLoading { ProgressView(value: browser.progress).accessibilityLabel("Preview loading") }
-                if let error = browser.errorMessage { Text(error).font(.callout).padding() }
-                BrowserSurface(browser: browser, fullWidth: false, showRegions: false, reservesBrowserControls: false)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 28) {
+                    HStack(alignment: .top, spacing: 16) {
+                        Image(systemName: unavailable ? "exclamationmark.shield" : browser.blockAds ? "checkmark.shield.fill" : "shield.slash")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundStyle(unavailable ? Color.orange : browser.blockAds ? Color.green : Color.secondary)
+                            .frame(width: 52, height: 52)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(title).font(.title2.weight(.bold))
+                            Text(host ?? "Open a website to manage its protection.")
+                                .font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
+                        }
+                    }
+                    if host != nil {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Toggle("Block ads & trackers", isOn: $browser.blockAds)
+                                .font(.body.weight(.semibold))
+                            Text("Changes reload this page. Turn protection off if a website isn't working correctly.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }.padding(20).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 24))
+                    }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("What’s protected").font(.headline)
+                        Text(unavailable ? "The blocking rules couldn't load. Browsing still works. Relaunch DuoBrowser to try again." :
+                             "When enabled, blocks third-party requests to a bundled list of 19 advertising and tracking services. Some ads may still appear.")
+                            .font(.body).foregroundStyle(.secondary)
+                        Text("Protection runs on your device. No browsing reports or blocked-request logs are collected.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Website exceptions").font(.headline)
+                            Spacer()
+                            if browser.isPrivate { Text("Private session").font(.caption).foregroundStyle(.secondary) }
+                        }
+                        let exceptions = session.blockingExceptions(isPrivate: browser.isPrivate)
+                        if exceptions.isEmpty {
+                            Text("No exceptions. Protection is enabled by default on websites.")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(exceptions, id: \.self) { exception in
+                                HStack(spacing: 12) {
+                                    Text(exception).lineLimit(2)
+                                    Spacer(minLength: 8)
+                                    Button("Protect") { session.restoreBlocking(host: exception, isPrivate: browser.isPrivate) }
+                                        .buttonStyle(.bordered).controlSize(.small)
+                                        .accessibilityLabel("Turn protection on for \(exception)")
+                                }.frame(minHeight: 44)
+                                if exception != exceptions.last { Divider() }
+                            }
+                        }
+                        if browser.isPrivate {
+                            Text("Private exceptions disappear when you close all private tabs.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                }.padding(24).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .safeAreaInset(edge: .bottom) {
-                HStack(spacing: 32) {
-                    Button { browser.webView.goBack() } label: { Image(systemName: "chevron.backward").frame(width: 48, height: 48) }
-                        .disabled(!browser.canGoBack).accessibilityLabel("Back")
-                    Button { browser.webView.reload() } label: { Image(systemName: "arrow.clockwise").frame(width: 48, height: 48) }
-                        .accessibilityLabel("Reload")
-                    Button { browser.webView.goForward() } label: { Image(systemName: "chevron.forward").frame(width: 48, height: 48) }
-                        .disabled(!browser.canGoForward).accessibilityLabel("Forward")
-                }
-                .font(.title3).buttonStyle(.plain).padding(.horizontal, 16)
-                .glassEffect(.regular.interactive(), in: Capsule()).padding(8)
-            }
-            .navigationTitle(browser.privateLabel + browser.siteName).navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Close") { session.dismissPeek() } }
-                ToolbarItem(placement: .confirmationAction) { Button("Keep as Tab") { session.keepPeek() } }
-            }
+            .navigationTitle("Website protection").navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
     }
 }

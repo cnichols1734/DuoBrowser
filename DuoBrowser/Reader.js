@@ -12,7 +12,7 @@
             if (style.display !== 'none' && style.visibility !== 'hidden' && node.getClientRects().length) {
                 // Avoid collecting container text twice when a list/quote contains paragraphs.
                 if (!node.querySelector('p,li,blockquote,pre,script,style,template,noscript,input,textarea,select,button,[contenteditable],[hidden],[aria-hidden="true"]')) {
-                    const text = (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
+                    const text = (node.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 8000);
                     if (text) {
                         blocks.push({kind: /^H/.test(node.tagName) ? 'heading' : 'paragraph', text});
                         characters += text.length;

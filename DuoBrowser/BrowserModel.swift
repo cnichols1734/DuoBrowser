@@ -15,7 +15,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var onSnapshot: (() -> Void)?
     var onOpenWindow: ((WKWebViewConfiguration) -> WKWebView?)?
     var onOpenLink: ((URL) -> Void)?
-    var onPeek: ((URL) -> Void)?
+    var onCreatePreview: ((URL) -> BrowserModel?)?
+    var onPromotePreview: ((BrowserModel) -> Bool)?
     @Published var workspaceID = Workspace.defaultID
     @Published var isPinned = false
     @Published var readerArticle: ReaderArticle?
@@ -244,7 +245,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         onSnapshot = nil
         onOpenWindow = nil
         onOpenLink = nil
-        onPeek = nil
+        onCreatePreview = nil
+        onPromotePreview = nil
         onClose = nil
         onVisit = nil
         preferenceForURL = nil
@@ -428,7 +430,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         let scheme = url.scheme?.lowercased() ?? ""
         if ["https", "http"].contains(scheme) {
             guard WebAddress.valid(url) != nil else { decisionHandler(.cancel, preferences); return }
-            if navigationAction.targetFrame?.isMainFrame != false {
+            if navigationAction.targetFrame?.isMainFrame == true {
                 currentMethod = navigationAction.request.httpMethod ?? "GET"
                 let site = preferenceForURL?(url) ?? SitePreference()
                 applyingPreferences = true
@@ -439,7 +441,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                 applyingPreferences = false
                 preferences.preferredContentMode = desktopSite ? .desktop : .mobile
             }
-            if navigationAction.targetFrame?.isMainFrame != false {
+            if navigationAction.targetFrame?.isMainFrame == true {
                 let generation = UUID()
                 policyGeneration = generation
                 Task { @MainActor [weak self] in
