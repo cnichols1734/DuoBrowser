@@ -26,7 +26,7 @@ With Playwright and its Chromium binary already available in your test environme
 node Tests/PageLayoutTests.cjs
 ```
 
-The app has no Playwright dependency. The same exported suite ran through the available browser tool. All 24 cases passed, covering unrelated origins, generic HTML and custom elements, body/root-wrapper padding, both header variants, restoration of newer author styles, ordinary article spacing, header movement, overflow, failed expansion, scan budgets, ambiguity, subframe isolation, editing/zoom deferral, hydration, SPA replacement, disable cancellation, side changes, convergence, and header actions.
+The app has no Playwright dependency. The suite has 25 cases covering unrelated origins, generic HTML and custom elements, body/root-wrapper padding, both header variants, restoration of newer author styles, ordinary article spacing, header movement, overflow, failed expansion, scan budgets, ambiguity, subframe isolation, editing/zoom deferral, hydration, SPA replacement, disable cancellation, side changes, convergence, header actions, and deferral during touch and momentum scrolling.
 
 The original 16-case YouTube suite is retained in Git history; its regression scenarios are incorporated here. Native WebKit checks use the bundled viewport lab, which intentionally declares safe-area body padding and an independently padded fixed header without any site-specific markup. The lab reports actual content width and keeps its header action and input available for rollback/focus checks. Chromium fixtures do not establish native pinch, hardware, or universal website compatibility.
 
@@ -38,6 +38,14 @@ work/browser-data-tests
 ```
 
 These cover host/port/search parsing, unsafe schemes/credentials, bounded archives, unknown versions, corrupt-primary recovery, deletion of both history generations and invalid scroll positions. `CameraAvoidanceTests.cjs` supplies 14 real-layout checks via `runCameraTests(page, source)`: free destinations, hit testing, rollback, author styles/transforms, occupied space, editing, zoom, geometry conversion and mutation convergence. Its CommonJS export is the function itself, as is `PageLayoutTests.cjs`.
+
+## Scroll settling and system occlusion
+
+`CameraSettlingTests.cjs` adds 42 synthetic Chromium checks: horizontal animation positions, no added top gap or glyph scaling, stable line rectangles during scrolling, natural paragraph spacing, reading offset, live links, held touch/momentum, interruption, repeated settling, growing/removed regions, Reduce Motion, VoiceOver policy, editing/selection/zoom deferral, complex-layout fallback, cancellation, invalid geometry, observer convergence, author edits, privacy, grouped controls, hit testing, scan limits, left-side fitting, partially visible paragraphs and full-width-island fallback.
+
+The native harness's `--browser-checks --settling-checks` mode runs 17 checks against the exact bundled script in WKWebView's isolated content world. It writes `Library/Caches/CameraSettlingChecks.txt`; the normal `scripts/native-checks.sh` run includes it. Its synthetic region updates and pointer events establish layout behavior, not physical touch or system geometry reporting.
+
+For actual system occlusion, build the separate [Island Lab companion](IslandLab/README.md), start its Live Activity and return to the browser's loopback `/settling` fixture. The companion is intentionally outside the shipping app. Results and remaining manual/hardware coverage belong in the [settling validation report](../docs/SCROLL_SETTLING_2026-10-28.md).
 
 ## Native WebKit integration harness (Debug only)
 
@@ -69,7 +77,7 @@ Reported `previewBytes` counts CGImage decoded raster bytes. `appFootprint` is t
 
 ## Reproducible community checks
 
-Run `bash scripts/check.sh` for the portable Swift assertions, Swift parsing, JavaScript syntax and repository/dependency checks. Install the pinned development-only test dependency with `npm ci --ignore-scripts`, install Chromium with `npx --no-install playwright install chromium`, then run `npm test` for both layout suites. Run SwiftLint 0.65.1 with `swiftlint lint --strict --config .swiftlint.yml`. No application dependency was added.
+Run `bash scripts/check.sh` for the portable Swift assertions, Swift parsing, JavaScript syntax and repository/dependency checks. Install the pinned development-only test dependency with `npm ci --ignore-scripts`, install Chromium with `npx --no-install playwright install chromium`, then run `npm test` for all three layout suites. Run SwiftLint 0.65.1 with `swiftlint lint --strict --config .swiftlint.yml`. No application dependency was added.
 
 `bash scripts/native-checks.sh` builds Debug, creates an isolated Duo simulator, starts local fixtures, runs native/persistence/memory checks and checks fresh receipts before deleting the test simulator. It fails if the required runtime or ports are unavailable. `--skip-build` uses an already-built Debug app in `DerivedData`; `DUO_DERIVED_DATA` overrides that directory. For a deliberately selected existing test simulator, set `DUO_TEST_DEVICE`; the script leaves that device and its normal browsing data intact and returns to the normal app afterward. Do not point it at a personal device.
 

@@ -1,4 +1,5 @@
 import WebKit
+import Combine
 
 /// Owns bounded, site-independent layout rules in a separate JavaScript world.
 @MainActor
@@ -9,12 +10,16 @@ final class PageLayoutAdapter {
     private(set) var enabled = true
     private let source: String
     private var geometry: [String: Any] = [:]
+    private var accessibilityObserver: AnyCancellable?
 
     init(webView: WKWebView) {
         self.webView = webView
         source = Bundle.main.url(forResource: "PageLayout", withExtension: "js")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
         installScript()
+        accessibilityObserver = NotificationCenter.default.publisher(for: UIAccessibility.reduceMotionStatusDidChangeNotification)
+            .merge(with: NotificationCenter.default.publisher(for: UIAccessibility.voiceOverStatusDidChangeNotification))
+            .receive(on: RunLoop.main).sink { [weak self] _ in self?.applyCamera() }
     }
 
     func setEnabled(_ enabled: Bool) {
@@ -49,6 +54,8 @@ final class PageLayoutAdapter {
         guard !geometry.isEmpty else { return }
         var value = geometry
         value["enabled"] = enabled
+        value["reduceMotion"] = UIAccessibility.isReduceMotionEnabled
+        value["voiceOver"] = UIAccessibility.isVoiceOverRunning
         webView?.callAsyncJavaScript("globalThis.__duoCamera?.update(value)", arguments: ["value": value],
                                     in: nil, in: Self.world, completionHandler: nil)
     }

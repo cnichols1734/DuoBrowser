@@ -1,6 +1,6 @@
 # DuoBrowser
 
-A free, minimal iPhone Duo browser built with SwiftUI, UIKit and WKWebView. DuoBrowser uses the outer display edge to edge and moves small obstructed website controls away from the camera when a safe adjustment is possible.
+A free, minimal iPhone Duo browser built with SwiftUI, UIKit and WKWebView. DuoBrowser uses the outer display edge to edge and moves obstructed reading blocks and small website controls away from the camera when a safe adjustment is possible.
 
 **No advertising, subscriptions, paid features or app tracking.** Community contributions are welcome; Christopher Nichols retains final authority over merges and official releases.
 
@@ -13,6 +13,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 ## Features
 
 - Full-width browsing with camera-aware adjustments based on actual system geometry.
+- Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
 - Local history, bookmarks, find on page and native sharing.

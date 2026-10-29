@@ -29,6 +29,14 @@ private struct ActiveBrowserView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
+    private var hideSystemStatus: Bool {
+        #if DEBUG
+        browser.fullWidthLayout && !session.showSystemStatus
+        #else
+        browser.fullWidthLayout
+        #endif
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
@@ -54,7 +62,7 @@ private struct ActiveBrowserView: View {
             // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
             .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .statusBarHidden(browser.fullWidthLayout)
+        .statusBarHidden(hideSystemStatus)
         .onAppear { input = browser.address }
         .onChange(of: browser.errorMessage) { _, message in
             if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }

@@ -167,7 +167,71 @@ private final class NativeCheckRunner {
         text.text = results.joined(separator: "\n"); text.isEditable = false
         host.view.addSubview(text)
     }
+    func settlingChecks() async {
+        let model = BrowserModel(dataStore: .nonPersistent())
+        defer { model.close() }
+        func camera(_ regions: [[String: Double]], enabled: Bool = true, reduceMotion: Bool = false, voiceOver: Bool = false) async throws {
+            let _: Any = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
+                "enabled": enabled, "width": model.webView.bounds.width, "height": model.webView.bounds.height,
+                "regions": regions, "reduceMotion": reduceMotion, "voiceOver": voiceOver
+            ]], in: nil, in: PageLayoutAdapter.world)
+        }
+        func measure(_ property: String, _ id: String = "reading") async throws -> Double {
+            try await js(model, "document.getElementById('\(id)').getBoundingClientRect().\(property)") as? Double ?? -9999
+        }
+        func pause() async throws { try await Task.sleep(for: .milliseconds(950)) }
+        do {
+            try await load(model, "settling")
+            let original = try await measure("width")
+            let gap = (try await measure("top", "following")) - (try await measure("bottom"))
+            let lineScript = "(()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));return JSON.stringify([...r.getClientRects()].map(q=>[q.width,q.height]))})()"
+            let lines = try await js(model, lineScript) as? String
+            let compact = [["x": Double(model.webView.bounds.width)-80, "y": 20.0, "width": 80.0, "height": 120.0]]
+            _ = try await js(model, "window.samples=[];window.sampleUntil=performance.now()+900;requestAnimationFrame(function sample(){const r=document.getElementById('reading').getBoundingClientRect();samples.push({x:r.x,y:r.y});if(performance.now()<sampleUntil)requestAnimationFrame(sample)})")
+            try await camera(compact)
+            try await pause()
+            try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
+            try check(try await js(model, "samples.some(r=>r.x>17&&r.x<88)&&samples.every(r=>Math.abs(r.y-24)<1)") as? Bool == true, "WebKit renders horizontal frames without pushing text down")
+            try check(try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String == "18px", "WebKit fitting preserves font size")
+            try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
+            try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
+            try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")
+            try await camera([], enabled: false)
+            try check(abs((try await measure("width"))-original)<1, "Original Layout restores native paragraph width")
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'))")
+            try await camera(compact)
+            try await pause()
+            try check(try await js(model, lineScript) as? String == lines, "WebKit keeps line wrapping stable during held touch")
+            _ = try await js(model, "dispatchEvent(new Event('pointerup'))")
+            try await pause()
+            try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit fits sideways after touch release")
+            let expanded = [["x": Double(model.webView.bounds.width)-100, "y": 20.0, "width": 100.0, "height": 180.0]]
+            try await camera(expanded); try await pause()
+            try check((try await measure("right")) <= model.webView.bounds.width-107, "WebKit follows wider synthetic island geometry sideways")
+            let status = [["x": Double(model.webView.bounds.width)-80, "y": 160.0, "width": 80.0, "height": 80.0]]
+            try await camera(compact + status); try await pause()
+            try check(abs((try await measure("top"))-24)<1, "WebKit stacked status regions never push the paragraph down")
+            try await camera([["x": 8, "y": 20, "width": Double(model.webView.bounds.width)-16, "height": 150]])
+            try await pause()
+            try check(abs((try await measure("width"))-original)<1, "WebKit full-width island falls back instead of moving text down")
+            try await camera([]); try await pause()
+            try check(abs((try await measure("width"))-original)<1, "WebKit restores width after occlusion removal")
+            try await camera(compact, reduceMotion: true); try await pause()
+            try check(try await js(model, "document.getElementById('reading').getAnimations().length") as? Int == 0, "native Reduce Motion disables settling animation")
+            try await camera([], enabled: false)
+            try await camera(compact, voiceOver: true); try await pause()
+            try check(abs((try await measure("width"))-original)<1, "VoiceOver preserves native reading layout")
+            try await camera([], enabled: false)
+            _ = try await js(model, "document.getElementById('draft').value='unsent native draft';document.getElementById('draft').focus()")
+            try await camera(compact); try await pause()
+            try check(try await js(model, "document.getElementById('draft').value") as? String == "unsent native draft", "native fitting preserves the form draft")
+            try check(try await js(model, "localStorage.length===0 && sessionStorage.length===0") as? Bool == true, "native fitting persists no page content")
+        } catch { results.append("FAIL: \(error)") }
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
+        try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+    }
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--settling-checks") { await settlingChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--memory-checks") { await memoryChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--site-checks") {
             await siteChecks()
