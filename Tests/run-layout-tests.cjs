@@ -8,6 +8,7 @@ const path = require('node:path');
         for (const [suite, source] of [
             ['PageLayoutTests.cjs', 'PageLayout.js'],
             ['CameraAvoidanceTests.cjs', 'CameraAvoidance.js'],
+            ['CameraSettlingTests.cjs', 'CameraAvoidance.js'],
         ]) {
             const context = await browser.newContext();
             const page = await context.newPage();

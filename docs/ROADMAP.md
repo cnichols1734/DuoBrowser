@@ -117,3 +117,10 @@ The owner selected and supplied a blue-globe/open-book icon after the earlier co
 ## Open-source preparation — October 27, 2026
 
 Prepared MIT licensing, contribution/security/release guidance, issue/PR templates, owner review policy, pinned development tools and hosted CI on `chore/open-source-preparation`. The pre-change exposure assessment found no committed secrets; the owner approved the public reporting email and icon licensing. Application behavior and project configuration are unchanged. Local and hosted build/test checks passed. See [verified settings, limitations and publication checklist](OPEN_SOURCE_PREPARATION.md). The repository remains private, PR review is required, and public visibility and App Store publication each require separate explicit authorization.
+
+
+## Sideways scroll settling — October 28, 2026
+
+Camera fitting now waits for touch release and a 240 ms quiet period, then settles horizontally over 420 ms. Reading paragraphs retain their top position and font size. Supported full-width paragraphs narrow inward from the camera side only after scrolling stops; there is no vertical text-avoidance fallback. New gestures freeze fitting, and Original Layout restores the author layout. A separate simulator-only ActivityKit companion and Debug system-status switch allow review with a real Dynamic Island activity.
+
+Debug/Release builds, 81 browser-layout checks, portable checks and lint passed. The synthetic page was reviewed with the compact island, Original Layout, keyboard/form editing, closed/partial/open poses and rotation. See [verification and remaining limits](SCROLL_SETTLING_2026-10-28.md) for native regression results, screenshots and the exact review matrix. Physical touch/frame-rate/energy profiling, spoken VoiceOver, manual pinch/larger-text coverage and the broader website corpus remain open; simulator success does not close those release gates.

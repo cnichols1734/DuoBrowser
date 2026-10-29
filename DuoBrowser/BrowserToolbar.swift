@@ -243,6 +243,7 @@ struct BrowserToolbar: View {
             #if DEBUG
             Menu("Developer") {
                 Toggle("Show reserved regions", isOn: $session.showRegions)
+                Toggle("Show system status", isOn: $session.showSystemStatus)
                 Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
             }
             #endif

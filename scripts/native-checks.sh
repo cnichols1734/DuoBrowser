@@ -83,6 +83,7 @@ else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
 run_receipt NativeBrowserChecks.txt 30
+run_receipt CameraSettlingChecks.txt 17 --settling-checks
 run_receipt PersistentCookieChecks.txt 1 --persistent-cookie-write
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-read
 run_receipt MemoryChecks.txt 11 --memory-checks

@@ -12,6 +12,9 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarks: [LibraryEntry] = []
     @Published var showingLibrary = false
     @Published var showRegions = false
+    #if DEBUG
+    @Published var showSystemStatus = false
+    #endif
     @Published var showingTabs = false
     private var normalSites: [String: SitePreference] = [:]
     private var privateSites: [String: SitePreference] = [:]

@@ -4,6 +4,7 @@
     if (window !== window.top || !['http:', 'https:', 'file:'].includes(location.protocol)) return;
     let enabled = false, timer = null, style = null, probe = null, target = null;
     let watched = [], failures = 0, stopped = false;
+    let touching = false, lastScroll = -Infinity;
     let lastResult = { state: 'original' };
     const marker = `data-duo-fit-${Math.random().toString(36).slice(2)}`;
     const mutationObserver = new MutationObserver(schedule);
@@ -117,6 +118,7 @@
 
     function apply() {
         if (!enabled || stopped) return;
+        if (touching || performance.now() - lastScroll < 240) { schedule(); return; }
         const active = document.activeElement;
         if (active?.matches('input,textarea,select') || active?.isContentEditable ||
             Math.abs((visualViewport?.scale || 1) - 1) > 0.01 || document.fullscreenElement) return;
@@ -176,6 +178,11 @@
         return lastResult;
     }
     addEventListener('resize', schedule, { passive: true });
+    addEventListener('scroll', () => { lastScroll = performance.now(); schedule(); }, { passive: true, capture: true });
+    addEventListener('touchstart', () => { touching = true; }, { passive: true, capture: true });
+    for (const name of ['touchend', 'touchcancel']) addEventListener(name, event => {
+        touching = event.touches.length > 0; schedule();
+    }, { passive: true, capture: true });
     addEventListener('pageshow', schedule);
     document.addEventListener('focusout', schedule);
     document.addEventListener('fullscreenchange', schedule);
