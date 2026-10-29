@@ -14,7 +14,7 @@ struct IslandLabWidget: Widget {
                 Image(systemName: "timer")
                 Text(context.attributes.label)
                 Spacer()
-                Text(timerInterval: Date()...context.state.end, countsDown: true).monospacedDigit()
+                Text(timerInterval: min(Date(), context.state.end)...context.state.end, countsDown: true).monospacedDigit()
             }.padding().activityBackgroundTint(.orange.opacity(0.15))
         } dynamicIsland: { context in
             DynamicIsland {
@@ -22,12 +22,12 @@ struct IslandLabWidget: Widget {
                 DynamicIslandExpandedRegion(.trailing) { Text("TEST").font(.caption) }
                 DynamicIslandExpandedRegion(.center) { Text(context.attributes.label) }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(timerInterval: Date()...context.state.end, countsDown: true).font(.title2).monospacedDigit()
+                    Text(timerInterval: min(Date(), context.state.end)...context.state.end, countsDown: true).font(.title2).monospacedDigit()
                 }
             } compactLeading: {
                 Image(systemName: "timer").foregroundStyle(.orange)
             } compactTrailing: {
-                Text(timerInterval: Date()...context.state.end, countsDown: true).monospacedDigit().frame(width: 48)
+                Text(timerInterval: min(Date(), context.state.end)...context.state.end, countsDown: true).monospacedDigit().frame(width: 48)
             } minimal: {
                 Image(systemName: "timer").foregroundStyle(.orange)
             }.keylineTint(.orange)

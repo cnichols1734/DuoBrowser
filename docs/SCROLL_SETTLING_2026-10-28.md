@@ -76,3 +76,9 @@ Unsupported transformed/clipped/complex layouts stay original. Some content can 
 Simulator evidence does not establish physical-device touch quality, steady 60/120 fps, battery impact, spoken VoiceOver behavior or hardware accessibility. Those remain release gates. The expanded test island is real system UI; synthetic geometry checks are identified separately and do not prove all iOS geometry reporting.
 
 Reproduction: [browser tests](../Tests/README.md), [Live Activity companion](../Tests/IslandLab/README.md), and the loopback `/settling` page. Raw logs, receipts, screenshots and recordings stay under ignored `work/settling/`; selected synthetic UI evidence is checked in.
+
+## PR review follow-up — October 29
+
+Addressed the six Copilot findings: animated subtrees now reject absolute descendants; fitted text rectangles must remain inside the paragraph and clear of occlusions; follower positions retain final vertical flow during sideways motion; animations preserve authored opacity; touch-originated pointer cancellation does not release an active touch; and the simulator Live Activity clamps expired timer ranges.
+
+Added six browser regressions (56 settling checks; 108 layout checks total). The nested reading-position fixture now places the following paragraph immediately below its 52px sticky header so the earlier paragraph is fully hidden regardless of font wrapping. At the previous 90px position an earlier line could remain visible on the hosted runner, making the asserted anchor ambiguous. Portable checks and strict lint passed; hosted CI and final native integration are reported in the PR.
