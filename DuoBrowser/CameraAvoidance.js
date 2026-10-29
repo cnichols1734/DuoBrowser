@@ -10,7 +10,7 @@
   const QUIET = 240, DURATION = 420, MAX_MOVE = 320, MAX_NODES = 48;
   let geometry = null, timer = 0, touching = false, lastScroll = -Infinity, stopped = false;
   let ledger = new Map(), animations = new Map(), serial = 0;
-  let bodySize = '';
+  let bodySize = '', settlingScroll = null;
   const rect = el => el.getBoundingClientRect();
   const near = (a, b) => Math.abs(a - b) < 1;
   const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -55,7 +55,14 @@
     clearTimeout(timer);
     if (!stopped && geometry?.enabled) timer = setTimeout(settle, QUIET);
   }
-  function moving() {
+  function moving(event) {
+    // A synchronous reading-position correction is not a new user scroll. Its
+    // queued event must not freeze the sideways animation we just started.
+    if (event?.type === 'scroll' && (event.target === document || event.target === window) &&
+        settlingScroll && near(scrollX, settlingScroll.x) && near(scrollY, settlingScroll.y)) {
+      settlingScroll = null; return;
+    }
+    settlingScroll = null;
     lastScroll = performance.now();
     // Freeze at the current presentation, including when a new swipe interrupts settling.
     for (const a of animations.values()) if (a.playState === 'running') a.pause();
@@ -257,14 +264,16 @@
     if (valid && reachable(el, true)) return true;
     undo(el); return false;
   }
-  function animateFrom(before, old) {
+  function animateFrom(before, old, reading) {
     if (reduced.matches || geometry.reduceMotion || geometry.voiceOver) return;
     for (const [el, start] of before) {
       if (!el.isConnected) continue;
       const end = rect(el), side = ledger.get(el)?.side ?? old.get(el)?.side;
       const resized = side && !near(start.width, end.width);
       const dx = resized && side === 'right' ? start.right-end.right : start.left-end.left;
-      const dy = start.top-end.top;
+      // The visible character is already anchored. Replaying the block's old
+      // top would undo that correction when lines above it have rewrapped.
+      const dy = el === reading?.el ? 0 : start.top-end.top;
       if (Math.abs(dx)+Math.abs(dy) < .5 || Math.abs(dx)+Math.abs(dy) > MAX_MOVE*2 ||
           (!resized && (!near(start.width, end.width) || !near(start.height, end.height))) ||
           (start.bottom < 0 && end.bottom < 0) || (start.top > innerHeight && end.top > innerHeight) ||
@@ -276,6 +285,40 @@
       animations.set(el, a);
       a.onfinish = () => { if (animations.get(el) === a) animations.delete(el); };
     }
+  }
+  function readingAnchor(before) {
+    const visible = [...before].filter(([el, r]) => el.matches(textBlocks) && r.bottom > 0 && r.top < innerHeight &&
+      ['static', 'relative'].includes(getComputedStyle(el).position));
+    visible.sort((a, b) => a[1].top-b[1].top);
+    for (const [el, box] of visible) {
+      if (box.top >= 0) return {el, top:box.top, measure:() => rect(el).top};
+      // In a partly scrolled paragraph, anchor a real visible character rather
+      // than the offscreen block edge. Rewrapping earlier lines can move that word.
+      const line = textRects(el)?.find(r => r.bottom > 0 && r.top < innerHeight);
+      if (!line) continue;
+      const range = document.caretRangeFromPoint?.(Math.max(.5, line.left+1),
+        Math.max(.5, Math.min(innerHeight-.5, (line.top+line.bottom)/2)));
+      const node = range?.startContainer, offset = range?.startOffset;
+      if (node?.nodeType !== Node.TEXT_NODE || !el.contains(node) || offset >= node.length) continue;
+      range.setEnd(node, offset+1);
+      const top = range.getBoundingClientRect().top;
+      return {el, top, measure:() => range.getBoundingClientRect().top};
+    }
+    return null;
+  }
+  function scrollInstantly(x, y) {
+    if (near(scrollX, x) && near(scrollY, y)) return;
+    // WebKit quantizes document scroll offsets; use the nearest CSS pixel rather
+    // than allowing repeated fractional corrections to round in one direction.
+    window.scrollTo({left:x, top:Math.round(y), behavior:'instant'});
+    settlingScroll = {x:scrollX, y:scrollY};
+  }
+  function keepReadingPosition(anchor, scroll) {
+    const delta = anchor ? anchor.measure()-anchor.top : 0;
+    const y = anchor ? scrollY+delta : scroll.y;
+    if (Math.abs(delta) > MAX_MOVE || y < -1 || y > Math.max(0, document.documentElement.scrollHeight-innerHeight)+1) return false;
+    scrollInstantly(scroll.x, Math.max(0, y));
+    return !anchor || near(anchor.measure(), anchor.top);
   }
   function settle() {
     timer = 0;
@@ -296,6 +339,7 @@
     if (motion.size > MAX_NODES) { for (const a of animations.values()) a.play(); return; }
     const before = new Map([...motion].filter(n => n.isConnected).map(n => [n, rect(n)]));
     const scroll = {x:scrollX, y:scrollY};
+    const reading = readingAnchor(before);
     // Suppress browser scroll anchoring for this synchronous transaction, then restore author style.
     const root = document.documentElement, anchor = root.style.getPropertyValue('overflow-anchor');
     const priority = root.style.getPropertyPriority('overflow-anchor');
@@ -303,21 +347,27 @@
     root.style.setProperty('overflow-anchor', 'none', 'important');
     reset();
     try {
-      for (const el of nodes) {
+      let stable = keepReadingPosition(reading, scroll);
+      for (const el of stable ? nodes : []) {
         if ([...ledger.keys()].some(p => p.contains(el) || el.contains(p)) || !safe(el) || !canAnimateUnit(el)) continue;
         const isText = el.matches(textBlocks);
         if (isText && geometry.voiceOver) continue;
         if (!move(el, regions, isText) && isText) fitTextSide(el, regions, followers.get(el));
+        if (!keepReadingPosition(reading, scroll)) { stable = false; break; }
       }
-      if (document.documentElement.scrollHeight-innerHeight < scroll.y-1) {
-        // Removing spacing at the document bottom can clamp the scroll offset. Keep
-        // the previous fitting rather than jumping to a different reading position.
+      if (stable) stable = [...ledger.keys()].every(el => {
+        const boxes = el.matches(textBlocks) ? textRects(el) : [rect(el)];
+        return boxes && !boxes.some(box => regions.some(region => overlaps(box, region))) && reachable(el, el.matches(textBlocks));
+      });
+      if (!stable) {
+        // If anchoring would clamp at a document edge or invalidate a destination,
+        // retain the previous fitting instead of moving the reader's text away.
         reset(); ledger = old;
         for (const [el, plan] of ledger) el.setAttribute(marker, String(plan.id));
         rules();
+        scrollInstantly(scroll.x, scroll.y);
       }
-      if (scrollX !== scroll.x || scrollY !== scroll.y) window.scrollTo(scroll.x, scroll.y);
-      animateFrom(before, old);
+      animateFrom(before, old, reading);
     } finally {
       if (anchor) root.style.setProperty('overflow-anchor', anchor, priority);
       else root.style.removeProperty('overflow-anchor');

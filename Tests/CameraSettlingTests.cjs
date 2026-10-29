@@ -72,8 +72,28 @@ module.exports = async function runSettlingTests(page, source) {
     await setup(); await send(geometry()); await settled(); const first = await box('reading');
     for(let i=0;i<3;i++){ await p.evaluate(()=>dispatchEvent(new Event('scroll'))); await settled(); }
     assert((await box('reading')).width===first.width, 'repeated settling never accumulates insets');
-    await p.evaluate(()=>scrollTo(0,200)); await settled();
-    assert(await p.evaluate(()=>scrollY)===200,'restoring obsolete insets keeps the reading offset');
+    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo(0,document.querySelector('#following').getBoundingClientRect().top+scrollY-8)});
+    const readingTop = (await box('following')).y;
+    await p.evaluate(()=>{
+      window.verticalSamples=[];const until=performance.now()+1500;
+      requestAnimationFrame(function sample(){const r=document.querySelector('#following').getBoundingClientRect();verticalSamples.push({x:r.x,y:r.y});if(performance.now()<until)requestAnimationFrame(sample)});
+      dispatchEvent(new Event('pointerup'));
+    });
+    await p.waitForTimeout(1600);
+    assert(Math.abs((await box('following')).y-readingTop)<1,'restoring an offscreen paragraph keeps the visible paragraph below the top edge');
+    assert(await p.evaluate(y=>verticalSamples.every(r=>Math.abs(r.y-y)<1),readingTop),'reading position stays fixed throughout sideways animation');
+    assert(await p.evaluate(()=>verticalSamples.some(r=>r.x>17)&&document.querySelector('#following').getAnimations().length===0),'anchor correction does not freeze its own horizontal animation');
+    assert((await box('reading')).width===434 && (await box('following')).right<=378,'obsolete offscreen fitting is removed while the next paragraph fits sideways');
+    await p.evaluate(()=>{window.anchorMutations=0;new MutationObserver(r=>anchorMutations+=r.length).observe(document.body,{subtree:true,attributes:true})});
+    await p.waitForTimeout(1000);
+    assert(await p.evaluate(()=>anchorMutations===0),'scroll anchoring converges without repeated layout work');
+    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo(0,0);dispatchEvent(new Event('pointerup'))});await settled();
+    assert(await fitted(),'reverse scrolling restores sideways fitting at the original paragraph top');
+
+    await setup('html{scroll-behavior:smooth}');await send(geometry());await settled();
+    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo({top:document.querySelector('#following').getBoundingClientRect().top+scrollY-8,behavior:'instant'});dispatchEvent(new Event('pointerup'))});
+    await settled();
+    assert(Math.abs((await box('following')).y-8)<1,'site smooth-scroll CSS cannot animate the reading-position correction');
 
     await setup(); await send(geometry()); await p.waitForTimeout(280);
     await send(geometry([{x:366,y:20,width:100,height:180}])); await settled();
@@ -132,6 +152,17 @@ module.exports = async function runSettlingTests(page, source) {
     assert((await box('reading')).x>=88 && (await box('reading')).y===24,'left-side occlusion fits text to the right');
     await setup(); await p.evaluate(()=>scrollTo(0,40)); await send(geometry()); await settled();
     assert((await box('reading')).right<=378 && (await box('reading')).y===-16, 'partly visible paragraph fits sideways without changing its reading offset');
+
+    await setup();
+    await p.locator('#reading').evaluate(n=>{n.innerHTML='Earlier words fill the lines above the visible reading position. '.repeat(4)+'<br><span id="keptWord">Keep</span> these words visible while the paragraph changes width.'});
+    await send(geometry());await settled();
+    await p.evaluate(()=>{dispatchEvent(new Event('pointerdown'));scrollTo(0,document.querySelector('#keptWord').getBoundingClientRect().top+scrollY)});
+    const wordTop=(await box('keptWord')).y;
+    for(const regions of [[],[region]]) {
+      await p.evaluate(()=>{window.wordSamples=[];const until=performance.now()+1100;requestAnimationFrame(function sample(){wordSamples.push(document.querySelector('#keptWord').getBoundingClientRect().top);if(performance.now()<until)requestAnimationFrame(sample)});dispatchEvent(new Event('pointerup'))});
+      await send(geometry(regions));await p.waitForTimeout(1200);
+      assert(await p.evaluate(y=>wordSamples.every(top=>Math.abs(top-y)<1),wordTop), regions.length ? 'partly visible text stays anchored throughout refitting' : 'partly visible text stays anchored throughout width restoration');
+    }
     return {passed:results.length,tests:results};
   } finally { await p.close(); }
 };
