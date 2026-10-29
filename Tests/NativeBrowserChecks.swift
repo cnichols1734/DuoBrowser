@@ -23,8 +23,10 @@ private final class NativeCheckRunner {
         if !value { throw NSError(domain: label, code: 1) }
         results.append("PASS: " + label)
     }
-    func wait(_ condition: () async -> Bool) async throws {
-        for _ in 0..<200 {
+    func wait(timeout: Double = 10, _ condition: () async -> Bool) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeout))
+        while clock.now < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -43,9 +45,16 @@ private final class NativeCheckRunner {
     func load(_ model: BrowserModel, _ path: String) async throws {
         mount(model)
         model.navigate(to: "http://127.0.0.1:8765/" + path)
-        try await wait {
-            guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
-            return (try? await self.js(model, "document.readyState") as? String) == "complete"
+        do {
+            // A fresh hosted simulator may need to launch WebKit's network/render processes.
+            // Loading has its own bound; interaction checks retain their shorter deadline.
+            try await wait(timeout: 60) {
+                guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
+                return (try? await self.js(model, "document.readyState") as? String) == "complete"
+            }
+        } catch {
+            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none")")
+            throw error
         }
     }
     func siteChecks() async {
