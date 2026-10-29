@@ -12,9 +12,9 @@ This original implementation follows the requested interaction and a review of `
 
 - Xcode 27.1 / iOS 27.1: Debug and Release simulator builds succeeded.
 - `scripts/check.sh`: 21 scrolling, 12 archive and 19 browser-data assertions, syntax and repository-policy checks passed.
-- `npm test`: 25 gutter, 14 control-avoidance and 42 sideways-settling checks. The new suite explicitly checks no vertical movement of the affected paragraph, no glyph scaling, stable line wrapping during scrolling, both camera sides, partly visible paragraphs and fallback for a full-width island.
+- `npm test`: 25 gutter, 14 control-avoidance and 50 sideways-settling checks. The new suite explicitly checks no vertical movement of the affected paragraph, no glyph scaling, stable line wrapping during scrolling, both camera sides, partly visible paragraphs and fallback for a full-width island.
 - SwiftLint 0.65.1: zero violations across 22 Swift files.
-- Final native run passed: 17 sideways-settling assertions in the exact bundled WKWebView content world, 30 browser checks, three cross-process persistence checks and 11 memory checks. The run used the final Debug build with the partially visible text-line hit-test fix.
+- Final native run passed: 22 sideways-settling assertions in the exact bundled WKWebView content world, 30 browser checks, three cross-process persistence checks and 11 memory checks. The follow-up run uses the Debug build with visible reading-position anchoring.
 - An earlier broad run timed out waiting for a reclaimed tab's scroll position. An unchanged rerun passed. No unrelated restoration change was made; this intermittent result remains recorded.
 
 Convergence checks caught a stylesheet `load` event scheduling another adjustment. The listener excludes the adapter's own sheet. Destination checks also reject otherwise-empty overlays that would intercept taps.
@@ -40,6 +40,14 @@ These captures show the real system Live Activity and status rail. The paragraph
 | Enlarged/removed occlusion | Native and Chromium geometry fixtures check sideways recomputation, original-width restoration, and full-width fallback without a vertical shift. Actual compact/expanded Live Activity UI was opened and collapsed through Island Lab. The expanded system card overlays the page; the bounded sideways algorithm does not try to create vertical space beneath a full-width card. |
 | Reduce Motion / VoiceOver | Native flags and browser fixtures check immediate post-pause fitting and unchanged VoiceOver reading blocks. Spoken VoiceOver interaction remains unverified. |
 | Selection, focus and zoom | Automated deferral and draft-preservation checks pass. Manual two-finger pinch and larger-text coverage remain open. |
+
+## Reading-position follow-up
+
+The owner reproduced text moving up and out of view while it fitted sideways. A synthetic reproduction confirmed a paragraph at **y = 8 px** settled at **y = -16 px**: removing an earlier, offscreen paragraph's narrowing shortened the content above it by 24 pixels. Preserving the numeric scroll offset did not preserve the text's screen position.
+
+The transaction now anchors the first visible reading block before restoring old styles. For a partially visible paragraph, it anchors a real visible character so line wrapping above the viewport cannot lose the reading position. The scroll correction is synchronous, ignores author smooth-scroll CSS and is excluded from user-scroll interruption handling. The anchored text's animation uses horizontal displacement only. Corrections are bounded and rolled back if a document edge or a newly obstructed destination prevents a safe fit.
+
+New browser regressions sample every animation frame for the 8 px reproduction, offscreen cleanup, reverse scrolling, convergence, smooth-scroll CSS, and a visible word during narrowing/restoration. The native harness includes the same paragraph and visible-word cases. Follow-up validation passed: Debug and Release builds; 89 Chromium layout checks; 52 portable assertions and strict SwiftLint; and the full native run (30 browser, 22 settling, three persistence and 11 memory checks). Native frame assertions compare the actual pre-settle text position with less than one CSS pixel of tolerance for WebKit scroll quantization. On the installed build, the synthetic Read more link placed its heading at the viewport top; the heading remained visible after preceding paragraphs were restored and adjacent text fitted sideways. Native scrolling was also exercised with the real compact activity visible. The earlier hosted CI run failed while waiting for the fixture server to start, before native assertions; the updated PR triggers a fresh run.
 
 ## Remaining limits
 
