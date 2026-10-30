@@ -140,3 +140,8 @@ Debug/Release builds, 62 portable assertions, 118 browser/DOM assertions and the
 ## UX and review follow-up — October 29, 2026
 
 Reworked URL search into a compact keyboard-adjacent palette, replaced the Peek sheet with native context-menu preview/commit animation, and added a clear Website Protection panel with scoped exceptions. Polished tab/library empty states and preserved the existing glass controls. Reviewed all eleven Copilot findings across PRs #4/#5 and fixed the inherited camera-layout CI regression. See [design changes, comment disposition and verification](UX_POLISH_2026-10-29.md). No merge or release is authorized by this work.
+
+## Status bar setting — October 29, 2026
+
+- Page options exposes a persistent **Time, Signal & Battery** toggle in Debug and Release. It controls the system status indicators independently of full-width page mode and also applies in the tab overview.
+- Debug and Release simulator builds and 34 native browser checks passed. Closed-display simulator interaction verified the earlier longer label toggled the indicators on and off; the final shorter label could not be visually rechecked after the Mac locked. Hardware, VoiceOver, and the full pose/accessibility matrix remain to be verified.

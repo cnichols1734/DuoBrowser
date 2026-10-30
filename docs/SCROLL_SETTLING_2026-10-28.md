@@ -23,7 +23,7 @@ Convergence checks caught a stylesheet `load` event scheduling another adjustmen
 
 Dedicated simulator: **DuoBrowser Motion QA**, iPhone Duo, iOS 27.1. The initial fixture review used only synthetic page content and drafts. A later owner-reported live news layout was inspected locally; no live article content or screenshots are checked in. The existing DuoBrowser QA simulator and its data were preserved.
 
-The runtime has no Clock app, so the separate `Tests/IslandLab` ActivityKit app provides a real timer Live Activity. Its generated project and products stay in ignored `work/`; it is not in DuoBrowser's shipping target. Enable **Page options → Developer → Show system status** to display it while retaining a full-width web view. The switch is Debug-only and session-local; Release keeps its existing status-area policy. Press and hold the compact island to expand it.
+The runtime has no Clock app, so the separate `Tests/IslandLab` ActivityKit app provides a real timer Live Activity. Its generated project and products stay in ignored `work/`; it is not in DuoBrowser's shipping target. Enable **Page options → Time, Signal & Battery** to display it while retaining a full-width web view. The switch is now available in Debug and Release and remembers the user’s choice. Press and hold the compact island to expand it.
 
 | Original Layout | Sideways fitting after the pause |
 | --- | --- |

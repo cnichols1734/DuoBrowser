@@ -524,9 +524,17 @@ private final class NativeCheckRunner {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("NativeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
         let defaults = UserDefaults(suiteName: "DuoBrowser.NativeChecks")!
+        defaults.removeObject(forKey: "browser.showSystemStatus")
         let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
-        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removeObject(forKey: "browser.showSystemStatus")
+            try? FileManager.default.removeItem(at: directory)
+        }
         do {
+            try check(!session.showSystemStatus, "status bar is hidden by default")
+            session.showSystemStatus = true
+            try check(defaults.bool(forKey: "browser.showSystemStatus"), "status bar choice is saved immediately")
             let portrait = CGRect(x: 0, y: 0, width: 466, height: 678)
             try check(BrowserViewportState.controlLift(in: portrait, height: 180, safeBottom: 34,
                 regions: [CGRect(x: 390, y: 30, width: 60, height: 60)]) == 0, "top camera does not lift bottom controls")
@@ -640,6 +648,9 @@ private final class NativeCheckRunner {
             try check(BrowserDownloads.safeFilename(".hidden") == "Download", "hidden download name sanitized")
             session.saveNow()
             let restored = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+            try check(restored.showSystemStatus, "status bar choice survives session restoration")
+            restored.showSystemStatus = false
+            try check(!defaults.bool(forKey: "browser.showSystemStatus"), "hiding the status bar persists")
             try check(restored.tabs.allSatisfy { !$0.isPrivate }, "cold restore excludes private tabs")
             try check(restored.tabs.filter { $0.loadedWebView != nil }.count == 1, "restored background web views are lazy")
             restored.tabs.forEach { $0.close() }

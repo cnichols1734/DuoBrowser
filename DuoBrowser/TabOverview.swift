@@ -95,7 +95,7 @@ struct TabOverview: View {
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
             .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .statusBarHidden(true)
+        .statusBarHidden(!session.showSystemStatus)
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
 
     }

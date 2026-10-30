@@ -12,9 +12,9 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarks: [LibraryEntry] = []
     @Published var showingLibrary = false
     @Published var showRegions = false
-    #if DEBUG
-    @Published var showSystemStatus = false
-    #endif
+    @Published var showSystemStatus: Bool {
+        didSet { settingsStorage.set(showSystemStatus, forKey: "browser.showSystemStatus") }
+    }
     @Published var showingTabs = false
     @Published var workspaces = [Workspace.standard]
     @Published var workspaceID = Workspace.defaultID
@@ -23,6 +23,7 @@ final class BrowserSession: ObservableObject {
     private var privateSites: [String: SitePreference] = [:]
     private var privateStore: WKWebsiteDataStore?
     private let privacyCurtain = PrivacyCurtain()
+    private let settingsStorage: UserDefaults
     private let normalStore: WKWebsiteDataStore
     private let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
@@ -39,6 +40,8 @@ final class BrowserSession: ObservableObject {
     var selected: BrowserModel { tabs.first { $0.id == selectedID } ?? tabs[0] }
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
+        self.settingsStorage = storage
+        self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
         self.archiveStore = archiveStore
         BrowserDownloads.cleanPreviousSession()
