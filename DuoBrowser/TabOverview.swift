@@ -22,6 +22,7 @@ struct TabOverview: View {
         })
     }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var searchLineHeight = 20.0
 
@@ -30,78 +31,103 @@ struct TabOverview: View {
             || $0.siteName.localizedCaseInsensitiveContains(search) }
     }
     private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var accessibleList: Bool { largeText || voiceOver }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 8) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(session.privateMode ? "Private Tabs" : session.workspaceName)
-                            .font(.title2.weight(.bold))
-                            .accessibilityAddTraits(.isHeader)
-                            .padding(.trailing, geometry.safeAreaInsets.trailing)
-                        HStack {
-                            ColorPicker("Tab background", selection: colorChoice, supportsOpacity: false)
-                            if !backgroundHex.isEmpty { Button("Reset") { backgroundHex = "" } }
-                        }.font(.subheadline).frame(minHeight: 44)
-                        if !session.privateMode {
-                            Menu {
-                                ForEach(session.workspaces) { workspace in
-                                    Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
-                                }
-                                Button("Manage Workspaces") { manageWorkspaces = true }
-                            } label: { Label("Workspaces", systemImage: "square.stack").frame(minHeight: 44) }
-                        }
-                        if session.privateMode {
-                            Text("Private tabs are not saved. Closing them clears this private session.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").font(.system(size: 20))
-                                .foregroundStyle(.secondary).accessibilityHidden(true)
-                            TextField("Search Tabs", text: $search)
-                                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                                .accessibilityLabel("Search Tabs")
-                            if !search.isEmpty {
-                                Button { search = "" } label: {
-                                    Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44)
-                                }.accessibilityLabel("Clear tab search")
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text(session.privateMode ? "Private Tabs" : session.workspaceName)
+                                .font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                                .id("overviewTop")
+                                .padding(.trailing, geometry.safeAreaInsets.trailing)
+                            HStack {
+                                ColorPicker("Tab background", selection: colorChoice, supportsOpacity: false)
+                                if !backgroundHex.isEmpty { Button("Reset") { backgroundHex = "" } }
+                            }.font(.subheadline).frame(minHeight: 44)
+                            if !session.privateMode {
+                                Menu {
+                                    ForEach(session.workspaces) { workspace in
+                                        Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
+                                    }
+                                    Button("Manage Workspaces") { manageWorkspaces = true }
+                                } label: { Label("Workspaces", systemImage: "square.stack").frame(minHeight: 44) }
                             }
-                        }
-                        .padding(.horizontal, 16).frame(minHeight: max(44, searchLineHeight + 16))
-                        .glassEffect(.regular, in: Capsule())
-                        LazyVGrid(columns: largeText ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 160), spacing: 20)], spacing: 24) {
-                            ForEach(filteredTabs) { tab in
-                                TabPreview(tab: tab, selected: session.selectedID == tab.id,
-                                           select: { session.select(tab.id) }, close: {
-                                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
-                                })
-                                .contextMenu {
-                                    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
-                                    if !tab.isPrivate {
-                                        Menu("Move to Workspace") {
-                                            ForEach(session.workspaces) { workspace in
-                                                Button(workspace.name) { session.move(tab, to: workspace.id) }
+                            if session.privateMode {
+                                Text("Private tabs are not saved. Closing them clears this private session.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass").font(.system(size: 20))
+                                    .foregroundStyle(.secondary).accessibilityHidden(true)
+                                TextField("Search Tabs", text: $search)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .accessibilityLabel("Search Tabs")
+                                if !search.isEmpty {
+                                    Button { search = "" } label: {
+                                        Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44)
+                                    }.accessibilityLabel("Clear tab search")
+                                }
+                            }
+                            .padding(.horizontal, 16).frame(minHeight: max(44, searchLineHeight + 16))
+                            .glassEffect(.regular, in: Capsule())
+                            if accessibleList {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(filteredTabs) { tab in tabItem(tab, list: true).id(tab.id) }
+                                }
+                            } else {
+                                let width = min(300, max(180, geometry.size.width * 0.67))
+                                ScrollViewReader { fanProxy in
+                                    ScrollView(.horizontal) {
+                                        LazyHStack(spacing: -width * 0.23) {
+                                            ForEach(Array(filteredTabs.enumerated()), id: \.element.id) { index, tab in
+                                                FanGestureCard(reduceMotion: reduceMotion, close: { session.close(tab.id) }) {
+                                                    tabItem(tab, list: false)
+                                                }
+                                                .id(tab.id)
+                                                .frame(width: width)
+                                                .shadow(color: .black.opacity(0.15), radius: 12, x: -3, y: 3)
+                                                .zIndex(Double(index))
+                                                .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                                                    content.rotation3DEffect(.degrees(phase.isIdentity || reduceMotion ? 0 : -4), axis: (x: 0, y: 1, z: 0))
+                                                }
                                             }
+                                        }.scrollTargetLayout()
+                                            .padding(.horizontal, 12).padding(.vertical, 12)
+                                    }
+                                    .scrollIndicators(.hidden)
+                                    .scrollTargetBehavior(.viewAligned)
+                                    .onAppear {
+                                        Task { @MainActor in
+                                            await Task.yield()
+                                            fanProxy.scrollTo(session.selectedID, anchor: .center)
                                         }
                                     }
                                 }
                             }
+                            if filteredTabs.isEmpty {
+                                if search.isEmpty {
+                                    ContentUnavailableView {
+                                        Label("A little room to explore", systemImage: "square.on.square")
+                                    } description: {
+                                        Text("Open a new tab to start browsing in this workspace.")
+                                    } actions: {
+                                        Button("New Tab", systemImage: "plus") { session.newTab() }.buttonStyle(.borderedProminent)
+                                    }
+                                } else { ContentUnavailableView.search(text: search) }
+                            }
+                        }.padding(20)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: session.visibleTabs.count) { _, count in
+                        if count <= 1 {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { proxy.scrollTo("overviewTop", anchor: .top) }
                         }
-                        if filteredTabs.isEmpty {
-                            if search.isEmpty {
-                                ContentUnavailableView {
-                                    Label("A little room to explore", systemImage: "square.on.square")
-                                } description: {
-                                    Text("Open a new tab to start browsing in this workspace.")
-                                } actions: {
-                                    Button("New Tab", systemImage: "plus") { session.newTab() }.buttonStyle(.borderedProminent)
-                                }
-                            } else { ContentUnavailableView.search(text: search) }
-                        }
-                    }.padding(20)
+                    }
                 }
-                .scrollDismissesKeyboard(.interactively)
                 Group {
                     if largeText {
                         VStack(spacing: 8) { modeMenu; footerActions }
@@ -119,6 +145,23 @@ struct TabOverview: View {
         .statusBarHidden(!session.showSystemStatus)
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
 
+    }
+
+    private func tabItem(_ tab: BrowserModel, list: Bool) -> some View {
+        TabPreview(tab: tab, selected: session.selectedID == tab.id, list: list,
+                   select: { session.select(tab.id) }, close: {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
+        })
+        .contextMenu {
+            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
+            if !tab.isPrivate {
+                Menu("Move to Workspace") {
+                    ForEach(session.workspaces) { workspace in
+                        Button(workspace.name) { session.move(tab, to: workspace.id) }
+                    }
+                }
+            }
+        }
     }
 
     private var modeMenu: some View {
@@ -152,13 +195,13 @@ struct TabOverview: View {
 private struct TabPreview: View {
     @ObservedObject var tab: BrowserModel
     let selected: Bool
+    let list: Bool
     let select: () -> Void
     let close: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Group {
-            if dynamicTypeSize.isAccessibilitySize {
+            if list {
                 HStack(alignment: .center, spacing: 8) {
                     Button(action: select) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -234,5 +277,27 @@ private struct TabPreview: View {
                 .accessibilityLabel("Close tab, \(tab.title)")
             }
         }
+    }
+}
+
+private struct FanGestureCard<Content: View>: View {
+    let reduceMotion: Bool
+    let close: () -> Void
+    @ViewBuilder let content: Content
+    @GestureState private var drag: CGSize = .zero
+
+    var body: some View {
+        content
+            .offset(y: drag.height < 0 && abs(drag.height) > abs(drag.width) ? max(-160, drag.height) : 0)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 20)
+                    .updating($drag) { value, state, _ in state = value.translation }
+                    .onEnded { value in
+                        guard value.translation.height < -90,
+                              abs(value.translation.height) > abs(value.translation.width) * 1.3 else { return }
+                        withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { close() }
+                    }
+            )
+            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
     }
 }

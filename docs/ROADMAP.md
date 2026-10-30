@@ -149,3 +149,7 @@ Reworked URL search into a compact keyboard-adjacent palette, replaced the Peek 
 ## Start page and tab appearance — October 29, 2026
 
 Added a native start page with bookmarks, recent visits, a search shortcut and a private-browsing state, plus a locally saved tab-switcher background color and reset. The page uses existing local library data and does not show normal browsing history in private mode. Debug and Release simulator builds, 36 native browser checks, 62 portable checks and 126 layout checks passed. On a closed Duo simulator the start page and color picker were displayed and a color was applied. Physical-device, VoiceOver and full pose/accessibility coverage remain to be verified.
+
+## Tab fan — October 29, 2026
+
+The tab overview uses horizontally overlapping page previews and supports swiping a card upward to close it. VoiceOver and accessibility text sizes use a non-overlapping list; Reduce Motion disables the tilt. Debug and Release simulator builds and a signed iPhone build succeeded. A closed-display simulator showed the horizontal cards, but simulator automation could not deliver drag gestures; swipe-to-close and horizontal scrolling remain unverified. The test build was installed on the owner’s iPhone. Physical-device smoothness and the full VoiceOver, pose, keyboard and larger-text matrix remain outstanding.
