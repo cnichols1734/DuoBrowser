@@ -11,6 +11,10 @@ struct TabStack<Content: View>: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> TabStackController { TabStackController() }
 
+    static func dismantleUIViewController(_ controller: TabStackController, coordinator: ()) {
+        controller.finishPendingDismissals()
+    }
+
     func updateUIViewController(_ controller: TabStackController, context: Context) {
         controller.update(tabs: tabs, selectedID: selectedID, reduceMotion: reduceMotion, close: close) { tab, dismiss in
             AnyView(content(tab, dismiss))
@@ -60,12 +64,23 @@ final class TabStackLayout: UICollectionViewLayout {
     override func shouldInvalidateLayout(forBoundsChange newBounds: CGRect) -> Bool { true }
 
     override func layoutAttributesForElements(in rect: CGRect) -> [UICollectionViewLayoutAttributes]? {
-        guard let collectionView, count > 0 else { return [] }
-        let focus = Int(floor(collectionView.contentOffset.x / stride))
-        // The compressed tail can expose several cards; keep the work bounded even for hundreds of tabs.
-        let lower = max(0, focus - 8), upper = min(count - 1, focus + 3)
-        guard lower <= upper else { return [] }
-        return (lower...upper).compactMap { layoutAttributesForItem(at: IndexPath(item: $0, section: 0)) }
+        guard collectionView != nil, count > 0 else { return [] }
+        // Card edges are monotonic even in the compressed tail. Binary-search the
+        // first intersecting card instead of assuming a fixed number fits each pose.
+        var lower = 0, upper = count
+        while lower < upper {
+            let middle = (lower + upper) / 2
+            let attributes = layoutAttributesForItem(at: IndexPath(item: middle, section: 0))!
+            if attributes.frame.maxX < rect.minX { lower = middle + 1 }
+            else { upper = middle }
+        }
+        var visible: [UICollectionViewLayoutAttributes] = []
+        for index in lower..<count {
+            guard let attributes = layoutAttributesForItem(at: IndexPath(item: index, section: 0)) else { continue }
+            if attributes.frame.minX > rect.maxX { break }
+            if attributes.frame.intersects(rect) { visible.append(attributes) }
+        }
+        return visible
     }
 
     override func layoutAttributesForItem(at indexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
@@ -228,7 +243,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         cancelDrag()
         for removed in Set(oldIDs).subtracting(ids) {
             animators.removeValue(forKey: removed)?.stopAnimation(true)
-            closingIDs.remove(removed)
+            finishDismissal(removed)
         }
         self.tabs = tabs
         if previousSize == .zero { initialFocus = selectedID }
@@ -342,9 +357,17 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         CATransaction.commit()
     }
 
+    func finishPendingDismissals() {
+        for id in Array(closingIDs) { finishDismissal(id) }
+        for animator in animators.values { animator.stopAnimation(true) }
+        animators.removeAll()
+    }
+
     private func finishDismissal(_ id: UUID) {
-        guard closingIDs.remove(id) != nil else { return }
-        close?(id)
+        guard closingIDs.remove(id) != nil, let close else { return }
+        // Retain the committed action, not the controller. Filtering can dismantle
+        // the stack before the next run-loop turn; the tab must still close once.
+        Task { @MainActor in close(id) }
     }
 
     private func animate(cell: TabStackCell, id: UUID, to destination: CGFloat, velocity: CGFloat, closing: Bool) {

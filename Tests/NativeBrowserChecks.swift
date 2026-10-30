@@ -28,9 +28,11 @@ private final class NativeCheckRunner {
         let controller = TabStackController()
         var visible = models
         var dismissals: [UUID: () -> Void] = [:]
+        var closedIDs: [UUID] = []
         var reduced = false
         func update() {
             controller.update(tabs: visible, selectedID: models[3].id, reduceMotion: reduced, close: { id in
+                closedIDs.append(id)
                 visible.removeAll { $0.id == id }
                 update()
             }) { tab, dismiss in
@@ -67,6 +69,11 @@ private final class NativeCheckRunner {
         collection.contentOffset.x = layout.stride * 3
         collection.layoutIfNeeded()
         try await wait { dismissals[models[3].id] != nil }
+        let cardFrame = layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))!.frame
+        var closeTarget = collection.hitTest(CGPoint(x: cardFrame.minX + 22, y: cardFrame.minY + 50), with: nil)
+        while closeTarget != nil && !(closeTarget is TabStackCell) { closeTarget = closeTarget?.superview }
+        try check((closeTarget as? TabStackCell)?.representedID == models[3].id,
+                  "foreground close control is not covered by the next card")
         let departing = collection.cellForItem(at: IndexPath(item: 3, section: 0)) as! TabStackCell
         departing.motionView.transform = CGAffineTransform(translationX: 0, y: -90)
         collection.setNeedsLayout()
@@ -101,7 +108,51 @@ private final class NativeCheckRunner {
         controller.view.layoutIfNeeded()
         try check(abs(collection.contentOffset.x - layout.stride * 2) < 1,
                   "resizing preserves the focused tab")
+        reduced = false
+        update()
+        let departingID = visible[2].id
+        try await wait { dismissals[departingID] != nil }
+        dismissals[departingID]?()
+        controller.update(tabs: [], selectedID: models[3].id, reduceMotion: false, close: { id in
+            closedIDs.append(id)
+            visible.removeAll { $0.id == id }
+        }) { _, _ in AnyView(EmptyView()) }
+        controller.finishPendingDismissals()
+        try await wait { closedIDs.contains(departingID) }
+        try await Task.sleep(for: .milliseconds(350))
+        try check(closedIDs.filter { $0 == departingID }.count == 1,
+                  "filtering and teardown complete a committed close exactly once")
     }
+    func wideTabLayoutChecks() throws {
+        let models = (0..<40).map { _ in BrowserModel(dataStore: .nonPersistent()) }
+        let controller = TabStackController()
+        host.addChild(controller)
+        controller.view.frame = CGRect(x: 0, y: 0, width: 678, height: 300)
+        host.view.addSubview(controller.view)
+        controller.didMove(toParent: host)
+        defer {
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            models.forEach { $0.close() }
+        }
+        for reduced in [false, true] {
+            controller.update(tabs: models, selectedID: models[20].id, reduceMotion: reduced, close: { _ in }) { _, _ in
+                AnyView(Color.white)
+            }
+            controller.view.layoutIfNeeded()
+            let collection = controller.collectionView, layout = controller.stackLayout
+            collection.contentOffset.x = 20.95 * layout.stride
+            collection.layoutIfNeeded()
+            let expected = Set(models.indices.compactMap { index -> Int? in
+                let attributes = layout.layoutAttributesForItem(at: IndexPath(item: index, section: 0))!
+                return attributes.frame.intersects(collection.bounds) ? index : nil
+            })
+            let actual = Set((layout.layoutAttributesForElements(in: collection.bounds) ?? []).map { $0.indexPath.item })
+            try check(actual == expected && actual.contains(24), "wide layout includes both visible tails, reduced motion \(reduced)")
+        }
+    }
+
     func tabZoomChecks() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabZoom-" + UUID().uuidString)
         let session = BrowserSession(storage: UserDefaults(suiteName: "TabZoom-" + UUID().uuidString)!,
@@ -724,7 +775,7 @@ private final class NativeCheckRunner {
 
     func run() async {
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
-            do { try await tabStackChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
+            do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
             return

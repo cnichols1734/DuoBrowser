@@ -78,7 +78,7 @@ struct TabOverview: View {
                                 LazyVStack(spacing: 12) {
                                     ForEach(filteredTabs) { tab in tabItem(tab, list: true).id(tab.id) }
                                 }
-                            } else {
+                            } else if !filteredTabs.isEmpty {
                                 let width = min(300, max(180, geometry.size.width * 0.67))
                                 TabStack(tabs: filteredTabs, selectedID: session.selectedID,
                                          reduceMotion: reduceMotion, close: { session.close($0) }) { tab, close in
@@ -208,7 +208,7 @@ private struct TabPreview: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 4).accessibilityHidden(true)
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .topLeading) {
                 Button(action: select) {
                     GeometryReader { geometry in
                         Group {
