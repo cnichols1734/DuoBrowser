@@ -165,7 +165,7 @@ The full native suite did not pass in this run: one attempt timed out in the upg
 
 Removed all tab-preview outlines, including the selected-tab blue border. Card dismissal now animates an app-owned container instead of UIKit's managed cell content view, preserving the finger offset across collection layout. Committed closes travel upward with a non-reversing exit; canceled gestures retain a catchable return animation. Horizontal depth scaling now eases continuously at the foreground boundary while UIKit continues to handle momentum and snapping.
 
-Debug and Release simulator builds, portable checks, browser/DOM tests and strict SwiftLint passed. The focused native stack harness verifies retained drag offset, monotonic upward presentation during repeated layout, one-time removal, successor focus, fractional scrolling, bounded layout work, Reduce Motion and resize focus. Computer Use could not access Simulator in this session, so synthesized touch gestures and physical frame pacing remain unverified. No Safari-parity or full hardware/accessibility acceptance claim is made.
+Debug and Release simulator builds, portable checks, browser/DOM tests and strict SwiftLint passed. The focused native stack harness verifies retained drag offset, monotonic upward presentation during repeated layout, one-time removal, successor focus, fractional scrolling, bounded layout work, Reduce Motion and resize focus. Device Hub inspection confirmed border-free cards; automated drag input was inconclusive, and physical frame pacing remains unverified. No Safari-parity or full hardware/accessibility acceptance claim is made.
 
 ## Start-page review corrections — October 29, 2026
 
@@ -175,3 +175,10 @@ The start page is now native-only, with no placeholder WebKit document or compet
 - Replaced Reader’s inset SwiftUI column with a full-screen WebKit viewport using runtime camera geometry. Ordered photos/captions, article-header images and visible headlines are extracted with bounded native validation; private image loading stays in the source profile.
 - Body text can fit inside non-scrolling horizontal-overflow shells and normal column-flex article layouts. Actual scrollers, clipped content and unsafe flow changes still fall back.
 - Verification and remaining live-site/hardware gaps: [Reader layout report](READER_LAYOUT_2026-10-29.md).
+
+
+## Matched tab zoom — October 29, 2026
+
+The live browser now uses UIKit's public zoom transition from the selected card, reversing into that same card when Tabs is pressed. This replaces the overview's vertical full-screen-cover slide. A presentation coordinator observes session intent even while its SwiftUI source is offscreen, serializes presentation changes, and preserves existing web views. The return source recenters the active card and clears stale tab search. Reduce Motion, VoiceOver and accessibility text sizes use a fade; WebKit retains ownership of pinch and back gestures.
+
+Simulator integration checks pass for initial presentation, zoom out, new-tab presentation, switching back to an existing web view, and reduced-motion return. Device Hub accessibility actions verified the actual Tabs button and card selection. The dismissal regression passed three consecutive runs after explicitly committing the finger transform before the exit animator captures it. The owner reported the earlier swipe-close build works well on their phone; physical acceptance of this new zoom remains theirs to check. Apple's API reference: https://developer.apple.com/documentation/uikit/uiviewcontroller/transition/zoom(options:sourceviewprovider:).

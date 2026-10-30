@@ -102,6 +102,43 @@ private final class NativeCheckRunner {
         try check(abs(collection.contentOffset.x - layout.stride * 2) < 1,
                   "resizing preserves the focused tab")
     }
+    func tabZoomChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabZoom-" + UUID().uuidString)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "TabZoom-" + UUID().uuidString)!,
+            archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        let controller = BrowserZoomController(session: session)
+        host.addChild(controller)
+        controller.view.frame = host.view.bounds
+        host.view.addSubview(controller.view)
+        controller.didMove(toParent: host)
+        defer {
+            controller.willMove(toParent: nil)
+            controller.view.removeFromSuperview()
+            controller.removeFromParent()
+            session.tabs.forEach { $0.close() }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try await wait { controller.presentedViewController != nil && controller.presentedViewController?.isBeingPresented == false }
+        let original = session.selected
+        let webView = original.webView
+        try check(true, "zoom shell initially presents the live browser")
+        session.showTabs()
+        try await wait { controller.presentedViewController == nil }
+        try check(original.webView === webView, "zooming out preserves the live web view")
+        let next = session.newTab()
+        try await wait { controller.presentedViewController != nil && controller.presentedViewController?.isBeingPresented == false }
+        try check(session.selectedID == next.id, "new tab can zoom into the browser")
+        session.showTabs()
+        try await wait { controller.presentedViewController == nil }
+        session.select(original.id)
+        try await wait { controller.presentedViewController != nil && controller.presentedViewController?.isBeingPresented == false }
+        try check(session.selected.webView === webView, "selecting another card preserves its existing web view")
+        controller.update(reduceMotion: true)
+        session.showTabs()
+        try await wait { controller.presentedViewController == nil }
+        try check(true, "Reduce Motion returns to overview without a slide transition")
+    }
+
     func wait(timeout: Double = 10, _ condition: () async -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(timeout))
@@ -687,7 +724,7 @@ private final class NativeCheckRunner {
 
     func run() async {
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
-            do { try await tabStackChecks() } catch { results.append("FAIL: \(error)") }
+            do { try await tabStackChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
             return

@@ -241,6 +241,15 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         }
     }
 
+    func zoomSource(for id: UUID, centered: Bool) -> UIView? {
+        guard let path = dataSource.indexPath(for: id), !closingIDs.contains(id) else { return nil }
+        if centered || collectionView.cellForItem(at: path) == nil {
+            collectionView.setContentOffset(CGPoint(x: CGFloat(path.item) * stackLayout.stride, y: 0), animated: false)
+            collectionView.layoutIfNeeded()
+        }
+        return (collectionView.cellForItem(at: path) as? TabStackCell)?.motionView
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === swipe else { return true }
         let velocity = swipe.velocity(in: collectionView)
@@ -317,6 +326,10 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
 
     private func animate(cell: TabStackCell, id: UUID, to destination: CGFloat, velocity: CGFloat, closing: Bool) {
         animators.removeValue(forKey: id)?.stopAnimation(true)
+        // Commit the final finger-driven transform before UIKit captures the animation's
+        // starting value. A gesture ending in the same render transaction must not replay
+        // an older position when its exit animation is installed.
+        CATransaction.flush()
         let delta = destination - cell.motionView.transform.ty
         let initialVelocity = abs(delta) > 1 ? min(12, max(-12, velocity / delta)) : 0
         let timing = UISpringTimingParameters(dampingRatio: 1, initialVelocity: CGVector(dx: 0, dy: initialVelocity))

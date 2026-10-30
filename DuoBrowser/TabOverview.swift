@@ -122,6 +122,7 @@ struct TabOverview: View {
             .ignoresSafeArea(.container, edges: .horizontal)
         }
         .statusBarHidden(!session.showSystemStatus)
+        .onChange(of: session.showingTabs) { _, showing in if showing { search = "" } }
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
 
     }
