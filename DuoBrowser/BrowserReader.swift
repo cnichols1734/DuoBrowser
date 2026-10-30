@@ -172,6 +172,7 @@ struct ReaderView: View {
     @State private var size = 19.0
     @State private var spacing = 7.0
     @State private var theme = "System"
+    @AppStorage("browser.showSystemStatus") private var showSystemStatus = false
     @ScaledMetric(relativeTo: .body) private var scale = 1.0
 
     init(article: ReaderArticle, sourceBrowser: BrowserModel) {
@@ -210,7 +211,7 @@ struct ReaderView: View {
                 }
         }
         .ignoresSafeArea(.container, edges: .horizontal)
-        .statusBarHidden(true)
+        .statusBarHidden(!showSystemStatus)
         .preferredColorScheme(theme == "Dark" ? .dark : theme == "Light" || theme == "Sepia" ? .light : nil)
         .onAppear { renderer.load(); applySettings() }
         .onChange(of: size) { _, _ in applySettings() }
