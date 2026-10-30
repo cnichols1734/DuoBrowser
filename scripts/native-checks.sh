@@ -91,7 +91,8 @@ for attempt in range(180):
 else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
-run_receipt NativeBrowserChecks.txt 36
+run_receipt TabStackChecks.txt 7 --tab-stack-checks
+run_receipt NativeBrowserChecks.txt 44
 run_receipt UpgradeChecks.txt 40 --upgrade-checks
 run_receipt CameraSettlingChecks.txt 30 --settling-checks
 run_receipt PersistentCookieChecks.txt 1 --persistent-cookie-write

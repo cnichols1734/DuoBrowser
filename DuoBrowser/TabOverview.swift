@@ -80,33 +80,12 @@ struct TabOverview: View {
                                 }
                             } else {
                                 let width = min(300, max(180, geometry.size.width * 0.67))
-                                ScrollViewReader { fanProxy in
-                                    ScrollView(.horizontal) {
-                                        LazyHStack(spacing: -width * 0.23) {
-                                            ForEach(Array(filteredTabs.enumerated()), id: \.element.id) { index, tab in
-                                                FanGestureCard(reduceMotion: reduceMotion, close: { session.close(tab.id) }) {
-                                                    tabItem(tab, list: false)
-                                                }
-                                                .id(tab.id)
-                                                .frame(width: width)
-                                                .shadow(color: .black.opacity(0.15), radius: 12, x: -3, y: 3)
-                                                .zIndex(Double(index))
-                                                .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                                                    content.rotation3DEffect(.degrees(phase.isIdentity || reduceMotion ? 0 : -4), axis: (x: 0, y: 1, z: 0))
-                                                }
-                                            }
-                                        }.scrollTargetLayout()
-                                            .padding(.horizontal, 12).padding(.vertical, 12)
-                                    }
-                                    .scrollIndicators(.hidden)
-                                    .scrollTargetBehavior(.viewAligned)
-                                    .onAppear {
-                                        Task { @MainActor in
-                                            await Task.yield()
-                                            fanProxy.scrollTo(session.selectedID, anchor: .center)
-                                        }
-                                    }
+                                TabStack(tabs: filteredTabs, selectedID: session.selectedID,
+                                         reduceMotion: reduceMotion, close: { session.close($0) }) { tab, close in
+                                    tabItem(tab, list: false, close: close)
                                 }
+                                .frame(height: min(width / 0.68 + 56, max(300, geometry.size.height - 360)))
+                                .padding(.horizontal, -20)
                             }
                             if filteredTabs.isEmpty {
                                 if search.isEmpty {
@@ -147,9 +126,9 @@ struct TabOverview: View {
 
     }
 
-    private func tabItem(_ tab: BrowserModel, list: Bool) -> some View {
+    private func tabItem(_ tab: BrowserModel, list: Bool, close: (() -> Void)? = nil) -> some View {
         TabPreview(tab: tab, selected: session.selectedID == tab.id, list: list,
-                   select: { session.select(tab.id) }, close: {
+                   select: { session.select(tab.id) }, close: close ?? {
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
         })
         .contextMenu {
@@ -277,27 +256,5 @@ private struct TabPreview: View {
                 .accessibilityLabel("Close tab, \(tab.title)")
             }
         }
-    }
-}
-
-private struct FanGestureCard<Content: View>: View {
-    let reduceMotion: Bool
-    let close: () -> Void
-    @ViewBuilder let content: Content
-    @GestureState private var drag: CGSize = .zero
-
-    var body: some View {
-        content
-            .offset(y: drag.height < 0 && abs(drag.height) > abs(drag.width) ? max(-160, drag.height) : 0)
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 20)
-                    .updating($drag) { value, state, _ in state = value.translation }
-                    .onEnded { value in
-                        guard value.translation.height < -90,
-                              abs(value.translation.height) > abs(value.translation.width) * 1.3 else { return }
-                        withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { close() }
-                    }
-            )
-            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
     }
 }
