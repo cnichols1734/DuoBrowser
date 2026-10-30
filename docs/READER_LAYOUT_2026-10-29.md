@@ -22,7 +22,7 @@ Native checks exercise ordered image loading, full width, camera fit/restoration
 
 - Debug and Release simulator builds succeeded; strict SwiftLint and diff whitespace checks passed.
 - 62 Swift/policy checks and 167 browser/DOM assertions passed (25 page layout, 44 Reader, 14 camera avoidance, 71 settling, 13 nested layouts).
-- Native WebKit checks passed 30 browser, 55 upgrade/Reader and 34 camera-settling assertions. The full run subsequently failed cookie persistence across relaunch; the focused persistence/memory rerun is recorded below.
+- Native WebKit checks passed 30 browser, 55 upgrade/Reader and 34 camera-settling assertions. The full run subsequently failed cookie persistence across relaunch; a focused memory rerun passed all 11 checks. Cookie persistence also failed in isolation, so the writer now confirms acceptance in both the document and native cookie store before termination. The relaunch assertion remains unchanged. A diagnostic run confirmed the write, then found both the native cookie and localStorage absent after termination. This local persistence issue is unresolved; the Reader change does not modify profile persistence.
 - Visually exercised Reader scrolling, photo/caption order, dark appearance, dismissal, closed/open/partially folded poses and rotation. The source page remained available after dismissal. Done and reading settings stay grouped at the leading side.
 - Synthetic screenshots: [full-width Reader](images/reader-layout/full-width.png) and [second photo with caption](images/reader-layout/photo-caption.png).
 

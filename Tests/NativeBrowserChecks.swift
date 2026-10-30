@@ -110,9 +110,25 @@ private final class NativeCheckRunner {
             try await load(model, "persistent")
             if ProcessInfo.processInfo.arguments.contains("--persistent-cookie-write") {
                 _ = try await js(model, "document.cookie='duo_persistence=synthetic;max-age=86400;path=/';localStorage.setItem('duo_persistence','synthetic')")
-                try await Task.sleep(for: .seconds(2))
+                try await wait {
+                    let cookies = await withCheckedContinuation { continuation in
+                        store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
+                    }
+                    return cookies.contains { $0.name == "duo_persistence" && $0.value == "synthetic" &&
+                        !$0.isSessionOnly && ($0.expiresDate ?? .distantPast) > Date() }
+                }
+                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true,
+                          "persistent cookie write is visible to WebKit and the document")
                 try check(store.isPersistent, "test cookie profile is persistent")
+                // Retain the existing settling interval after confirming the write.
+                try await Task.sleep(for: .seconds(2))
             } else {
+                let cookies = await withCheckedContinuation { continuation in
+                    store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
+                }
+                let retained = cookies.first { $0.name == "duo_persistence" }
+                let storageRetained = try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic"
+                results.append("PERSISTENCE: nativeCookie=\(retained != nil) persistent=\(retained?.isSessionOnly == false) localStorage=\(storageRetained)")
                 try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true, "persistent cookie survives app termination and relaunch")
                 try check(try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic", "persistent localStorage survives app termination and relaunch")
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)

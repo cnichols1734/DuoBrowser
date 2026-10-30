@@ -94,6 +94,6 @@ PY
 run_receipt NativeBrowserChecks.txt 30
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
 run_receipt CameraSettlingChecks.txt 34 --settling-checks
-run_receipt PersistentCookieChecks.txt 1 --persistent-cookie-write
+run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-write
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-read
 run_receipt MemoryChecks.txt 11 --memory-checks
