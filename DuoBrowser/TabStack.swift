@@ -161,6 +161,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
                         Task { @MainActor [weak self] in self?.finishDismissal(previous) }
                     }
                 }
+                cell.motionView.layer.removeAnimation(forKey: "DuoBrowser.dismiss")
                 cell.motionView.transform = .identity
                 cell.motionView.alpha = 1
                 cell.representedID = id
@@ -316,7 +317,29 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
               let cell = collectionView.cellForItem(at: path) as? TabStackCell else { return }
         closingIDs.insert(id)
         let exit = -(view.window?.bounds.height ?? view.bounds.height) - cell.bounds.height
-        animate(cell: cell, id: id, to: exit, velocity: velocity, closing: true)
+        if stackLayout.reduceMotion {
+            animate(cell: cell, id: id, to: exit, velocity: velocity, closing: true)
+            return
+        }
+        animators.removeValue(forKey: id)?.stopAnimation(true)
+        let layer = cell.motionView.layer
+        let animation = CABasicAnimation(keyPath: "transform")
+        animation.fromValue = NSValue(caTransform3D: layer.transform)
+        let target = CATransform3DMakeTranslation(0, exit, 0)
+        animation.toValue = NSValue(caTransform3D: target)
+        animation.duration = 0.26
+        animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
+        animation.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        // An explicit animation keeps collection/hosting layout transactions from
+        // recapturing an older implicit starting transform during the committed exit.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            Task { @MainActor [weak self] in self?.finishDismissal(id) }
+        }
+        layer.transform = target
+        layer.add(animation, forKey: "DuoBrowser.dismiss")
+        CATransaction.commit()
     }
 
     private func finishDismissal(_ id: UUID) {
