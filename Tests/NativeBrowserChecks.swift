@@ -544,7 +544,11 @@ private final class NativeCheckRunner {
             try check(BrowserViewportState.controlLift(in: landscape, height: 180, safeBottom: 34, regions: []) == 0,
                 "removing an occlusion restores the original control position")
             let normal = session.selected
+            mount(normal)
+            try await wait { normal.showingStartPage && !normal.webView.isLoading }
+            try check(normal.showingStartPage, "new tabs show the native start page")
             try await load(normal, "normal")
+            try check(!normal.showingStartPage, "navigation dismisses the start page")
             results.append("STEP: normal fixture loaded")
             _ = try await js(normal, "document.cookie='profile=normal;path=/'; localStorage.setItem('profile','normal');document.querySelector('#kept').value='unsent synthetic value'")
             normal.testNavigationObserver = { [weak self] in self?.results.append($0) }

@@ -56,6 +56,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         return view
     }
     @Published private(set) var title = "Start Page"
+    @Published private(set) var showingStartPage = false
     @Published private(set) var snapshot: UIImage?
     private var snapshotGeneration = 0
     private var snapshotRequest: UUID?
@@ -185,6 +186,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         } else if startsWithFixture {
             loadFixture()
         } else {
+            showingStartPage = true
             webView.loadHTMLString("""
             <!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
             <style>:root{color-scheme:light dark}body{font:17px -apple-system;margin:0;padding:28px;
@@ -272,11 +274,13 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             return
         }
         errorMessage = nil
+        showingStartPage = false
         startsWithFixture = false
         webView.load(URLRequest(url: url))
     }
 
     func loadFixture() {
+        showingStartPage = false
         startsWithFixture = true
         errorMessage = nil
         if let url = Bundle.main.url(forResource: "ViewportFixture", withExtension: "html") {
@@ -302,6 +306,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        showingStartPage = !startsWithFixture && (webView.url == nil || webView.url?.absoluteString == "about:blank")
         refreshState()
         pageLayout.applyToCurrentDocument()
         webView.scrollView.refreshControl?.endRefreshing()
