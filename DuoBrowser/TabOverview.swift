@@ -196,7 +196,6 @@ private struct TabPreview: View {
                 }
                 .buttonStyle(.plain).padding(12)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-                .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3) }
             } else { previewCard }
         }.accessibilityElement(children: .contain)
     }
@@ -234,10 +233,6 @@ private struct TabPreview: View {
                     }
                     .aspectRatio(0.68, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 3 : 1)
-                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)

@@ -67,7 +67,24 @@ private final class NativeCheckRunner {
         collection.contentOffset.x = layout.stride * 3
         collection.layoutIfNeeded()
         try await wait { dismissals[models[3].id] != nil }
+        let departing = collection.cellForItem(at: IndexPath(item: 3, section: 0)) as! TabStackCell
+        departing.motionView.transform = CGAffineTransform(translationX: 0, y: -90)
+        collection.setNeedsLayout()
+        collection.layoutIfNeeded()
+        try check(departing.motionView.transform.ty == -90, "layout preserves the dragged card offset")
         dismissals[models[3].id]?()
+        var previousY: CGFloat = -90
+        for _ in 0..<8 {
+            try await Task.sleep(for: .milliseconds(20))
+            guard visible.contains(where: { $0.id == models[3].id }), departing.representedID == models[3].id else { break }
+            collection.setNeedsLayout()
+            collection.layoutIfNeeded()
+            if let presentation = departing.motionView.layer.presentation() {
+                let y = presentation.affineTransform().ty
+                try check(y <= previousY + 1, "committed dismissal travels upward through layout passes (\(previousY) to \(y))")
+                previousY = y
+            }
+        }
         try await wait { collection.numberOfItems(inSection: 0) == 5 }
         try check(!visible.contains { $0.id == models[3].id }, "animated close removes intended tab once")
         try await wait { abs(collection.contentOffset.x - layout.stride * 3) < 1 }

@@ -74,7 +74,7 @@ final class TabStackLayout: UICollectionViewLayout {
         let distance = CGFloat(indexPath.item) * stride - offset
         let projected = TabStackMotion.position(distance, stride: stride, reduceMotion: reduceMotion)
         let depth = reduceMotion ? 0 : max(0, -distance / stride)
-        let scale = 1 - 0.07 * (1 - exp(-depth * 0.8))
+        let scale = 1 - 0.07 * (1 - exp(-depth * depth * 0.8))
         let attributes = UICollectionViewLayoutAttributes(forCellWith: indexPath)
         attributes.size = CGSize(width: cardWidth, height: cardWidth / 0.68 + 28)
         attributes.center = CGPoint(x: offset + collectionView.bounds.width * 0.5 + projected,
@@ -96,8 +96,31 @@ final class TabStackLayout: UICollectionViewLayout {
     }
 }
 
-private final class TabStackCell: UICollectionViewCell {
+final class TabStackCell: UICollectionViewCell {
     var representedID: UUID?
+    // UIKit owns contentView's transform. Keep interactive motion on our own container.
+    let motionView = UIView()
+    private var hostedView: (UIView & UIContentView)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        motionView.frame = contentView.bounds
+        motionView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        contentView.addSubview(motionView)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func configure(_ configuration: UIHostingConfiguration<AnyView, EmptyView>) {
+        if let hostedView { hostedView.configuration = configuration }
+        else {
+            let hosted = configuration.makeContentView()
+            hosted.frame = motionView.bounds
+            hosted.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            motionView.addSubview(hosted)
+            hostedView = hosted
+        }
+    }
 }
 
 final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
@@ -112,7 +135,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
     private var previousSize: CGSize = .zero
     private var swipe: UIPanGestureRecognizer!
     private var draggedID: UUID?
-    private weak var draggedCell: UICollectionViewCell?
+    private weak var draggedCell: TabStackCell?
     private var dragStart: CGFloat = 0
     private var animators: [UUID: UIViewPropertyAnimator] = [:]
     private var closingIDs: Set<UUID> = []
@@ -138,18 +161,18 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
                         Task { @MainActor [weak self] in self?.finishDismissal(previous) }
                     }
                 }
-                cell.contentView.transform = .identity
-                cell.contentView.alpha = 1
+                cell.motionView.transform = .identity
+                cell.motionView.alpha = 1
                 cell.representedID = id
             }
-            cell.contentConfiguration = UIHostingConfiguration {
-                self.makeCard?(tab, { [weak self] in self?.dismiss(id, velocity: 0) })
-            }.margins(.all, 0)
-            cell.contentView.layer.shadowColor = UIColor.black.cgColor
-            cell.contentView.layer.shadowOpacity = 0.14
-            cell.contentView.layer.shadowRadius = 14
-            cell.contentView.layer.shadowOffset = CGSize(width: -5, height: 3)
-            cell.contentView.layer.shadowPath = UIBezierPath(roundedRect: CGRect(x: 0, y: 28,
+            cell.configure(UIHostingConfiguration {
+                self.makeCard?(tab, { [weak self] in self?.dismiss(id, velocity: 0) }) ?? AnyView(EmptyView())
+            }.margins(.all, 0))
+            cell.motionView.layer.shadowColor = UIColor.black.cgColor
+            cell.motionView.layer.shadowOpacity = 0.14
+            cell.motionView.layer.shadowRadius = 14
+            cell.motionView.layer.shadowOffset = CGSize(width: -5, height: 3)
+            cell.motionView.layer.shadowPath = UIBezierPath(roundedRect: CGRect(x: 0, y: 28,
                 width: self.stackLayout.cardWidth, height: self.stackLayout.cardWidth / 0.68), cornerRadius: 18).cgPath
             return cell
         }
@@ -241,11 +264,11 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         switch gesture.state {
         case .began:
             guard let path = touchedCard(at: gesture.location(in: collectionView)),
-                  let id = dataSource.itemIdentifier(for: path), let cell = collectionView.cellForItem(at: path) else { return }
+                  let id = dataSource.itemIdentifier(for: path), let cell = collectionView.cellForItem(at: path) as? TabStackCell else { return }
             // A returning card can be caught without teleporting to its destination.
-            let currentY = cell.contentView.layer.presentation()?.affineTransform().ty ?? cell.contentView.transform.ty
+            let currentY = cell.motionView.layer.presentation()?.affineTransform().ty ?? cell.motionView.transform.ty
             animators.removeValue(forKey: id)?.stopAnimation(true)
-            cell.contentView.transform = CGAffineTransform(translationX: 0, y: currentY)
+            cell.motionView.transform = CGAffineTransform(translationX: 0, y: currentY)
             draggedID = id
             draggedCell = cell
             dragStart = currentY
@@ -253,12 +276,12 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         case .changed:
             let distance = dragStart + gesture.translation(in: collectionView).y
             let y = distance < 0 ? distance : 50 * (1 - exp(-distance / 150))
-            draggedCell?.contentView.transform = CGAffineTransform(translationX: 0, y: y)
+            draggedCell?.motionView.transform = CGAffineTransform(translationX: 0, y: y)
         case .ended, .cancelled:
             guard let id = draggedID, let cell = draggedCell else { return }
             let velocity = gesture.velocity(in: collectionView).y
             let shouldClose = gesture.state == .ended && TabStackMotion.shouldDismiss(
-                translation: cell.contentView.transform.ty, velocity: velocity, height: cell.bounds.height)
+                translation: cell.motionView.transform.ty, velocity: velocity, height: cell.bounds.height)
             draggedID = nil
             draggedCell = nil
             if shouldClose { dismiss(id, velocity: velocity) }
@@ -268,20 +291,20 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
     }
 
     private func cancelDrag() {
-        draggedCell?.contentView.transform = .identity
+        draggedCell?.motionView.transform = .identity
         draggedID = nil
         draggedCell = nil
         for id in Array(animators.keys) where !closingIDs.contains(id) {
             animators.removeValue(forKey: id)?.stopAnimation(true)
             if let path = dataSource.indexPath(for: id) {
-                collectionView.cellForItem(at: path)?.contentView.transform = .identity
+                (collectionView.cellForItem(at: path) as? TabStackCell)?.motionView.transform = .identity
             }
         }
     }
 
     private func dismiss(_ id: UUID, velocity: CGFloat) {
         guard !closingIDs.contains(id), let path = dataSource.indexPath(for: id),
-              let cell = collectionView.cellForItem(at: path) else { return }
+              let cell = collectionView.cellForItem(at: path) as? TabStackCell else { return }
         closingIDs.insert(id)
         let exit = -(view.window?.bounds.height ?? view.bounds.height) - cell.bounds.height
         animate(cell: cell, id: id, to: exit, velocity: velocity, closing: true)
@@ -292,21 +315,24 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         close?(id)
     }
 
-    private func animate(cell: UICollectionViewCell, id: UUID, to destination: CGFloat, velocity: CGFloat, closing: Bool) {
+    private func animate(cell: TabStackCell, id: UUID, to destination: CGFloat, velocity: CGFloat, closing: Bool) {
         animators.removeValue(forKey: id)?.stopAnimation(true)
-        let delta = destination - cell.contentView.transform.ty
+        let delta = destination - cell.motionView.transform.ty
         let initialVelocity = abs(delta) > 1 ? min(12, max(-12, velocity / delta)) : 0
         let timing = UISpringTimingParameters(dampingRatio: 1, initialVelocity: CGVector(dx: 0, dy: initialVelocity))
-        let animator = UIViewPropertyAnimator(duration: closing ? 0.32 : 0.38, timingParameters: timing)
+        // A committed close must continue upward even when released with a slight downward velocity.
+        let animator = closing
+            ? UIViewPropertyAnimator(duration: 0.26, curve: .easeIn)
+            : UIViewPropertyAnimator(duration: 0.32, timingParameters: timing)
         animator.addAnimations {
-            if self.stackLayout.reduceMotion { cell.contentView.alpha = closing ? 0 : 1 }
-            else { cell.contentView.transform = CGAffineTransform(translationX: 0, y: destination) }
+            if self.stackLayout.reduceMotion { cell.motionView.alpha = closing ? 0 : 1 }
+            else { cell.motionView.transform = CGAffineTransform(translationX: 0, y: destination) }
         }
         animator.addCompletion { [weak self, weak cell] position in
             guard let self, position == .end else { return }
             self.animators[id] = nil
             if closing { self.finishDismissal(id) }
-            else { cell?.contentView.transform = .identity }
+            else { cell?.motionView.transform = .identity }
         }
         animators[id] = animator
         animator.startAnimation()
