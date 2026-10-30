@@ -145,3 +145,8 @@ Reworked URL search into a compact keyboard-adjacent palette, replaced the Peek 
 
 - Page options exposes a persistent **Time, Signal & Battery** toggle in Debug and Release. It controls the system status indicators independently of full-width page mode and also applies in the tab overview.
 - Debug and Release simulator builds and 34 native browser checks passed. Closed-display simulator interaction verified the earlier longer label toggled the indicators on and off; the final shorter label could not be visually rechecked after the Mac locked. Hardware, VoiceOver, and the full pose/accessibility matrix remain to be verified.
+## Reader and article fitting follow-up — October 29, 2026
+
+- Replaced Reader’s inset SwiftUI column with a full-screen WebKit viewport using runtime camera geometry. Ordered photos/captions, article-header images and visible headlines are extracted with bounded native validation; private image loading stays in the source profile.
+- Body text can fit inside non-scrolling horizontal-overflow shells and normal column-flex article layouts. Actual scrollers, clipped content and unsafe flow changes still fall back.
+- Verification and remaining live-site/hardware gaps: [Reader layout report](READER_LAYOUT_2026-10-29.md).
