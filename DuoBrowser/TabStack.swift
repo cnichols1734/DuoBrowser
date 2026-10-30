@@ -234,7 +234,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate {
         let oldIDs = self.tabs.map(\.id), ids = tabs.map(\.id)
         let selectionChanged = self.selectedID != selectedID
         self.selectedID = selectedID
-        guard oldIDs != ids else { return }
+        guard oldIDs != ids || selectionChanged else { return }
         let oldIndex = Int((collectionView.contentOffset.x / stackLayout.stride).rounded())
         let focusedID = oldIDs.indices.contains(oldIndex) ? oldIDs[oldIndex] : nil
         let focus = focusedID.flatMap { ids.firstIndex(of: $0) }
