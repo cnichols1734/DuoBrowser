@@ -30,6 +30,9 @@ private final class NativeCheckRunner {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
+        // Task.sleep can resume late on a busy simulator. Observe the condition once
+        // more after waking instead of reporting stale state from before that sleep.
+        if await condition() { return }
         throw NSError(domain: "Timed out waiting for native WebKit", code: 1)
     }
     func mount(_ model: BrowserModel) {
@@ -45,15 +48,26 @@ private final class NativeCheckRunner {
     func load(_ model: BrowserModel, _ path: String) async throws {
         mount(model)
         model.navigate(to: "http://127.0.0.1:8765/" + path)
+        var lastReadyState = "not evaluated"
+        var lastScriptError = "none"
+        let clock = ContinuousClock()
+        let started = clock.now
         do {
             // A fresh hosted simulator may need to launch WebKit's network/render processes.
             // Loading has its own bound; interaction checks retain their shorter deadline.
             try await wait(timeout: 60) {
                 guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
-                return (try? await self.js(model, "document.readyState") as? String) == "complete"
+                do {
+                    lastReadyState = try await self.js(model, "document.readyState") as? String ?? "not a string"
+                    lastScriptError = "none"
+                    return lastReadyState == "complete"
+                } catch {
+                    lastScriptError = String(describing: error)
+                    return false
+                }
             }
         } catch {
-            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none")")
+            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none") readyState=\(lastReadyState) scriptError=\(lastScriptError) elapsed=\(started.duration(to: clock.now))")
             throw error
         }
     }
