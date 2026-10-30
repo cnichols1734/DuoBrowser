@@ -74,6 +74,27 @@
     return geometry.regions.map(r => ({left:r.x*scale+x, top:r.y*scale+y,
       right:(r.x+r.width)*scale+x, bottom:(r.y+r.height)*scale+y}));
   }
+  function safeOverflow(el, parent, css) {
+    if (!/hidden|clip|auto|scroll/.test(css.overflowX + css.overflowY)) return true;
+    // Many article shells suppress horizontal overflow. That alone does not make
+    // their normal vertical text flow unsafe. Keep actual scrollers and clipped
+    // content unsupported, and revalidate these bounds after any adjustment.
+    if (!el.matches(textBlocks) || !['hidden', 'clip'].includes(css.overflowX) ||
+        !['visible', 'auto'].includes(css.overflowY) ||
+        parent.scrollWidth > parent.clientWidth+1 || parent.scrollHeight > parent.clientHeight+1 ||
+        parent.scrollLeft !== 0 || parent.scrollTop !== 0) return false;
+    const shell = rect(parent), box = rect(el);
+    const left = shell.left+parent.clientLeft, top = shell.top+parent.clientTop;
+    return box.left >= left-1 && box.right <= left+parent.clientWidth+1 &&
+      (css.overflowY === 'visible' || box.top >= top-1 && box.bottom <= top+parent.clientHeight+1);
+  }
+  function overflowStillSafe(el) {
+    for (let p = el.parentElement, depth = 0; p && depth < 24; p = p.parentElement, depth++) {
+      if (!safeOverflow(el, p, getComputedStyle(p))) return false;
+      if (p === document.body) return true;
+    }
+    return false;
+  }
   function safe(el) {
     if (!(el instanceof HTMLElement) || !el.isConnected || el.contains(document.activeElement)) return false;
     const css = getComputedStyle(el);
@@ -81,7 +102,7 @@
         css.writingMode !== 'horizontal-tb' || authorMotion(el)) return false;
     for (let p = el.parentElement, depth = 0; p && depth < 24; p = p.parentElement, depth++) {
       const c = getComputedStyle(p);
-      if (!plain(c) || (c.position === 'sticky' && el.matches(textBlocks)) || /hidden|clip|auto|scroll/.test(c.overflowX + c.overflowY) ||
+      if (!plain(c) || (c.position === 'sticky' && el.matches(textBlocks)) || !safeOverflow(el, p, c) ||
           p.isContentEditable || authorMotion(p)) return false;
       if (p === document.body) return true;
     }
@@ -179,7 +200,8 @@
       const parent = current.parentElement;
       if (!parent) return null;
       const css = getComputedStyle(parent);
-      if (!plain(css) || (depth === 0 && !['block', 'flow-root'].includes(css.display)) ||
+      const columnFlow = css.display === 'flex' && css.flexDirection === 'column' && css.flexWrap === 'nowrap';
+      if (!plain(css) || (depth === 0 && !['block', 'flow-root'].includes(css.display) && !columnFlow) ||
           !['block', 'flow-root', 'grid', 'flex'].includes(css.display) ||
           css.columnCount !== 'auto' || css.columnWidth !== 'auto' || css.height === '0px') return null;
       if (parent.childNodes.length > 192 ||
@@ -271,7 +293,7 @@
       own(el, `translate:${dx}px ${dy}px!important`);
       const actual = rect(el);
       if (near(actual.left, target.left) && near(actual.top, target.top) &&
-          document.documentElement.scrollWidth <= innerWidth+1 && reachable(el, isText)) return true;
+          document.documentElement.scrollWidth <= innerWidth+1 && overflowStillSafe(el) && reachable(el, isText)) return true;
       undo(el);
     }
     return false;
@@ -348,7 +370,7 @@
       });
     const fittedLines = valid ? textRects(el) : null;
     if (fittedLines && fittedLines.every(r => r.left >= after.left-1 && r.right <= after.right+1 &&
-        !regions.some(region => overlaps(r, region))) && reachable(el, true)) return true;
+        !regions.some(region => overlaps(r, region))) && overflowStillSafe(el) && reachable(el, true)) return true;
     undo(el); return false;
   }
   function animateFrom(before, old, reading) {

@@ -192,6 +192,37 @@ module.exports = async function runSettlingTests(page, source) {
     await setup();await p.locator('#reading').evaluate(n=>n.innerHTML='<span style="white-space:nowrap">A nonwrapping span must never escape its newly narrowed paragraph</span> '+n.innerHTML);
     await send(geometry());await settled();
     assert((await box('reading')).width===434,'overflowing nonwrapping text rolls back the attempted fit');
+    for (const shellCSS of ['body{overflow-x:hidden}', 'main{overflow-x:hidden}', 'main{overflow-x:clip}',
+      'main{display:flex;flex-direction:column;gap:12px}']) {
+      await setup(shellCSS);
+      const initial = await box('reading'), following = await box('following');
+      await send(geometry()); await settled();
+      const fit = await box('reading'), next = await box('following');
+      assert(fit.right <= 378 && Math.abs(fit.y-initial.y)<1,
+        `normal article text fits inside ${shellCSS}`);
+      assert(Math.abs((next.y-fit.y-fit.height)-(following.y-initial.y-initial.height))<1,
+        `article flow spacing stays intact inside ${shellCSS}`);
+      await send(geometry([], {enabled:false}));
+      assert(JSON.stringify(await box('reading'))===JSON.stringify(initial),
+        `original article geometry restores inside ${shellCSS}`);
+    }
+    await setup('main{height:140px;padding-bottom:0;overflow-x:hidden}');
+    await send(geometry()); await settled();
+    assert((await box('reading')).width===434, 'actual clipped or scrolling article shells remain unchanged');
+    await setup();
+    await p.locator('#reading').evaluate(n=>{
+      const shell=document.createElement('section');
+      shell.style.cssText='overflow-x:hidden;height:'+n.getBoundingClientRect().height+'px';
+      n.style.marginBottom='0';n.before(shell);shell.append(n);
+    });
+    const bounded = await box('reading');
+    await send(geometry()); await settled();
+    assert(JSON.stringify(await box('reading'))===JSON.stringify(bounded),
+      'fitting rolls back when new wrapping would clip a fixed-height shell');
+    await setup('main{display:flex;flex-direction:column-reverse}');
+    const reversed = await box('reading');
+    await send(geometry([{...region, y:reversed.y+4, height:Math.min(120,reversed.height-8)}])); await settled();
+    assert(JSON.stringify(await box('reading'))===JSON.stringify(reversed), 'reverse flex article order remains conservative');
     return {passed:results.length,tests:results};
   } finally { await p.close(); }
 };

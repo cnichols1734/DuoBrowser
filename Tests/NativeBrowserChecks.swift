@@ -338,6 +338,23 @@ private final class NativeCheckRunner {
             try check(abs((try await measure("top", "following"))-chromeReadingTop)<1 && chromeReadingRight <= model.webView.bounds.width-91,
                 "WebKit skips text hidden by sticky chrome without rolling back visible text")
 
+            for (label, style) in [("horizontal overflow shell", "document.body.style.overflowX='hidden'"),
+                                   ("column flex article", "document.querySelector('main').style.cssText='display:flex;flex-direction:column;padding-bottom:900px'")] {
+                try await camera([], enabled: false)
+                try await load(model, "settling")
+                _ = try await js(model, style)
+                let originalWidth = try await measure("width")
+                let originalTop = try await measure("top")
+                try await camera(rail); try await pause()
+                let fittedRight = try await measure("right")
+                let fittedTop = try await measure("top")
+                try check(fittedRight <= model.webView.bounds.width-91 && abs(fittedTop-originalTop)<1,
+                          "WebKit fits body text in a \(label) without vertical movement")
+                try await camera([], enabled: false)
+                try check(abs((try await measure("width"))-originalWidth)<1,
+                          "Original Layout restores text in a \(label)")
+            }
+
 
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
@@ -345,6 +362,69 @@ private final class NativeCheckRunner {
     }
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+    }
+    func readerRenderingChecks(_ source: BrowserModel) async throws {
+        try await load(source, "reader-article")
+        _ = try await js(source, "document.querySelector('#kept').value='Reader preserved draft'")
+        source.openReader()
+        try await wait { source.readerArticle != nil }
+        guard let article = source.readerArticle else { throw NSError(domain: "Missing Reader article", code: 1) }
+        try check(article.blocks.map(\.kind) == ["paragraph", "image", "caption", "paragraph", "image", "caption", "paragraph"], "Reader preserves photo and caption order between paragraphs")
+        let invalidImage: [String: Any] = ["title": "Unsafe image", "blocks": [
+            ["kind": "paragraph", "text": "Visible text"],
+            ["kind": "image", "url": "javascript:alert(1)", "alt": "", "width": 320, "height": 180]]]
+        try check(ReaderArticle.parse(invalidImage, source: article.source) == nil, "Reader native validation rejects executable image addresses")
+        let escaped = ReaderArticle(title: "<script>unsafe</script>", source: article.source,
+                                    blocks: [.init(kind: "paragraph", text: "<img src=x onerror=alert(1)>")])
+        try check(escaped.readerHTML.contains("&lt;script&gt;") && !escaped.readerHTML.contains("<script>") &&
+                  !escaped.readerHTML.contains("<img src=x"), "Reader escapes untrusted title and body markup")
+        let reader = ReaderRenderer(article: article, sourceBrowser: source)
+        defer { reader.close(); source.cancelReader() }
+        mount(reader.browser)
+        reader.load()
+        try await wait(timeout: 60) {
+            (try? await self.js(reader.browser, "document.readyState==='complete' && document.querySelectorAll('article img').length===2")) as? Bool == true
+        }
+        try check(reader.browser.webView.configuration.websiteDataStore === source.webView.configuration.websiteDataStore,
+                  "Reader images use the original WebKit profile")
+        try check(!reader.browser.webView.configuration.defaultWebpagePreferences.allowsContentJavaScript,
+                  "Reader disables page JavaScript")
+        try check(try await js(reader.browser, "(()=>{let s=document.createElement('script');s.textContent='window.readerInjected=true';document.body.appendChild(s);return window.readerInjected!==true})()") as? Bool == true,
+                  "Reader blocks injected page-script execution")
+        _ = try await js(reader.browser, "document.querySelectorAll('img').forEach(n=>n.loading='eager')")
+        try await wait { (try? await self.js(reader.browser, "[...document.images].every(n=>n.complete&&n.naturalWidth===320)")) as? Bool == true }
+        try check(true, "Reader displays both synthetic article photographs")
+        try check(try await js(reader.browser, "document.querySelector('article').getBoundingClientRect().width >= innerWidth-49") as? Bool == true,
+                  "Reader uses full available width without a permanent camera rail")
+        let cameraReady = try await reader.browser.webView.evaluateJavaScript("!!globalThis.__duoCamera", in: nil, contentWorld: PageLayoutAdapter.world)
+        try check(cameraReady as? Bool == true, "Reader installs the camera fitting engine in its isolated world")
+        let paragraphTop = (try await js(reader.browser, "document.querySelector('article p:not(.caption)').getBoundingClientRect().top") as? Double) ?? 0
+        let readerWidth = reader.browser.webView.bounds.width
+        let readerHeight = reader.browser.webView.bounds.height
+        let cameraValue: [String: Any] = ["enabled": true, "width": readerWidth, "height": readerHeight, "reduceMotion": true,
+                                         "regions": [["x": readerWidth-84, "y": paragraphTop, "width": 84.0, "height": 100.0]]]
+        _ = try await reader.browser.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value)", arguments: ["value": cameraValue], in: nil, contentWorld: PageLayoutAdapter.world)
+        try await wait { (try? await self.js(reader.browser, "document.querySelector('article p:not(.caption)').getBoundingClientRect().right <= innerWidth-91")) as? Bool == true }
+        try check(true, "Reader text fits beside the camera after settling")
+        var clearCamera = cameraValue
+        clearCamera["regions"] = [[String: Double]]()
+        _ = try await reader.browser.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value)", arguments: ["value": clearCamera], in: nil, contentWorld: PageLayoutAdapter.world)
+        try await wait { (try? await self.js(reader.browser, "document.querySelector('article p:not(.caption)').getBoundingClientRect().width >= innerWidth-49")) as? Bool == true }
+        try check(true, "Reader restores full paragraph width when the camera no longer overlaps")
+        let beforeURL = reader.browser.webView.url
+        reader.update(size: 23, spacing: 9, theme: "Sepia")
+        try await wait { (try? await self.js(reader.browser, "getComputedStyle(document.querySelector('article p')).fontSize==='23px' && document.documentElement.dataset.theme==='Sepia'")) as? Bool == true }
+        try check(reader.browser.webView.url == beforeURL, "Reader typography settings update without reloading")
+        reader.close()
+        try check(reader.browser.loadedWebView == nil, "Closing Reader releases its temporary web view")
+        mount(source)
+        try check(try await js(source, "document.querySelector('#kept').value") as? String == "Reader preserved draft", "Photo Reader leaves the original form untouched")
+        let privateSource = BrowserModel(isPrivate: true, dataStore: .nonPersistent())
+        let privateReader = ReaderRenderer(article: article, sourceBrowser: privateSource)
+        try check(privateReader.browser.isPrivate && !privateReader.browser.webView.configuration.websiteDataStore.isPersistent &&
+                  privateReader.browser.webView.configuration.websiteDataStore === privateSource.webView.configuration.websiteDataStore,
+                  "Private Reader preserves the ephemeral source profile")
+        privateReader.close(); privateSource.close()
     }
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
@@ -389,6 +469,7 @@ private final class NativeCheckRunner {
             normal.openReader()
             try await wait { !normal.readerLoading }
             try check(normal.readerArticle == nil && normal.errorMessage != nil, "unsupported page keeps original with Reader explanation")
+            try await readerRenderingChecks(normal)
             try await load(normal, "upgrades")
             try await wait { normal.title == "A quieter way to browse" }
             session.togglePin(normal)
