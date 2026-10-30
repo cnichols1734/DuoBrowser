@@ -150,6 +150,22 @@ Reworked URL search into a compact keyboard-adjacent palette, replaced the Peek 
 
 Added a native start page with bookmarks, recent visits, a search shortcut and a private-browsing state, plus a locally saved tab-switcher background color and reset. The page uses existing local library data and does not show normal browsing history in private mode. Debug and Release simulator builds, 36 native browser checks, 62 portable checks and 126 layout checks passed. On a closed Duo simulator the start page and color picker were displayed and a color was applied. Physical-device, VoiceOver and full pose/accessibility coverage remain to be verified.
 
+## Tab stack — October 29, 2026
+
+The overview uses a native UICollectionView stack with reusable page previews, continuous depth compression to the left, UIKit momentum and snapping, and upward swipe dismissal. The same layout drives displayed positions and hit testing. Closing follows the finger without a travel cap, projects release velocity, and uses a critically damped animation; reversing downward cancels, and a returning card can be caught again. Cards fit the available height. Existing glass controls, background color, search, workspaces and privacy separation remain. VoiceOver and accessibility text sizes retain the non-overlapping list; Reduce Motion removes depth/parallax and fades committed closes.
+
+The motion follows Apple's public [Designing Fluid Interfaces](https://developer.apple.com/videos/play/wwdc2018/803/) guidance on momentum, interruption and non-overshooting springs, using public [UICollectionViewLayout snapping](https://developer.apple.com/documentation/uikit/uicollectionviewlayout/targetcontentoffset(forproposedcontentoffset:withscrollingvelocity:)). The depth curve is our implementation, not Apple's unpublished app-switcher formula.
+
+Verification: final Debug/Release simulator and signed-device builds passed, along with 62 portable checks, 126 browser/DOM checks and SwiftLint. Eight motion-policy assertions passed (continuous speed, order, bounds, momentum, cancellation and Reduce Motion). Seven focused native stack checks passed on the final build: selected-tab entry, fractional scrolling, bounded layout work, animated close, successor placement, reduced motion and resize focus. These checks exercise UIKit layout and close animations programmatically, not synthesized touch gestures.
+
+The full native suite did not pass in this run: one attempt timed out in the upgrade/WebKit checks after reenabling content blocking; a second passed the new stack assertions but timed out waiting for the synthetic TLS error. No test expectations or security behavior were weakened. The overview and multiple preview cards were displayed on the closed Duo simulator; the computer-use drag tool returned `noWindowsAvailable`, so touch-driven horizontal scrolling and swipe-up recognition remain unverified. Final development build installation on the owner's iPhone is recorded in the PR. Physical smoothness/frame pacing, spoken VoiceOver, larger-text/keyboard and the complete open/partial/rotated pose matrix remain acceptance work.
+
+
+## Tab motion correction — October 29, 2026
+
+Removed all tab-preview outlines, including the selected-tab blue border. Card dismissal now animates an app-owned container instead of UIKit's managed cell content view, preserving the finger offset across collection layout. Committed closes travel upward with a non-reversing exit; canceled gestures retain a catchable return animation. Horizontal depth scaling now eases continuously at the foreground boundary while UIKit continues to handle momentum and snapping.
+
+Debug and Release simulator builds, portable checks, browser/DOM tests and strict SwiftLint passed. The focused native stack harness verifies retained drag offset, monotonic upward presentation during repeated layout, one-time removal, successor focus, fractional scrolling, bounded layout work, Reduce Motion and resize focus. Device Hub inspection confirmed border-free cards; automated drag input was inconclusive, and physical frame pacing remains unverified. No Safari-parity or full hardware/accessibility acceptance claim is made.
 
 ## Start-page review corrections — October 29, 2026
 
@@ -159,3 +175,13 @@ The start page is now native-only, with no placeholder WebKit document or compet
 - Replaced Reader’s inset SwiftUI column with a full-screen WebKit viewport using runtime camera geometry. Ordered photos/captions, article-header images and visible headlines are extracted with bounded native validation; private image loading stays in the source profile.
 - Body text can fit inside non-scrolling horizontal-overflow shells and normal column-flex article layouts. Actual scrollers, clipped content and unsafe flow changes still fall back.
 - Verification and remaining live-site/hardware gaps: [Reader layout report](READER_LAYOUT_2026-10-29.md).
+
+
+## Matched tab zoom — October 29, 2026
+
+The live browser now uses UIKit's public zoom transition from the selected card, reversing into that same card when Tabs is pressed. This replaces the overview's vertical full-screen-cover slide. A presentation coordinator observes session intent even while its SwiftUI source is offscreen, serializes presentation changes, and preserves existing web views. The return source recenters the active card and clears stale tab search. Reduce Motion, VoiceOver and accessibility text sizes use a fade; WebKit retains ownership of pinch and back gestures.
+
+Simulator integration checks pass for initial presentation, zoom out, new-tab presentation, switching back to an existing web view, and reduced-motion return. Device Hub accessibility actions verified the actual Tabs button and card selection. The dismissal regression passed three consecutive runs using an explicit Core Animation exit from the final finger transform, anchored to the current layer clock so delayed layout transactions cannot restart its timing. The owner reported the earlier swipe-close build works well on their phone; physical acceptance of this new zoom remains theirs to check. Apple's API reference: https://developer.apple.com/documentation/uikit/uiviewcontroller/transition/zoom(options:sourceviewprovider:).
+
+
+The complete local native suite passed for the zoom implementation: stack/zoom, core browsing, Reader/upgrades, camera settling, cookie write/relaunch and memory checks. Review follow-up removes the empty stack from no-results layouts, derives visible cards from their transformed viewport bounds, keeps Close exposed at the leading corner, and preserves committed closes exactly once through filtering or stack teardown. Focused native regressions cover both wide-layout tails and filter/teardown completion. Device Hub selection checks and signed development installation succeeded; final physical zoom acceptance remains owner-driven.

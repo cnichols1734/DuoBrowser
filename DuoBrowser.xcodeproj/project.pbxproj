@@ -5,6 +5,10 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"CC6600000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserZoomPresenter.swift; sourceTree = "<group>"; };
+"CC6600000000000000000002" = { isa = PBXBuildFile; fileRef = "CC6600000000000000000001"; };
+"AB7290C02026103000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStack.swift; sourceTree = "<group>"; };
+"AB7290C02026103000000002" = { isa = PBXBuildFile; fileRef = "AB7290C02026103000000001"; };
 "5085BC15DB09AD5ECA443706" = { isa = PBXFileReference; lastKnownFileType = text.json; path = BlockingRules.json; sourceTree = "<group>"; };
 "44E52D88A0625FA4F17E812A" = { isa = PBXBuildFile; fileRef = "5085BC15DB09AD5ECA443706"; };
 "C8950E6D94FE2B63A1879135" = { isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Reader.js; sourceTree = "<group>"; };
@@ -179,6 +183,8 @@
 				"087AA246BB6F0D9BA26D04E8",
 				"5C3BCA4109E699E3ED6C8AAA",
 				"EE8BF6C7173D7DEDE4F28D2B",
+"AB7290C02026103000000001",
+"CC6600000000000000000001",
 				"DDCD89319F8B60242BDB332A",
 				"7D173ECD5CD1D808C0AE7796",
 			);
@@ -205,6 +211,8 @@
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+"CC6600000000000000000002",
+"AB7290C02026103000000002",
 				"06B4A2B885D6259AD4F62EDE",
 				"633D407FA64D304DEE8BABB4",
 				"8706D5B2472C6173E7D3BED0",

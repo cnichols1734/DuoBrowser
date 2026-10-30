@@ -8,20 +8,14 @@ struct BrowserView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
-        ActiveBrowserView(session: session, browser: session.selected, viewport: session.selected.viewport)
-            .id(session.selectedID)
-            .fullScreenCover(isPresented: $session.showingTabs) {
-                TabOverview(session: session)
-            }
-            .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
-            .sheet(isPresented: $session.showingWorkspaces) { WorkspaceView(session: session) }
+        BrowserZoomPresenter(session: session)
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
     }
 }
 
-private struct ActiveBrowserView: View {
+struct ActiveBrowserView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @ObservedObject var viewport: BrowserViewportState

@@ -22,6 +22,7 @@ struct TabOverview: View {
         })
     }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var searchLineHeight = 20.0
 
@@ -30,78 +31,82 @@ struct TabOverview: View {
             || $0.siteName.localizedCaseInsensitiveContains(search) }
     }
     private var largeText: Bool { dynamicTypeSize.isAccessibilitySize }
+    private var accessibleList: Bool { largeText || voiceOver }
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 8) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        Text(session.privateMode ? "Private Tabs" : session.workspaceName)
-                            .font(.title2.weight(.bold))
-                            .accessibilityAddTraits(.isHeader)
-                            .padding(.trailing, geometry.safeAreaInsets.trailing)
-                        HStack {
-                            ColorPicker("Tab background", selection: colorChoice, supportsOpacity: false)
-                            if !backgroundHex.isEmpty { Button("Reset") { backgroundHex = "" } }
-                        }.font(.subheadline).frame(minHeight: 44)
-                        if !session.privateMode {
-                            Menu {
-                                ForEach(session.workspaces) { workspace in
-                                    Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
-                                }
-                                Button("Manage Workspaces") { manageWorkspaces = true }
-                            } label: { Label("Workspaces", systemImage: "square.stack").frame(minHeight: 44) }
-                        }
-                        if session.privateMode {
-                            Text("Private tabs are not saved. Closing them clears this private session.")
-                                .font(.footnote).foregroundStyle(.secondary)
-                        }
-                        HStack(spacing: 10) {
-                            Image(systemName: "magnifyingglass").font(.system(size: 20))
-                                .foregroundStyle(.secondary).accessibilityHidden(true)
-                            TextField("Search Tabs", text: $search)
-                                .textInputAutocapitalization(.never).autocorrectionDisabled()
-                                .accessibilityLabel("Search Tabs")
-                            if !search.isEmpty {
-                                Button { search = "" } label: {
-                                    Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44)
-                                }.accessibilityLabel("Clear tab search")
-                            }
-                        }
-                        .padding(.horizontal, 16).frame(minHeight: max(44, searchLineHeight + 16))
-                        .glassEffect(.regular, in: Capsule())
-                        LazyVGrid(columns: largeText ? [GridItem(.flexible())] : [GridItem(.adaptive(minimum: 160), spacing: 20)], spacing: 24) {
-                            ForEach(filteredTabs) { tab in
-                                TabPreview(tab: tab, selected: session.selectedID == tab.id,
-                                           select: { session.select(tab.id) }, close: {
-                                    withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
-                                })
-                                .contextMenu {
-                                    Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
-                                    if !tab.isPrivate {
-                                        Menu("Move to Workspace") {
-                                            ForEach(session.workspaces) { workspace in
-                                                Button(workspace.name) { session.move(tab, to: workspace.id) }
-                                            }
-                                        }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text(session.privateMode ? "Private Tabs" : session.workspaceName)
+                                .font(.title2.weight(.bold))
+                                .accessibilityAddTraits(.isHeader)
+                                .id("overviewTop")
+                                .padding(.trailing, geometry.safeAreaInsets.trailing)
+                            HStack {
+                                ColorPicker("Tab background", selection: colorChoice, supportsOpacity: false)
+                                if !backgroundHex.isEmpty { Button("Reset") { backgroundHex = "" } }
+                            }.font(.subheadline).frame(minHeight: 44)
+                            if !session.privateMode {
+                                Menu {
+                                    ForEach(session.workspaces) { workspace in
+                                        Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
                                     }
+                                    Button("Manage Workspaces") { manageWorkspaces = true }
+                                } label: { Label("Workspaces", systemImage: "square.stack").frame(minHeight: 44) }
+                            }
+                            if session.privateMode {
+                                Text("Private tabs are not saved. Closing them clears this private session.")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            }
+                            HStack(spacing: 10) {
+                                Image(systemName: "magnifyingglass").font(.system(size: 20))
+                                    .foregroundStyle(.secondary).accessibilityHidden(true)
+                                TextField("Search Tabs", text: $search)
+                                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .accessibilityLabel("Search Tabs")
+                                if !search.isEmpty {
+                                    Button { search = "" } label: {
+                                        Image(systemName: "xmark.circle.fill").font(.system(size: 20)).frame(width: 44, height: 44)
+                                    }.accessibilityLabel("Clear tab search")
                                 }
                             }
-                        }
-                        if filteredTabs.isEmpty {
-                            if search.isEmpty {
-                                ContentUnavailableView {
-                                    Label("A little room to explore", systemImage: "square.on.square")
-                                } description: {
-                                    Text("Open a new tab to start browsing in this workspace.")
-                                } actions: {
-                                    Button("New Tab", systemImage: "plus") { session.newTab() }.buttonStyle(.borderedProminent)
+                            .padding(.horizontal, 16).frame(minHeight: max(44, searchLineHeight + 16))
+                            .glassEffect(.regular, in: Capsule())
+                            if accessibleList {
+                                LazyVStack(spacing: 12) {
+                                    ForEach(filteredTabs) { tab in tabItem(tab, list: true).id(tab.id) }
                                 }
-                            } else { ContentUnavailableView.search(text: search) }
+                            } else if !filteredTabs.isEmpty {
+                                let width = min(300, max(180, geometry.size.width * 0.67))
+                                TabStack(tabs: filteredTabs, selectedID: session.selectedID,
+                                         reduceMotion: reduceMotion, close: { session.close($0) }) { tab, close in
+                                    tabItem(tab, list: false, close: close)
+                                }
+                                .frame(height: min(width / 0.68 + 56, max(300, geometry.size.height - 360)))
+                                .padding(.horizontal, -20)
+                            }
+                            if filteredTabs.isEmpty {
+                                if search.isEmpty {
+                                    ContentUnavailableView {
+                                        Label("A little room to explore", systemImage: "square.on.square")
+                                    } description: {
+                                        Text("Open a new tab to start browsing in this workspace.")
+                                    } actions: {
+                                        Button("New Tab", systemImage: "plus") { session.newTab() }.buttonStyle(.borderedProminent)
+                                    }
+                                } else { ContentUnavailableView.search(text: search) }
+                            }
+                        }.padding(20)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: session.visibleTabs.count) { _, count in
+                        if count <= 1 {
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { proxy.scrollTo("overviewTop", anchor: .top) }
                         }
-                    }.padding(20)
+                    }
                 }
-                .scrollDismissesKeyboard(.interactively)
                 Group {
                     if largeText {
                         VStack(spacing: 8) { modeMenu; footerActions }
@@ -117,8 +122,26 @@ struct TabOverview: View {
             .ignoresSafeArea(.container, edges: .horizontal)
         }
         .statusBarHidden(!session.showSystemStatus)
+        .onChange(of: session.showingTabs) { _, showing in if showing { search = "" } }
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
 
+    }
+
+    private func tabItem(_ tab: BrowserModel, list: Bool, close: (() -> Void)? = nil) -> some View {
+        TabPreview(tab: tab, selected: session.selectedID == tab.id, list: list,
+                   select: { session.select(tab.id) }, close: close ?? {
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
+        })
+        .contextMenu {
+            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
+            if !tab.isPrivate {
+                Menu("Move to Workspace") {
+                    ForEach(session.workspaces) { workspace in
+                        Button(workspace.name) { session.move(tab, to: workspace.id) }
+                    }
+                }
+            }
+        }
     }
 
     private var modeMenu: some View {
@@ -152,13 +175,13 @@ struct TabOverview: View {
 private struct TabPreview: View {
     @ObservedObject var tab: BrowserModel
     let selected: Bool
+    let list: Bool
     let select: () -> Void
     let close: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         Group {
-            if dynamicTypeSize.isAccessibilitySize {
+            if list {
                 HStack(alignment: .center, spacing: 8) {
                     Button(action: select) {
                         VStack(alignment: .leading, spacing: 4) {
@@ -174,7 +197,6 @@ private struct TabPreview: View {
                 }
                 .buttonStyle(.plain).padding(12)
                 .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
-                .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(selected ? Color.accentColor : .clear, lineWidth: 3) }
             } else { previewCard }
         }.accessibilityElement(children: .contain)
     }
@@ -186,7 +208,7 @@ private struct TabPreview: View {
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 4).accessibilityHidden(true)
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .topLeading) {
                 Button(action: select) {
                     GeometryReader { geometry in
                         Group {
@@ -212,10 +234,6 @@ private struct TabPreview: View {
                     }
                     .aspectRatio(0.68, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 18))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 18)
-                            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.08), lineWidth: selected ? 3 : 1)
-                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
