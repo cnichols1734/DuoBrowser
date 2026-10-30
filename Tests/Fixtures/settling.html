@@ -1,0 +1,30 @@
+<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Camera settling lab</title>
+<style>
+  body { margin:0; padding:24px 16px; font:18px/1.4 -apple-system, sans-serif; color:#1c2936; background:#f7f9fb; }
+  main { padding-bottom:900px; }
+  p { margin:0 0 24px; }
+  h2 { font-size:22px; margin:0 0 24px; }
+  a { color:#2457a6; }
+  input { font:inherit; width:90%; min-height:44px; }
+  button { min-height:44px; font:inherit; }
+  .actions { display:flex; gap:8px; width:max-content; margin-left:auto; }
+</style>
+<main>
+  <p id="reading">A quiet reading page keeps its text stable during scrolling. After scrolling stops, this paragraph fits beside the camera. <a id="action" href="#next">Read more</a>.</p>
+  <p id="following">The next paragraph follows ordinary text flow, keeping its spacing intact. This page contains only synthetic test content.</p>
+  <h2 id="next">Scroll, then settle</h2>
+  <p>Scroll slowly through this page. During the gesture, the text keeps its layout even when it passes behind the camera. Release and let the page settle.</p>
+  <p>New movement should start gently and slow to a stop. Touch the page during that movement to hold it still. A new swipe should never pull a paragraph sideways.</p>
+  <div class="actions"><button onclick="this.textContent='Saved'">Save</button><button onclick="this.textContent='Done'">More</button></div>
+  <h2>Keep reading</h2>
+  <p>The browser preserves the original words, font size, links and text selection. Line wrapping stays fixed while scrolling. If there is no room beside an island, the page keeps its original layout.</p>
+  <p>To review system changes, start the companion Island Lab activity, return here and expand the Dynamic Island. The browser reads the region supplied by iOS.</p>
+  <h2>Another section</h2>
+  <p>The affected paragraph fits inward from the camera side without a gap above it. Following content uses ordinary paragraph spacing. No duplicate text is drawn over the page.</p>
+  <p>Repeat the same scroll with Reduce Motion enabled. The layout correction should settle immediately after the pause. VoiceOver keeps reading paragraphs in place.</p>
+  <h2>Preserve your work</h2>
+  <input id="draft" aria-label="Synthetic draft" placeholder="Type a test draft">
+  <p>While you edit or select text, the browser defers new layout corrections. Your draft should remain here through rotation, folding and layout restoration.</p>
+</main>

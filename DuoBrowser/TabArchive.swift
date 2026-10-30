@@ -5,6 +5,8 @@ struct TabRecord: Codable, Identifiable {
     var address: String?
     var fixture: Bool
     var scrollY: Double? = nil
+    var workspaceID: UUID? = nil
+    var pinned: Bool? = nil
 }
 
 struct TabArchive: Codable {

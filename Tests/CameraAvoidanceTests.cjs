@@ -10,7 +10,7 @@ async function runCameraTests(page, source) {
   }
   async function update(enabled=true,regions=[{x:390,y:20,width:66,height:70}],width=466) {
     await p.evaluate(({enabled,regions,width})=>globalThis.__duoCamera.update({enabled,regions,width,height:678}),{enabled,regions,width});
-    await p.waitForTimeout(240);
+    await p.waitForTimeout(800);
   }
   const position=()=>p.locator('#target').evaluate(n=>({x:n.getBoundingClientRect().x,y:n.getBoundingClientRect().y}));
   try {

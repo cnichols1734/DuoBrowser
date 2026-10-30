@@ -5,6 +5,18 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"5085BC15DB09AD5ECA443706" = { isa = PBXFileReference; lastKnownFileType = text.json; path = BlockingRules.json; sourceTree = "<group>"; };
+"44E52D88A0625FA4F17E812A" = { isa = PBXBuildFile; fileRef = "5085BC15DB09AD5ECA443706"; };
+"C8950E6D94FE2B63A1879135" = { isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Reader.js; sourceTree = "<group>"; };
+"45FCBC8F3FD19E2AE17C5405" = { isa = PBXBuildFile; fileRef = "C8950E6D94FE2B63A1879135"; };
+"A27EF4C6438F7010512FB1CD" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentBlocking.swift; sourceTree = "<group>"; };
+"393F36AB812D051CFDE4A8F6" = { isa = PBXBuildFile; fileRef = "A27EF4C6438F7010512FB1CD"; };
+"EC41F6CAFF03198715CB1AB9" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserReader.swift; sourceTree = "<group>"; };
+"B902D3D92F3F42318908BB3D" = { isa = PBXBuildFile; fileRef = "EC41F6CAFF03198715CB1AB9"; };
+"5C6CE65F5D91470419769674" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceView.swift; sourceTree = "<group>"; };
+"D4EC8DDDEC1FA586AB09FF37" = { isa = PBXBuildFile; fileRef = "5C6CE65F5D91470419769674"; };
+"85CF0CA3FD4162B5E0F05DFE" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSearch.swift; sourceTree = "<group>"; };
+"214F8CD870E12B6F98E95526" = { isa = PBXBuildFile; fileRef = "85CF0CA3FD4162B5E0F05DFE"; };
 "41D68964F29244DDA0000001" = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>";};
 "41D68964F29244DDA0000002" = {isa = PBXBuildFile; fileRef = "41D68964F29244DDA0000001";};
 "AABB11223344556677880003" = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/NativeBrowserChecks.swift"; sourceTree = "<group>";};
@@ -158,6 +170,12 @@
 				"AABB11223344556677880001",
 "A8D627F57636C97D96D5E52A",
 				"27FE0606548118518F503C28",
+"5085BC15DB09AD5ECA443706",
+"C8950E6D94FE2B63A1879135",
+"A27EF4C6438F7010512FB1CD",
+"EC41F6CAFF03198715CB1AB9",
+"5C6CE65F5D91470419769674",
+"85CF0CA3FD4162B5E0F05DFE",
 				"087AA246BB6F0D9BA26D04E8",
 				"5C3BCA4109E699E3ED6C8AAA",
 				"EE8BF6C7173D7DEDE4F28D2B",
@@ -199,6 +217,10 @@
 				"9088E8A43DC789E9511587D1",
 				"E52494181822B80E3505C2DA",
 				"9E4BE3069E2B082E6F70BA50",
+"393F36AB812D051CFDE4A8F6",
+"B902D3D92F3F42318908BB3D",
+"D4EC8DDDEC1FA586AB09FF37",
+"214F8CD870E12B6F98E95526",
 				"C843DBAA5A593585D55D2F75",
 				"CB12B02B5F0A7F590143708C",
 				"837B7BA51408479FA07FEE23",
@@ -214,6 +236,8 @@
 				"280EC78FD2F34318F57091C8",
 				"AABB11223344556677880002",
 "B81E92E7689834E497F90266",
+"44E52D88A0625FA4F17E812A",
+"45FCBC8F3FD19E2AE17C5405",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
