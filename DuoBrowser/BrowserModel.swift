@@ -57,7 +57,6 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
     @Published private(set) var title = "Start Page"
     @Published private(set) var showingStartPage = false
-    private var startDocumentURL: URL? { Bundle.main.url(forResource: "StartPage", withExtension: "html") }
     @Published private(set) var snapshot: UIImage?
     private var snapshotGeneration = 0
     private var snapshotRequest: UUID?
@@ -188,9 +187,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             loadFixture()
         } else {
             showingStartPage = true
-            if let url = startDocumentURL {
-                webView.loadFileURL(url, allowingReadAccessTo: url)
-            }
+            // The start page is native. Do not enqueue a placeholder WebKit navigation:
+            // it could race the first address entered in a newly created tab.
         }
     }
 
@@ -303,8 +301,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
-        // Match the bundled app-owned document, never a generic about:blank window.
-        showingStartPage = startDocumentURL != nil && webView.url == startDocumentURL
+        // Any committed WebKit document belongs to browsing, including site-owned blank windows.
+        // Failed/stopped provisional navigation leaves the native start page visible.
+        showingStartPage = false
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

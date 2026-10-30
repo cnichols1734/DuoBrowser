@@ -644,14 +644,11 @@ private final class NativeCheckRunner {
             mount(normal)
             try await wait { normal.showingStartPage && !normal.webView.isLoading }
             try check(normal.showingStartPage, "new tabs show the native start page")
+            normal.navigate(to: "http://127.0.0.1:1/unreachable")
+            try await wait { normal.errorMessage != nil }
+            try check(normal.showingStartPage, "failed first navigation preserves the native start page")
             try await load(normal, "normal")
             try check(!normal.showingStartPage, "navigation dismisses the start page")
-            normal.webView.goBack()
-            try await wait { normal.showingStartPage && !normal.webView.isLoading }
-            try check(normal.showingStartPage, "Back restores the app-owned start document")
-            normal.webView.goForward()
-            try await wait { !normal.showingStartPage && !normal.webView.isLoading }
-            try check(!normal.showingStartPage, "Forward uncovers the committed website")
             let blank = BrowserModel(dataStore: .nonPersistent())
             mount(blank)
             blank.webView.loadHTMLString("<p>Site-owned blank document</p>", baseURL: nil)
