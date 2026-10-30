@@ -549,6 +549,19 @@ private final class NativeCheckRunner {
             try check(normal.showingStartPage, "new tabs show the native start page")
             try await load(normal, "normal")
             try check(!normal.showingStartPage, "navigation dismisses the start page")
+            normal.webView.goBack()
+            try await wait { normal.showingStartPage && !normal.webView.isLoading }
+            try check(normal.showingStartPage, "Back restores the app-owned start document")
+            normal.webView.goForward()
+            try await wait { !normal.showingStartPage && !normal.webView.isLoading }
+            try check(!normal.showingStartPage, "Forward uncovers the committed website")
+            let blank = BrowserModel(dataStore: .nonPersistent())
+            mount(blank)
+            blank.webView.loadHTMLString("<p>Site-owned blank document</p>", baseURL: nil)
+            try await wait { !blank.webView.isLoading }
+            try check(!blank.showingStartPage, "site-owned about blank is not a start page")
+            blank.close()
+            mount(normal)
             results.append("STEP: normal fixture loaded")
             _ = try await js(normal, "document.cookie='profile=normal;path=/'; localStorage.setItem('profile','normal');document.querySelector('#kept').value='unsent synthetic value'")
             normal.testNavigationObserver = { [weak self] in self?.results.append($0) }

@@ -149,3 +149,8 @@ Reworked URL search into a compact keyboard-adjacent palette, replaced the Peek 
 ## Start page and tab appearance — October 29, 2026
 
 Added a native start page with bookmarks, recent visits, a search shortcut and a private-browsing state, plus a locally saved tab-switcher background color and reset. The page uses existing local library data and does not show normal browsing history in private mode. Debug and Release simulator builds, 36 native browser checks, 62 portable checks and 126 layout checks passed. On a closed Duo simulator the start page and color picker were displayed and a color was applied. Physical-device, VoiceOver and full pose/accessibility coverage remain to be verified.
+
+
+## Start-page review corrections — October 29, 2026
+
+The native start page now has a dedicated bundled blank document. Visibility changes at navigation commit, preserving the start page on failed or canceled provisional requests and recognizing Back/Forward without covering site-owned about:blank content. The underlying web view is hidden from accessibility while the native page is visible. Scroll clearance observes the actual toolbar height and runtime camera lift instead of reserving a fixed 120 points.
