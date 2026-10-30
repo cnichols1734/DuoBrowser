@@ -166,3 +166,12 @@ The full native suite did not pass in this run: one attempt timed out in the upg
 Removed all tab-preview outlines, including the selected-tab blue border. Card dismissal now animates an app-owned container instead of UIKit's managed cell content view, preserving the finger offset across collection layout. Committed closes travel upward with a non-reversing exit; canceled gestures retain a catchable return animation. Horizontal depth scaling now eases continuously at the foreground boundary while UIKit continues to handle momentum and snapping.
 
 Debug and Release simulator builds, portable checks, browser/DOM tests and strict SwiftLint passed. The focused native stack harness verifies retained drag offset, monotonic upward presentation during repeated layout, one-time removal, successor focus, fractional scrolling, bounded layout work, Reduce Motion and resize focus. Computer Use could not access Simulator in this session, so synthesized touch gestures and physical frame pacing remain unverified. No Safari-parity or full hardware/accessibility acceptance claim is made.
+
+## Start-page review corrections — October 29, 2026
+
+The native start page now has a dedicated bundled blank document. Visibility changes at navigation commit, preserving the start page on failed or canceled provisional requests and recognizing Back/Forward without covering site-owned about:blank content. The underlying web view is hidden from accessibility while the native page is visible. Scroll clearance observes the actual toolbar height and runtime camera lift instead of reserving a fixed 120 points.
+## Reader and article fitting follow-up — October 29, 2026
+
+- Replaced Reader’s inset SwiftUI column with a full-screen WebKit viewport using runtime camera geometry. Ordered photos/captions, article-header images and visible headlines are extracted with bounded native validation; private image loading stays in the source profile.
+- Body text can fit inside non-scrolling horizontal-overflow shells and normal column-flex article layouts. Actual scrollers, clipped content and unsafe flow changes still fall back.
+- Verification and remaining live-site/hardware gaps: [Reader layout report](READER_LAYOUT_2026-10-29.md).

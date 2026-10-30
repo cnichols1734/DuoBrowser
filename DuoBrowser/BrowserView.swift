@@ -39,10 +39,10 @@ private struct ActiveBrowserView: View {
                 BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
                     .ignoresSafeArea(.container)
                     .blur(radius: showingSearch ? 5 : 0)
-                    .accessibilityHidden(showingSearch)
+                    .accessibilityHidden(showingSearch || browser.showingStartPage)
                     .allowsHitTesting(!showingSearch && !browser.showingStartPage)
                 if browser.showingStartPage {
-                    BrowserStartPage(session: session, browser: browser) { showingSearch = true }
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport) { showingSearch = true }
                         .blur(radius: showingSearch ? 5 : 0)
                         .accessibilityHidden(showingSearch)
                         .allowsHitTesting(!showingSearch)
@@ -211,6 +211,8 @@ final class ViewportView: UIView {
 private struct BrowserStartPage: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
+    @ObservedObject var chrome: BrowserChromeState
+    @ObservedObject var viewport: BrowserViewportState
     let search: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -242,7 +244,7 @@ private struct BrowserStartPage: View {
                     .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16))
                 }
                 .frame(maxWidth: 680, alignment: .leading)
-                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, 120)
+                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
                 .frame(maxWidth: .infinity)
             }
             .background(Color(uiColor: .systemGroupedBackground))

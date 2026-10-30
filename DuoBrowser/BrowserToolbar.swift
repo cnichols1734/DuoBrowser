@@ -40,7 +40,7 @@ struct BrowserToolbar: View {
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
-        .sheet(item: $browser.readerArticle) { ReaderView(article: $0) }
+        .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
 
     }
