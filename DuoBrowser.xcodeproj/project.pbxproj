@@ -7,8 +7,6 @@
 	"objects" = {
 "AB7290C02026103000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStack.swift; sourceTree = "<group>"; };
 "AB7290C02026103000000002" = { isa = PBXBuildFile; fileRef = "AB7290C02026103000000001"; };
-"BB5500000000000000000001" = { isa = PBXFileReference; lastKnownFileType = text.html; path = StartPage.html; sourceTree = "<group>"; };
-"BB5500000000000000000002" = { isa = PBXBuildFile; fileRef = "BB5500000000000000000001"; };
 "5085BC15DB09AD5ECA443706" = { isa = PBXFileReference; lastKnownFileType = text.json; path = BlockingRules.json; sourceTree = "<group>"; };
 "44E52D88A0625FA4F17E812A" = { isa = PBXBuildFile; fileRef = "5085BC15DB09AD5ECA443706"; };
 "C8950E6D94FE2B63A1879135" = { isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = Reader.js; sourceTree = "<group>"; };
@@ -186,7 +184,6 @@
 "AB7290C02026103000000001",
 				"DDCD89319F8B60242BDB332A",
 				"7D173ECD5CD1D808C0AE7796",
-"BB5500000000000000000001",
 			);
 			"path" = "DuoBrowser";
 			"sourceTree" = "<group>";
@@ -239,7 +236,6 @@
 			"isa" = "PBXResourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
-"BB5500000000000000000002",
 				"41D68964F29244DDA0000002",
 				"280EC78FD2F34318F57091C8",
 				"AABB11223344556677880002",

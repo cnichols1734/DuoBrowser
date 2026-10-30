@@ -92,7 +92,7 @@ else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
 run_receipt TabStackChecks.txt 8 --tab-stack-checks
-run_receipt NativeBrowserChecks.txt 47
+run_receipt NativeBrowserChecks.txt 46
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
 run_receipt CameraSettlingChecks.txt 34 --settling-checks
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-write

@@ -169,7 +169,7 @@ Debug and Release simulator builds, portable checks, browser/DOM tests and stric
 
 ## Start-page review corrections — October 29, 2026
 
-The native start page now has a dedicated bundled blank document. Visibility changes at navigation commit, preserving the start page on failed or canceled provisional requests and recognizing Back/Forward without covering site-owned about:blank content. The underlying web view is hidden from accessibility while the native page is visible. Scroll clearance observes the actual toolbar height and runtime camera lift instead of reserving a fixed 120 points.
+The start page is now native-only, with no placeholder WebKit document or competing initial load. Visibility changes at the first navigation commit, preserving the start page on failed or canceled provisional requests without covering site-owned about:blank content. The underlying web view is hidden from accessibility while the native page is visible. Scroll clearance observes the actual toolbar height and runtime camera lift instead of reserving a fixed 120 points.
 ## Reader and article fitting follow-up — October 29, 2026
 
 - Replaced Reader’s inset SwiftUI column with a full-screen WebKit viewport using runtime camera geometry. Ordered photos/captions, article-header images and visible headlines are extracted with bounded native validation; private image loading stays in the source profile.
