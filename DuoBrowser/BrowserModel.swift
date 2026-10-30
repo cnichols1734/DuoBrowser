@@ -57,7 +57,6 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
     @Published private(set) var title = "Start Page"
     @Published private(set) var showingStartPage = false
-    private var startNavigation: WKNavigation?
     private var startDocumentURL: URL? { Bundle.main.url(forResource: "StartPage", withExtension: "html") }
     @Published private(set) var snapshot: UIImage?
     private var snapshotGeneration = 0
@@ -190,7 +189,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         } else {
             showingStartPage = true
             if let url = startDocumentURL {
-                startNavigation = webView.loadFileURL(url, allowingReadAccessTo: url)
+                webView.loadFileURL(url, allowingReadAccessTo: url)
             }
         }
     }
@@ -274,6 +273,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         }
         errorMessage = nil
         startsWithFixture = false
+        webView.stopLoading()
         webView.load(URLRequest(url: url))
     }
 
@@ -304,11 +304,10 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         // Match the bundled app-owned document, never a generic about:blank window.
-        showingStartPage = (startNavigation != nil && navigation === startNavigation) || (startDocumentURL != nil && webView.url == startDocumentURL)
+        showingStartPage = startDocumentURL != nil && webView.url == startDocumentURL
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        if navigation === startNavigation { startNavigation = nil }
         refreshState()
         pageLayout.applyToCurrentDocument()
         webView.scrollView.refreshControl?.endRefreshing()
