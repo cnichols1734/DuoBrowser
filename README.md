@@ -20,7 +20,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
 - A customizable tab-switcher background color, stored on the device.
 - Native floating link previews that can become tabs without reloading.
-- Local text-only Reader with typography and appearance controls.
+- Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
