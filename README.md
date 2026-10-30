@@ -17,7 +17,8 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
-- Named workspaces and pinned tabs, with normal-session restoration.
+- Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
+- A customizable tab-switcher background color, stored on the device.
 - Native floating link previews that can become tabs without reloading.
 - Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.

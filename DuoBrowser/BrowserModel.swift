@@ -56,6 +56,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         return view
     }
     @Published private(set) var title = "Start Page"
+    @Published private(set) var showingStartPage = false
     @Published private(set) var snapshot: UIImage?
     private var snapshotGeneration = 0
     private var snapshotRequest: UUID?
@@ -185,12 +186,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         } else if startsWithFixture {
             loadFixture()
         } else {
-            webView.loadHTMLString("""
-            <!doctype html><meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>:root{color-scheme:light dark}body{font:17px -apple-system;margin:0;padding:28px;
-            background:Canvas;color:CanvasText}main{margin-top:18vh}h1{font-size:32px}p{opacity:.6}</style>
-            <main><h1>Start Page</h1><p>Search or enter a website below.</p></main>
-            """, baseURL: nil)
+            showingStartPage = true
+            // The start page is native. Do not enqueue a placeholder WebKit navigation:
+            // it could race the first address entered in a newly created tab.
         }
     }
 
@@ -273,6 +271,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         }
         errorMessage = nil
         startsWithFixture = false
+        webView.stopLoading()
         webView.load(URLRequest(url: url))
     }
 
@@ -299,6 +298,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         report(error)
+    }
+
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        // Any committed WebKit document belongs to browsing, including site-owned blank windows.
+        // Failed/stopped provisional navigation leaves the native start page visible.
+        showingStartPage = false
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

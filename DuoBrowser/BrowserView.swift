@@ -39,8 +39,14 @@ private struct ActiveBrowserView: View {
                 BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
                     .ignoresSafeArea(.container)
                     .blur(radius: showingSearch ? 5 : 0)
-                    .accessibilityHidden(showingSearch)
-                    .allowsHitTesting(!showingSearch)
+                    .accessibilityHidden(showingSearch || browser.showingStartPage)
+                    .allowsHitTesting(!showingSearch && !browser.showingStartPage)
+                if browser.showingStartPage {
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport) { showingSearch = true }
+                        .blur(radius: showingSearch ? 5 : 0)
+                        .accessibilityHidden(showingSearch)
+                        .allowsHitTesting(!showingSearch)
+                }
                 VStack(spacing: 8) {
                     if let error = browser.errorMessage {
                         VStack(alignment: .leading, spacing: 8) {
@@ -199,5 +205,72 @@ final class ViewportView: UIView {
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
         webView.scrollView.contentInset.bottom = 0
         webView.scrollView.verticalScrollIndicatorInsets = inset
+    }
+}
+
+private struct BrowserStartPage: View {
+    @ObservedObject var session: BrowserSession
+    @ObservedObject var browser: BrowserModel
+    @ObservedObject var chrome: BrowserChromeState
+    @ObservedObject var viewport: BrowserViewportState
+    let search: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 30) {
+                    HStack {
+                        Text(browser.isPrivate ? "Private Browsing" : "Start Page")
+                            .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.trailing, geometry.safeAreaInsets.trailing)
+                    if browser.isPrivate {
+                        Label("Private browsing", systemImage: "hand.raised.fill")
+                            .font(.headline)
+                        Text("Your private tabs and browsing history aren't saved.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
+                        section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
+                    }
+                    Button(action: search) {
+                        Label("Search or enter a website", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
+                            .padding(.horizontal, 16)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16))
+                }
+                .frame(maxWidth: 680, alignment: .leading)
+                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
+                .frame(maxWidth: .infinity)
+            }
+            .background(Color(uiColor: .systemGroupedBackground))
+        }
+    }
+
+    private func section(_ title: String, entries: [LibraryEntry], empty: String, icon: String) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+            if entries.isEmpty {
+                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 150 : 100), spacing: 16)], alignment: .leading, spacing: 18) {
+                    ForEach(entries) { entry in
+                        Button { browser.navigate(to: entry.address) } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                Image(systemName: icon).font(.title3).frame(width: 48, height: 48)
+                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                                Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
+                                    .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
+                            }.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading).contentShape(Rectangle())
+                        }.buttonStyle(.plain).accessibilityHint("Opens this page")
+                    }
+                }
+            }
+        }
     }
 }

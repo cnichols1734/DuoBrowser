@@ -4,6 +4,23 @@ struct TabOverview: View {
     @ObservedObject var session: BrowserSession
     @State private var search = ""
     @State private var manageWorkspaces = false
+    @AppStorage("browser.tabBackgroundHex") private var backgroundHex = ""
+    private var backgroundColor: Color {
+        guard let value = UInt32(backgroundHex, radix: 16), backgroundHex.count == 6 else { return Color(uiColor: .systemGroupedBackground) }
+        return Color(uiColor: .systemGroupedBackground).mix(with: Color(red: Double((value >> 16) & 255) / 255,
+            green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255), by: 0.22)
+    }
+    private var colorChoice: Binding<Color> {
+        Binding(get: {
+            guard let value = UInt32(backgroundHex, radix: 16), backgroundHex.count == 6 else { return .blue }
+            return Color(red: Double((value >> 16) & 255) / 255, green: Double((value >> 8) & 255) / 255, blue: Double(value & 255) / 255)
+        }, set: { color in
+            let resolved = UIColor(color).resolvedColor(with: UITraitCollection(userInterfaceStyle: .light))
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            guard resolved.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return }
+            backgroundHex = String(format: "%02X%02X%02X", Int(red * 255), Int(green * 255), Int(blue * 255))
+        })
+    }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var searchLineHeight = 20.0
@@ -23,6 +40,10 @@ struct TabOverview: View {
                             .font(.title2.weight(.bold))
                             .accessibilityAddTraits(.isHeader)
                             .padding(.trailing, geometry.safeAreaInsets.trailing)
+                        HStack {
+                            ColorPicker("Tab background", selection: colorChoice, supportsOpacity: false)
+                            if !backgroundHex.isEmpty { Button("Reset") { backgroundHex = "" } }
+                        }.font(.subheadline).frame(minHeight: 44)
                         if !session.privateMode {
                             Menu {
                                 ForEach(session.workspaces) { workspace in
@@ -92,7 +113,7 @@ struct TabOverview: View {
                 .padding(.horizontal, 20).padding(.bottom, 8)
                 .frame(maxWidth: 700).frame(maxWidth: .infinity)
             }
-            .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+            .background(backgroundColor.ignoresSafeArea())
             .ignoresSafeArea(.container, edges: .horizontal)
         }
         .statusBarHidden(!session.showSystemStatus)
@@ -169,7 +190,14 @@ private struct TabPreview: View {
                 Button(action: select) {
                     GeometryReader { geometry in
                         Group {
-                            if let image = tab.snapshot {
+                            if tab.showingStartPage {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text(tab.isPrivate ? "Private Browsing" : "Start Page").font(.headline)
+                                    if !tab.isPrivate { Text("Favorites").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                                    Spacer()
+                                }
+                                .padding(16).frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+                            } else if let image = tab.snapshot {
                                 Image(uiImage: image).resizable().scaledToFill()
                                     .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
                             } else {
