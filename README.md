@@ -12,7 +12,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 
 ## Features
 
-- Full-width browsing with camera-aware adjustments based on actual system geometry.
+- Full-width browsing with camera-aware adjustments based on actual system geometry. Page options includes **Time, Signal & Battery**, a remembered on/off control.
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.

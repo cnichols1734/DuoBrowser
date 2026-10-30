@@ -32,13 +32,6 @@ private struct ActiveBrowserView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var hideSystemStatus: Bool {
-        #if DEBUG
-        browser.fullWidthLayout && !session.showSystemStatus
-        #else
-        browser.fullWidthLayout
-        #endif
-    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -84,7 +77,7 @@ private struct ActiveBrowserView: View {
             .ignoresSafeArea(.container, edges: .horizontal)
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: showingSearch)
-        .statusBarHidden(hideSystemStatus)
+        .statusBarHidden(!session.showSystemStatus)
         .onAppear { input = browser.address }
         .onChange(of: browser.errorMessage) { _, message in
             if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }

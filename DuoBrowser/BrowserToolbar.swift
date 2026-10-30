@@ -221,6 +221,10 @@ struct BrowserToolbar: View {
                 .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
             Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
             Button("Website Protection", systemImage: browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
+            Toggle(isOn: $session.showSystemStatus) {
+                Label("Time, Signal & Battery", systemImage: "info.circle")
+            }
+            .accessibilityHint("Shows or hides the system time, signal, Wi-Fi, and battery indicators")
             Menu("Website Settings", systemImage: "globe") {
                 Toggle("Original Layout", isOn: $browser.originalPageLayout)
                 Toggle("Desktop Website", isOn: $browser.desktopSite)
@@ -235,7 +239,6 @@ struct BrowserToolbar: View {
             #if DEBUG
             Menu("Developer") {
                 Toggle("Show reserved regions", isOn: $session.showRegions)
-                Toggle("Show system status", isOn: $session.showSystemStatus)
                 Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
             }
             #endif
