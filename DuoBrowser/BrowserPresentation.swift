@@ -1,11 +1,13 @@
 import UIKit
 import WebKit
+import Combine
 
 @MainActor
 final class BrowserPresentation {
     private weak var browser: BrowserModel?
     private var pendingCancel: (() -> Void)?
     private weak var controller: UIViewController?
+    private var linkPreview: BrowserLinkPreviewController?
     init(browser: BrowserModel) { self.browser = browser }
 
     var presenter: UIViewController? {
@@ -16,12 +18,61 @@ final class BrowserPresentation {
     }
 
     func cancel() {
+        cancelLinkPreview()
         let completion = pendingCancel
         let presented = controller
         pendingCancel = nil
         controller = nil
         presented?.dismiss(animated: false)
         completion?()
+    }
+
+    #if DEBUG
+    var previewModelForTesting: BrowserModel? { linkPreview?.browser }
+    #endif
+
+    func makeLinkPreview(_ url: URL) -> UIViewController? {
+        cancelLinkPreview()
+        guard let browser, let model = browser.onCreatePreview?(url) else { return nil }
+        let preview = BrowserLinkPreviewController(browser: model)
+        let size = browser.loadedWebView?.bounds.size ?? CGSize(width: 390, height: 700)
+        preview.preferredContentSize = CGSize(width: min(480, size.width), height: min(520, max(240, size.height * 0.60)))
+        linkPreview = preview
+        return preview
+    }
+
+    func promoteLinkPreview() -> Bool {
+        guard let preview = linkPreview, let browser else { return false }
+        // Selection cancels the source presentation, so release preview ownership first.
+        linkPreview = nil
+        preview.promoted = true
+        guard browser.onPromotePreview?(preview.browser) == true else {
+            preview.promoted = false
+            linkPreview = preview
+            return false
+        }
+        return true
+    }
+
+    func commitLinkPreview(_ animator: UIContextMenuInteractionCommitAnimating) {
+        guard let preview = linkPreview else { return }
+        preview.committing = true
+        animator.preferredCommitStyle = .pop
+        animator.addCompletion { [weak self, weak preview] in
+            guard let self, let preview, self.linkPreview === preview else { return }
+            if !self.promoteLinkPreview() { self.cancelLinkPreview() }
+        }
+    }
+
+    func endLinkPreview() {
+        guard linkPreview?.committing != true else { return }
+        cancelLinkPreview()
+    }
+
+    private func cancelLinkPreview() {
+        guard let preview = linkPreview else { return }
+        linkPreview = nil
+        if !preview.promoted { preview.browser.close() }
     }
 
     func ask(origin: String, message: String, kind: String, defaultText: String? = nil,
@@ -72,7 +123,11 @@ extension BrowserModel: WKUIDelegate {
         guard popupDates.count < 3 else { errorMessage = "Additional pop-up windows were blocked."; return nil }
         popupDates.append(Date())
         // WebKit loads the original request, including POST body and window.opener, in this returned view.
-        return onOpenWindow?(configuration)
+        guard let onOpenWindow else {
+            errorMessage = "Keep this preview as a tab to open this window."
+            return nil
+        }
+        return onOpenWindow(configuration)
     }
 
     func webViewDidClose(_ webView: WKWebView) { onClose?() }
@@ -109,13 +164,71 @@ extension BrowserModel: WKUIDelegate {
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
                  completionHandler: @escaping @MainActor (UIContextMenuConfiguration?) -> Void) {
         guard let url = WebAddress.valid(elementInfo.linkURL) else { completionHandler(nil); return }
-        completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+        completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: { [weak self] in
+            self?.presentation.makeLinkPreview(url)
+        }) { [weak self] _ in
             UIMenu(children: [
-                UIAction(title: "Open", image: UIImage(systemName: "arrow.up.right")) { [weak self] _ in self?.navigate(to: url.absoluteString) },
-                UIAction(title: "Open in New Tab", image: UIImage(systemName: "plus.square.on.square")) { [weak self] _ in self?.onOpenLink?(url) },
+                UIAction(title: "Open", image: UIImage(systemName: "safari")) { [weak self] _ in self?.navigate(to: url.absoluteString) },
+                UIAction(title: "Open in New Tab", image: UIImage(systemName: "plus.square.on.square")) { [weak self] _ in
+                    guard let self else { return }
+                    if !self.presentation.promoteLinkPreview() { self.onOpenLink?(url) }
+                },
                 UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in UIPasteboard.general.url = url },
-                UIAction(title: "Share", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.presentation.share(url) }
+                UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { [weak self] _ in self?.presentation.share(url) }
             ])
         })
+    }
+
+    func webView(_ webView: WKWebView, contextMenuForElement elementInfo: WKContextMenuElementInfo,
+                 willCommitWithAnimator animator: UIContextMenuInteractionCommitAnimating) {
+        presentation.commitLinkPreview(animator)
+    }
+
+    func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
+        presentation.endLinkPreview()
+    }
+}
+
+/// UIKit owns the lift, backdrop and commit animation. This controller owns only the temporary page.
+@MainActor
+private final class BrowserLinkPreviewController: UIViewController {
+    let browser: BrowserModel
+    var promoted = false
+    var committing = false
+    private var observations = Set<AnyCancellable>()
+
+    init(browser: BrowserModel) { self.browser = browser; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { nil }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let header = UILabel()
+        header.text = browser.privateLabel + browser.siteName
+        header.font = .preferredFont(forTextStyle: .subheadline)
+        header.textColor = .secondaryLabel
+        header.adjustsFontForContentSizeCategory = true
+        header.lineBreakMode = .byTruncatingMiddle
+        let bar = UIStackView(arrangedSubviews: [header])
+        bar.isLayoutMarginsRelativeArrangement = true
+        bar.directionalLayoutMargins = NSDirectionalEdgeInsets(top: 12, leading: 16, bottom: 12, trailing: 16)
+        bar.backgroundColor = .secondarySystemBackground
+        let progress = UIProgressView(progressViewStyle: .bar)
+        let page = browser.webView
+        let stack = UIStackView(arrangedSubviews: [bar, progress, page])
+        stack.axis = .vertical
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor), stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: view.topAnchor), stack.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+        browser.$address.sink { [weak header, weak browser] _ in
+            guard let browser else { return }
+            header?.text = browser.privateLabel + browser.siteName
+        }.store(in: &observations)
+        browser.$progress.sink { [weak progress] value in progress?.progress = Float(value) }.store(in: &observations)
+        browser.$isLoading.sink { [weak progress] value in progress?.isHidden = !value }.store(in: &observations)
+        browser.activate()
     }
 }

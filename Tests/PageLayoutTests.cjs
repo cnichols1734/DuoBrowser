@@ -179,6 +179,21 @@ async function runPageLayoutTests(page, source) {
             assert(await p.evaluate(() => window.clicked) === 1, 'header action failed');
             assert(await p.locator('input').inputValue() === 'kept', 'input changed');
         });
+        await test('gutter fitting waits for touch and momentum to stop', async () => {
+            await setup();
+            await p.evaluate(() => dispatchEvent(new Event('touchstart')));
+            await update(true); await p.waitForTimeout(400);
+            assert((await measure()).app === 382, 'gutter reflowed under a held finger');
+            await p.evaluate(() => {
+                const event = new Event('touchend'); Object.defineProperty(event, 'touches', {value:[]}); dispatchEvent(event);
+            });
+            for (let i = 0; i < 5; i++) {
+                await p.evaluate(() => dispatchEvent(new Event('scroll'))); await p.waitForTimeout(90);
+            }
+            assert((await measure()).app === 382, 'gutter reflowed during momentum');
+            await p.waitForTimeout(500);
+            assert((await measure()).app === 466, 'gutter did not fit after settling');
+        });
         return { passed: results.length, tests: results };
     } finally { await p.close(); }
 }

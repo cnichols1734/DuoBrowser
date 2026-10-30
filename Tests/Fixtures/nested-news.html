@@ -1,0 +1,27 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Nested news layout lab</title>
+<style>
+body{margin:0;font:18px/28px -apple-system,sans-serif}
+.shell,.columns{display:grid;grid-template-columns:minmax(0,1fr)}
+header{position:sticky;top:0;z-index:10;height:52px;background:white;display:flex}
+.toolbar{display:flex;align-items:center;justify-content:space-between;width:100%;margin:10px 20px;height:32px}
+.brand{display:block;flex-shrink:0;width:160px;height:20px;background:#ece9f4;font:16px/20px sans-serif;text-align:center}
+.account{display:flex;justify-content:flex-end;width:132px;}
+#signin{display:block;overflow:hidden;width:66px;height:28px;text-align:center;font:16px/28px sans-serif;color:#111;border-radius:14px;background:#eee}
+.ghost,aside{display:none}.intro{height:100px}article{margin:0 16px}p{margin:0 0 24px}h1{font-size:24px;line-height:30px;margin:0 0 24px}
+</style>
+<div class="shell"><header><div class="toolbar"><div style="width:132px"><button aria-label="Menu">☰</button><nav id="closed-menu" style="position:fixed;left:0;top:0;width:100vw;height:100vh;transform:translateX(-110%)">Closed navigation</nav></div><a class="brand" href="#brand">Daily Journal</a><div class="account"><button class="ghost">Hidden</button><a id="signin" href="#signin-result">Sign in</a></div></div></header>
+<main><div><div><div><article><div><div class="columns"><div><div><div><div><div><div><div><div class="intro"></div>
+<p id="reading">An ordinary article should remain readable in a deeply nested news layout. This synthetic paragraph contains a <a id="article-link" href="#link-result">working article link</a> and enough words to wrap beside the camera.</p>
+<p id="following">The following paragraph keeps its spacing as the preceding text changes width. It must stay below the screen edge when earlier paragraphs return to their original width.</p>
+<div id="long-story"><div id="fixed-widget" style="position:fixed;bottom:0;left:0;width:80px;height:20px;background:#eee">Test widget</div></div>
+</div></div></div></div></div></div></div><aside>Secondary column</aside></div></div></article></div></div></div></main>
+<footer>End of synthetic article</footer></div>
+<script>
+for(let i=0;i<100;i++){const a=document.createElement('a');a.href='#menu';a.textContent='Menu item';document.getElementById('closed-menu').append(a)}
+for(let i=0;i<60;i++){const p=document.createElement('p');p.textContent='A later section provides ordinary article flow and a long document, without requiring a scan of every descendant.';document.getElementById('long-story').append(p)}
+const widget=document.createElement('div');widget.innerHTML='<div style="position:sticky;top:0">Offscreen sticky widget</div>';document.body.append(widget);
+for(let i=0;i<30;i++){const d=document.createElement('div');d.hidden=true;document.body.append(d)}
+</script>

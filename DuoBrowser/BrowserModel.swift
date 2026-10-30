@@ -15,6 +15,20 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var onSnapshot: (() -> Void)?
     var onOpenWindow: ((WKWebViewConfiguration) -> WKWebView?)?
     var onOpenLink: ((URL) -> Void)?
+    var onCreatePreview: ((URL) -> BrowserModel?)?
+    var onPromotePreview: ((BrowserModel) -> Bool)?
+    @Published var workspaceID = Workspace.defaultID
+    @Published var isPinned = false
+    @Published var readerArticle: ReaderArticle?
+    @Published var readerLoading = false
+    var documentGeneration = UUID()
+    var readerRequest = UUID()
+    @Published var blockAds = true {
+        didSet { if !applyingPreferences { saveSitePreference(); loadedWebView?.reload() } }
+    }
+    @Published var blockingStatus = "Preparing protection"
+    private var policyGeneration = UUID()
+    private var closed = false
     var onClose: (() -> Void)?
     var onVisit: ((URL, String) -> Void)?
     var preferenceForURL: ((URL) -> SitePreference)?
@@ -213,6 +227,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func close() {
         snapshotGeneration += 1
+        closed = true
+        policyGeneration = UUID()
+        cancelReader()
         presentation.cancel()
         downloads.cancelAll()
         loadedWebView?.stopLoading()
@@ -228,6 +245,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         onSnapshot = nil
         onOpenWindow = nil
         onOpenLink = nil
+        onCreatePreview = nil
+        onPromotePreview = nil
         onClose = nil
         onVisit = nil
         preferenceForURL = nil
@@ -267,6 +286,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         presentation.cancel()
+        documentGeneration = UUID()
+        cancelReader()
         dialogCount = 0
         errorMessage = nil
         revealControls()
@@ -396,7 +417,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     private func saveSitePreference() {
         guard let host = restorationURL?.host?.lowercased() else { return }
-        onPreferenceChange?(host, SitePreference(originalLayout: originalPageLayout, desktop: desktopSite, fullWidth: fullWidthLayout))
+        onPreferenceChange?(host, SitePreference(originalLayout: originalPageLayout, desktop: desktopSite, fullWidth: fullWidthLayout, blockAds: blockAds))
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
@@ -409,17 +430,33 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         let scheme = url.scheme?.lowercased() ?? ""
         if ["https", "http"].contains(scheme) {
             guard WebAddress.valid(url) != nil else { decisionHandler(.cancel, preferences); return }
-            if navigationAction.targetFrame?.isMainFrame != false {
+            if navigationAction.targetFrame?.isMainFrame == true {
                 currentMethod = navigationAction.request.httpMethod ?? "GET"
                 let site = preferenceForURL?(url) ?? SitePreference()
                 applyingPreferences = true
                 originalPageLayout = site.originalLayout
                 desktopSite = site.desktop
                 fullWidthLayout = site.fullWidth ?? true
+                blockAds = site.blockAds ?? true
                 applyingPreferences = false
                 preferences.preferredContentMode = desktopSite ? .desktop : .mobile
             }
-            decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+            if navigationAction.targetFrame?.isMainFrame == true {
+                let generation = UUID()
+                policyGeneration = generation
+                Task { @MainActor [weak self] in
+                    let rules = await ContentBlocking.rules()
+                    guard let self, !self.closed, self.policyGeneration == generation else {
+                        decisionHandler(.cancel, preferences); return
+                    }
+                    if let rules {
+                        webView.configuration.userContentController.remove(rules)
+                        if self.blockAds { webView.configuration.userContentController.add(rules) }
+                    }
+                    self.blockingStatus = !self.blockAds ? "Off for this site" : rules == nil ? "Protection unavailable" : "Basic protection on"
+                    decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                }
+            } else { decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences) }
         } else if scheme == "about" && ["about:blank", "about:srcdoc"].contains(
             String(url.absoluteString.split(separator: "#", maxSplits: 1).first ?? "").lowercased()) {
             decisionHandler(.allow, preferences)

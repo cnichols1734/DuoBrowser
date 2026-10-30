@@ -14,6 +14,7 @@ struct BrowserView: View {
                 TabOverview(session: session)
             }
             .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
+            .sheet(isPresented: $session.showingWorkspaces) { WorkspaceView(session: session) }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -26,14 +27,27 @@ private struct ActiveBrowserView: View {
     @ObservedObject var viewport: BrowserViewportState
     @State private var input = ""
     @State private var keyboardVisible = false
+    @State private var showingSearch = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var hideSystemStatus: Bool {
+        #if DEBUG
+        browser.fullWidthLayout && !session.showSystemStatus
+        #else
+        browser.fullWidthLayout
+        #endif
+    }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
                 BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
                     .ignoresSafeArea(.container)
+                    .blur(radius: showingSearch ? 5 : 0)
+                    .accessibilityHidden(showingSearch)
+                    .allowsHitTesting(!showingSearch)
                 VStack(spacing: 8) {
                     if let error = browser.errorMessage {
                         VStack(alignment: .leading, spacing: 8) {
@@ -45,16 +59,32 @@ private struct ActiveBrowserView: View {
                         .padding(.horizontal, 12)
                     }
                     BrowserToolbar(session: session, browser: browser, chrome: browser.chrome,
-                                   input: $input, keyboardVisible: keyboardVisible,
+                                   input: $input, showingAddress: $showingSearch, keyboardVisible: keyboardVisible,
                                    bottomSafeArea: geometry.safeAreaInsets.bottom,
                                    accessibilityExpanded: voiceOverEnabled || dynamicTypeSize.isAccessibilitySize)
                 }
                 .padding(.bottom, 8 + viewport.bottomControlLift)
+                .opacity(showingSearch ? 0 : 1)
+                .allowsHitTesting(!showingSearch)
+                .accessibilityHidden(showingSearch)
+
+                if showingSearch {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea(.container)
+                        .onTapGesture { closeSearch() }
+                        .accessibilityHidden(true)
+                    BrowserSearch(session: session, browser: browser, query: $input,
+                                  availableHeight: geometry.size.height, dismiss: closeSearch)
+                        .padding(.horizontal, browser.fullWidthLayout ? 16 : max(16, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing)))
+                        .padding(.bottom, 12 + (keyboardVisible ? 0 : viewport.bottomControlLift))
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+                }
             }
             // Only the bottom controls reclaim the horizontal camera-safe rail. Keep keyboard/bottom safety.
             .ignoresSafeArea(.container, edges: .horizontal)
         }
-        .statusBarHidden(browser.fullWidthLayout)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: showingSearch)
+        .statusBarHidden(hideSystemStatus)
         .onAppear { input = browser.address }
         .onChange(of: browser.errorMessage) { _, message in
             if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }
@@ -67,12 +97,18 @@ private struct ActiveBrowserView: View {
             keyboardVisible = false
         }
     }
+
+    private func closeSearch() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        showingSearch = false
+    }
 }
 
-private struct BrowserSurface: UIViewRepresentable {
+struct BrowserSurface: UIViewRepresentable {
     let browser: BrowserModel
     let fullWidth: Bool
     let showRegions: Bool
+    var reservesBrowserControls = true
 
     func makeUIView(context: Context) -> ViewportView {
         ViewportView(browser: browser)
@@ -81,16 +117,18 @@ private struct BrowserSurface: UIViewRepresentable {
     func updateUIView(_ view: ViewportView, context: Context) {
         view.fullWidth = fullWidth
         view.showRegions = showRegions
+        view.reservesBrowserControls = reservesBrowserControls
         view.setNeedsLayout()
     }
 }
 
-private final class ViewportView: UIView {
+final class ViewportView: UIView {
     let webView: WKWebView
     private weak var browser: BrowserModel?
     private var lastGeometry = ""
     var fullWidth = true
     var showRegions = false
+    var reservesBrowserControls = true
     private let regionsLayer = CAShapeLayer()
     private var chromeObserver: AnyCancellable?
     private var collapse = 0.0
@@ -164,7 +202,7 @@ private final class ViewportView: UIView {
         let expanded = expandedHeight + 8 + (fullWidth ? safeAreaInsets.bottom : 0)
         let bottom = expanded + (38 - expanded) * collapse + bottomControlLift
         // This public WebKit API moves fixed/sticky page controls above browser chrome.
-        let inset = UIEdgeInsets(top: 0, left: 0, bottom: bottom, right: 0)
+        let inset = UIEdgeInsets(top: 0, left: 0, bottom: reservesBrowserControls ? bottom : 0, right: 0)
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
         webView.scrollView.contentInset.bottom = 0
         webView.scrollView.verticalScrollIndicatorInsets = inset

@@ -12,7 +12,13 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarks: [LibraryEntry] = []
     @Published var showingLibrary = false
     @Published var showRegions = false
+    #if DEBUG
+    @Published var showSystemStatus = false
+    #endif
     @Published var showingTabs = false
+    @Published var workspaces = [Workspace.standard]
+    @Published var workspaceID = Workspace.defaultID
+    @Published var showingWorkspaces = false
     private var normalSites: [String: SitePreference] = [:]
     private var privateSites: [String: SitePreference] = [:]
     private var privateStore: WKWebsiteDataStore?
@@ -25,7 +31,11 @@ final class BrowserSession: ObservableObject {
     private var lastNormalID: UUID?
     private var lastPrivateID: UUID?
 
-    var visibleTabs: [BrowserModel] { tabs.filter { $0.isPrivate == privateMode } }
+    var visibleTabs: [BrowserModel] {
+        tabs.filter { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) }
+            .sorted { $0.isPinned && !$1.isPinned }
+    }
+    var workspaceName: String { workspaces.first { $0.id == workspaceID }?.name ?? "Personal" }
     var selected: BrowserModel { tabs.first { $0.id == selectedID } ?? tabs[0] }
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
@@ -42,11 +52,15 @@ final class BrowserSession: ObservableObject {
         tabs = restored?.tabs.map {
             let model = BrowserModel(id: $0.id, url: $0.address.flatMap(URL.init(string:)), fixture: $0.fixture, dataStore: dataStore)
             model.pendingScrollY = $0.scrollY
+            model.workspaceID = $0.workspaceID ?? Workspace.defaultID
+            model.isPinned = $0.pinned ?? false
             return model
         } ?? [BrowserModel(id: firstID, dataStore: dataStore)]
         history = saved?.history ?? []
         bookmarks = saved?.bookmarks ?? []
         normalSites = saved?.sites ?? [:]
+        workspaces = saved?.workspaces ?? [Workspace.standard]
+        workspaceID = selected.workspaceID
         for tab in tabs { connect(tab) }
         selected.activate()
         lastNormalID = selectedID
@@ -71,7 +85,15 @@ final class BrowserSession: ObservableObject {
 
     private func connect(_ tab: BrowserModel) {
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
-        tab.onChange = { [weak self, weak tab] in if tab?.isPrivate == false { self?.scheduleSave() } }
+        tab.onChange = { [weak self, weak tab] in
+            guard let self, let tab, !tab.isPrivate else { return }
+            // WebKit may publish the document title after didFinish records the visit.
+            if !tab.isLoading, tab.title != tab.siteName, let address = tab.restorationURL?.absoluteString,
+               let index = self.history.firstIndex(where: { $0.address == address }) {
+                self.history[index].title = String(tab.title.prefix(512))
+            }
+            self.scheduleSave()
+        }
         tab.onOpenWindow = { [weak self, weak tab] configuration in
             guard let self, let tab, self.tabs.count < 200 else { return nil }
             tab.hasWindowRelationships = true
@@ -84,9 +106,33 @@ final class BrowserSession: ObservableObject {
             guard let self, let tab else { return }
             _ = self.newTab(url: url, privateTab: tab.isPrivate)
         }
+        tab.onCreatePreview = { [weak self, weak tab] url in
+            guard let self, let tab, WebAddress.valid(url) != nil else { return nil }
+            let preview = BrowserModel(url: url, isPrivate: tab.isPrivate, dataStore: self.store(isPrivate: tab.isPrivate))
+            preview.workspaceID = tab.workspaceID
+            self.connect(preview)
+            preview.onChange = nil
+            preview.onOpenWindow = nil
+            preview.onCreatePreview = nil
+            preview.onPromotePreview = nil
+            return preview
+        }
+        tab.onPromotePreview = { [weak self, weak tab] preview in
+            guard let self else { return false }
+            guard self.tabs.count < 200 else {
+                tab?.errorMessage = "Close a tab before opening this preview (200 tab limit)."
+                return false
+            }
+            self.connect(preview)
+            self.tabs.append(preview)
+            self.select(preview.id)
+            if let url = preview.restorationURL { preview.onVisit?(url, preview.title) }
+            self.saveNow()
+            return true
+        }
         tab.onClose = { [weak self, weak tab] in if let tab { self?.close(tab.id) } }
         tab.onVisit = { [weak self, weak tab] url, title in
-            guard let self, let tab, !tab.isPrivate, WebAddress.valid(url) != nil else { return }
+            guard let self, let tab, self.tabs.contains(where: { $0.id == tab.id }), !tab.isPrivate, WebAddress.valid(url) != nil else { return }
             if self.history.first?.address == url.absoluteString { self.history.removeFirst() }
             self.history.insert(LibraryEntry(address: url.absoluteString, title: String(title.prefix(512))), at: 0)
             self.history = Array(self.history.prefix(1000))
@@ -108,6 +154,7 @@ final class BrowserSession: ObservableObject {
         selected.captureSnapshot()
         trimSnapshots()
         let tab = BrowserModel(url: url, isPrivate: privateTab, dataStore: store(isPrivate: privateTab), configuration: configuration)
+        tab.workspaceID = workspaceID
         connect(tab)
         tabs.append(tab)
         privateMode = privateTab
@@ -132,10 +179,14 @@ final class BrowserSession: ObservableObject {
     }
     func switchMode(_ usePrivate: Bool) {
         guard usePrivate != privateMode else { return }
+        guard tabs.contains(where: { $0.isPrivate == usePrivate }) || tabs.count < 200 else {
+            selected.errorMessage = "Close a tab before opening another (200 tab limit)."; return
+        }
         let showingOverview = showingTabs
         selected.presentation.cancel()
         rememberSelection()
         privateMode = usePrivate
+        if !usePrivate, let tab = tabs.first(where: { $0.id == lastNormalID }) { workspaceID = tab.workspaceID }
         let prior = usePrivate ? lastPrivateID : lastNormalID
         if let tab = visibleTabs.first(where: { $0.id == prior }) ?? visibleTabs.first {
             selectedID = tab.id
@@ -151,6 +202,7 @@ final class BrowserSession: ObservableObject {
         selectedID = id
         tab.lastUsed = Date()
         privateMode = tab.isPrivate
+        if !tab.isPrivate { workspaceID = tab.workspaceID }
         rememberSelection()
         selected.revealControls()
         selected.activate()
@@ -164,15 +216,19 @@ final class BrowserSession: ObservableObject {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs.remove(at: index)
         tab.close()
-        if !tabs.contains(where: \.isPrivate) { endPrivateSession() }
+        if !tabs.contains(where: \.isPrivate) {
+            endPrivateSession()
+        }
         if !tabs.contains(where: { !$0.isPrivate }) {
             let replacement = BrowserModel(dataStore: normalStore)
             connect(replacement); tabs.append(replacement)
         }
         if selectedID == id {
-            let replacement = tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
+            let replacement = tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
+                ?? tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
             selectedID = replacement.id
             privateMode = replacement.isPrivate
+            if !replacement.isPrivate { workspaceID = replacement.workspaceID }
             selected.activate()
         }
         rememberSelection()
@@ -188,6 +244,7 @@ final class BrowserSession: ObservableObject {
         if wasPrivate {
             privateMode = false
             selectedID = tabs.first(where: { $0.id == lastNormalID })?.id ?? tabs[0].id
+            workspaceID = selected.workspaceID
             selected.activate()
         }
         saveNow()
@@ -232,6 +289,85 @@ final class BrowserSession: ObservableObject {
     }
     func showTabs() { selected.revealControls(); selected.captureSnapshot(); trimSnapshots(); showingTabs = true }
 
+    func blockingExceptions(isPrivate: Bool) -> [String] {
+        (isPrivate ? privateSites : normalSites).filter { $0.value.blockAds == false }.keys.sorted()
+    }
+    func restoreBlocking(host: String, isPrivate: Bool) {
+        let host = host.lowercased()
+        if isPrivate { privateSites[host]?.blockAds = true }
+        else { normalSites[host]?.blockAds = true }
+        for tab in tabs where tab.isPrivate == isPrivate && tab.restorationURL?.host?.lowercased() == host {
+            tab.blockAds = true
+        }
+        objectWillChange.send()
+        if !isPrivate { saveNow() }
+    }
+
+    func searchResults(_ query: String, isPrivate: Bool) -> [SearchResult] {
+        var savedTitles: [String: String] = [:]
+        for entry in bookmarks + (isPrivate ? [] : history) where savedTitles[entry.address] == nil {
+            savedTitles[entry.address] = entry.title
+        }
+        let openTabs = tabs.filter { $0.isPrivate == isPrivate }.sorted { $0.lastUsed > $1.lastUsed }.map { tab in
+            let address = tab.restorationURL?.absoluteString ?? ""
+            let title = tab.title == tab.siteName ? savedTitles[address] ?? tab.title : tab.title
+            return SearchResult(id: tab.id.uuidString, title: title, address: address,
+                                kind: .tab, tabID: tab.id,
+                                detail: tab.isPrivate ? "Private tab" : workspaces.first { $0.id == tab.workspaceID }?.name ?? "Tab")
+        }
+        let savedBookmarks = bookmarks.map {
+            SearchResult(id: $0.id.uuidString, title: $0.title, address: $0.address, kind: .bookmark)
+        }
+        // Private searches never surface normal history or normal tabs.
+        let savedHistory = isPrivate ? [] : history.map {
+            SearchResult(id: $0.id.uuidString, title: $0.title, address: $0.address, kind: .history)
+        }
+        return UnifiedSearch.results(query, candidates: openTabs + savedBookmarks + savedHistory)
+    }
+
+    func switchWorkspace(_ id: UUID) {
+        guard workspaces.contains(where: { $0.id == id }) else { return }
+        let existing = tabs.filter { !$0.isPrivate && $0.workspaceID == id }.max { $0.lastUsed < $1.lastUsed }
+        guard existing != nil || tabs.count < 200 else {
+            selected.errorMessage = "Close a tab before opening this workspace (200 tab limit)."; return
+        }
+        workspaceID = id
+        privateMode = false
+        if let existing { select(existing.id) } else { newTab() }
+    }
+    func createWorkspace(_ name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        guard !name.isEmpty, workspaces.count < 20, tabs.count < 200 else { return }
+        let workspace = Workspace(name: name)
+        workspaces.append(workspace)
+        switchWorkspace(workspace.id)
+        saveNow()
+    }
+    func renameWorkspace(_ id: UUID, to name: String) {
+        let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        guard !name.isEmpty, let index = workspaces.firstIndex(where: { $0.id == id }) else { return }
+        workspaces[index].name = name
+        saveNow()
+    }
+    func removeWorkspace(_ id: UUID) {
+        guard id != Workspace.defaultID else { return }
+        tabs.filter { $0.workspaceID == id }.forEach { $0.workspaceID = Workspace.defaultID }
+        workspaces.removeAll { $0.id == id }
+        if workspaceID == id { workspaceID = Workspace.defaultID }
+        saveNow()
+    }
+    func move(_ tab: BrowserModel, to id: UUID) {
+        guard !tab.isPrivate, workspaces.contains(where: { $0.id == id }) else { return }
+        tab.workspaceID = id
+        if selectedID == tab.id { workspaceID = id }
+        objectWillChange.send()
+        saveNow()
+    }
+    func togglePin(_ tab: BrowserModel) {
+        tab.isPinned.toggle()
+        objectWillChange.send()
+        saveNow()
+    }
     func addBookmark() {
         guard let url = selected.restorationURL else { return }
         // Deliberate Save is allowed in private mode; automatic history is never recorded there.
@@ -249,7 +385,7 @@ final class BrowserSession: ObservableObject {
         saveNow(replaceBackup: true)
     }
     func background() {
-        tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot() } }
+        tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot(); $0.cancelReader() } }
         saveNow()
     }
     func scheduleSave() {
@@ -268,9 +404,9 @@ final class BrowserSession: ObservableObject {
         guard let first = normal.first else { return false }
         let archive = BrowserArchive(session: TabArchive(tabs: normal.map {
             TabRecord(id: $0.id, address: $0.restorationURL?.absoluteString, fixture: $0.isFixture,
-                      scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY)
+                      scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
         }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
-        history: history, bookmarks: bookmarks, sites: normalSites)
+        history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
             return true

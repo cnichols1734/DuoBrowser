@@ -23,8 +23,10 @@ private final class NativeCheckRunner {
         if !value { throw NSError(domain: label, code: 1) }
         results.append("PASS: " + label)
     }
-    func wait(_ condition: () async -> Bool) async throws {
-        for _ in 0..<200 {
+    func wait(timeout: Double = 10, _ condition: () async -> Bool) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(timeout))
+        while clock.now < deadline {
             if await condition() { return }
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -43,9 +45,16 @@ private final class NativeCheckRunner {
     func load(_ model: BrowserModel, _ path: String) async throws {
         mount(model)
         model.navigate(to: "http://127.0.0.1:8765/" + path)
-        try await wait {
-            guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
-            return (try? await self.js(model, "document.readyState") as? String) == "complete"
+        do {
+            // A fresh hosted simulator may need to launch WebKit's network/render processes.
+            // Loading has its own bound; interaction checks retain their shorter deadline.
+            try await wait(timeout: 60) {
+                guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
+                return (try? await self.js(model, "document.readyState") as? String) == "complete"
+            }
+        } catch {
+            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none")")
+            throw error
         }
     }
     func siteChecks() async {
@@ -167,7 +176,328 @@ private final class NativeCheckRunner {
         text.text = results.joined(separator: "\n"); text.isEditable = false
         host.view.addSubview(text)
     }
+    func settlingChecks() async {
+        let model = BrowserModel(dataStore: .nonPersistent())
+        defer { model.close() }
+        func camera(_ regions: [[String: Double]], enabled: Bool = true, reduceMotion: Bool = false, voiceOver: Bool = false) async throws {
+            let _: Any = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
+                "enabled": enabled, "width": model.webView.bounds.width, "height": model.webView.bounds.height,
+                "regions": regions, "reduceMotion": reduceMotion, "voiceOver": voiceOver
+            ]], in: nil, in: PageLayoutAdapter.world)
+        }
+        func measure(_ property: String, _ id: String = "reading") async throws -> Double {
+            try await js(model, "document.getElementById('\(id)').getBoundingClientRect().\(property)") as? Double ?? -9999
+        }
+        func pause() async throws { try await Task.sleep(for: .milliseconds(950)) }
+        do {
+            try await load(model, "settling")
+            let original = try await measure("width")
+            let gap = (try await measure("top", "following")) - (try await measure("bottom"))
+            let lineScript = "(()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));return JSON.stringify([...r.getClientRects()].map(q=>[q.width,q.height]))})()"
+            let lines = try await js(model, lineScript) as? String
+            let compact = [["x": Double(model.webView.bounds.width)-80, "y": 20.0, "width": 80.0, "height": 120.0]]
+            // Capture the real production animation in its isolated world. A busy hosted
+            // simulator can skip an entire wall-clock rAF window, so sample its actual
+            // WebKit-rendered interpolation at deterministic timeline positions instead.
+            _ = try await model.webView.evaluateJavaScript("""
+                (() => {
+                    const original = Element.prototype.animate;
+                    globalThis.__duoNativeMotion = null;
+                    Element.prototype.animate = function(...args) {
+                        const animation = original.apply(this, args);
+                        if (this.id === 'reading') {
+                            Element.prototype.animate = original;
+                            globalThis.__duoNativeMotion = animation;
+                            animation.pause();
+                        }
+                        return animation;
+                    };
+                })()
+                """, in: nil, contentWorld: PageLayoutAdapter.world)
+            try await camera(compact)
+            try await wait {
+                (try? await model.webView.evaluateJavaScript("Boolean(globalThis.__duoNativeMotion)", in: nil,
+                    contentWorld: PageLayoutAdapter.world)) as? Bool == true
+            }
+            let interpolates = try await model.webView.evaluateJavaScript("""
+                (() => {
+                    const animation = globalThis.__duoNativeMotion;
+                    const duration = animation.effect.getTiming().duration;
+                    if (duration !== 420) return false;
+                    const samples = [0, .25, .5, .75, 1].map(fraction => {
+                        animation.currentTime = duration * fraction;
+                        const r = document.getElementById('reading').getBoundingClientRect();
+                        return {x:r.x, y:r.y};
+                    });
+                    animation.finish();
+                    delete globalThis.__duoNativeMotion;
+                    return samples.some(r=>r.x>17&&r.x<88) && samples.every(r=>Math.abs(r.y-24)<1);
+                })()
+                """, in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
+            try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
+            try check(interpolates == true, "WebKit animation interpolates horizontally without pushing text down")
+            try check(try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String == "18px", "WebKit fitting preserves font size")
+            try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
+            try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
+            try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")
+            try await camera([], enabled: false)
+            try check(abs((try await measure("width"))-original)<1, "Original Layout restores native paragraph width")
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'))")
+            try await camera(compact)
+            try await pause()
+            try check(try await js(model, lineScript) as? String == lines, "WebKit keeps line wrapping stable during held touch")
+            _ = try await js(model, "dispatchEvent(new Event('pointerup'))")
+            try await pause()
+            try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit fits sideways after touch release")
+            let expanded = [["x": Double(model.webView.bounds.width)-100, "y": 20.0, "width": 100.0, "height": 180.0]]
+            try await camera(expanded); try await pause()
+            try check((try await measure("right")) <= model.webView.bounds.width-107, "WebKit follows wider synthetic island geometry sideways")
+            let status = [["x": Double(model.webView.bounds.width)-80, "y": 160.0, "width": 80.0, "height": 80.0]]
+            try await camera(compact + status); try await pause()
+            try check(abs((try await measure("top"))-24)<1, "WebKit stacked status regions never push the paragraph down")
+            try await camera([["x": 8, "y": 20, "width": Double(model.webView.bounds.width)-16, "height": 150]])
+            try await pause()
+            try check(abs((try await measure("width"))-original)<1, "WebKit full-width island falls back instead of moving text down")
+            try await camera([]); try await pause()
+            try check(abs((try await measure("width"))-original)<1, "WebKit restores width after occlusion removal")
+            try await camera(compact, reduceMotion: true); try await pause()
+            try check(try await js(model, "document.getElementById('reading').getAnimations().length") as? Int == 0, "native Reduce Motion disables settling animation")
+            try await camera([], enabled: false)
+            try await camera(compact, voiceOver: true); try await pause()
+            try check(abs((try await measure("width"))-original)<1, "VoiceOver preserves native reading layout")
+            try await camera([], enabled: false)
+            try await camera(compact); try await pause()
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('following').getBoundingClientRect().top+scrollY-8)")
+            let readingTop = try await measure("top", "following")
+            _ = try await js(model, "window.anchorSamples=[];window.anchorUntil=performance.now()+900;requestAnimationFrame(function sample(){const r=document.getElementById('following').getBoundingClientRect();anchorSamples.push({x:r.x,y:r.y});if(performance.now()<anchorUntil)requestAnimationFrame(sample)});dispatchEvent(new Event('pointerup'))")
+            try await pause()
+            let settledTop = try await measure("top", "following")
+            try check(readingTop > 0 && abs(settledTop-readingTop)<1, "WebKit keeps visible text below the top when offscreen fitting is removed")
+            try check(try await js(model, "anchorSamples.every(r=>Math.abs(r.y-\(readingTop))<1)") as? Bool == true, "WebKit sideways settling never lifts the anchored paragraph")
+            try check(try await js(model, "anchorSamples.some(r=>r.x>17)&&document.getElementById('following').getAnimations().length===0") as? Bool == true, "WebKit anchor correction does not interrupt its sideways animation")
+            try await camera([], enabled: false)
+            _ = try await js(model, "scrollTo(0,0);document.getElementById('reading').innerHTML='Earlier words fill the lines above the visible reading position. '.repeat(4)+'<br><span id=keptWord>Keep</span> these words visible while the paragraph changes width.'")
+            try await camera(compact); try await pause()
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('keptWord').getBoundingClientRect().top+scrollY)")
+            let wordTop = try await measure("top", "keptWord")
+            for regions in [[], compact] {
+                _ = try await js(model, "window.wordSamples=[];window.wordUntil=performance.now()+900;requestAnimationFrame(function sample(){wordSamples.push(document.getElementById('keptWord').getBoundingClientRect().top);if(performance.now()<wordUntil)requestAnimationFrame(sample)});dispatchEvent(new Event('pointerup'))")
+                try await camera(regions); try await pause()
+                try check(try await js(model, "wordSamples.every(y=>Math.abs(y-\(wordTop))<1)") as? Bool == true,
+                    regions.isEmpty ? "WebKit anchors partly visible words during restoration" : "WebKit anchors partly visible words during sideways refitting")
+            }
+            try await camera([], enabled: false)
+            _ = try await js(model, "document.getElementById('draft').value='unsent native draft';document.getElementById('draft').focus()")
+            try await camera(compact); try await pause()
+            try check(try await js(model, "document.getElementById('draft').value") as? String == "unsent native draft", "native fitting preserves the form draft")
+            try check(try await js(model, "localStorage.length===0 && sessionStorage.length===0") as? Bool == true, "native fitting persists no page content")
+            try await load(model, "nested-news")
+            let newsWidth = try await measure("width")
+            let newsTop = try await measure("top")
+            let signTop = try await measure("top", "signin")
+            let rail = [["x": Double(model.webView.bounds.width)-84, "y": 0.0, "width": 84.0, "height": 250.0]]
+            try await camera(rail); try await pause()
+            let fittedSignTop = try await measure("top", "signin")
+            let fittedNewsTop = try await measure("top")
+            try check((try await measure("right", "signin")) <= model.webView.bounds.width-91 &&
+                abs(fittedSignTop-signTop)<1, "WebKit compacts a sticky header row horizontally")
+            try check((try await measure("right")) <= model.webView.bounds.width-91 &&
+                abs(fittedNewsTop-newsTop)<1, "WebKit fits a deeply nested article inside grid shells")
+            _ = try await js(model, "document.getElementById('signin').click()")
+            try check(try await js(model, "location.hash") as? String == "#signin-result", "WebKit adapted header link remains functional")
+            _ = try await js(model, "document.getElementById('article-link').click()")
+            try check(try await js(model, "location.hash") as? String == "#link-result", "WebKit adapted article link remains functional")
+            _ = try await js(model, "dispatchEvent(new Event('pointerdown'));scrollTo(0,document.getElementById('following').getBoundingClientRect().top+scrollY-90);dispatchEvent(new Event('pointerup'))")
+            let newsReadingTop = try await measure("top", "following")
+            try await pause()
+            let newsReadingRight = try await measure("right", "following")
+            try check(abs((try await measure("top", "following"))-newsReadingTop)<1 &&
+                newsReadingRight <= model.webView.bounds.width-91, "WebKit retains reading position while nested paragraphs settle")
+            try await camera([]); try await pause()
+            try check(try await js(model, "![...document.querySelector('.toolbar').attributes].some(a=>a.name.startsWith('data-duo-camera-'))") as? Bool == true, "WebKit releases header sizing when the island disappears")
+            try await camera([], enabled: false)
+            try check(abs((try await measure("width"))-newsWidth)<1, "Original Layout restores nested article width")
+            _ = try await js(model, "scrollTo(0,document.getElementById('reading').getBoundingClientRect().bottom+scrollY-45)")
+            let chromeReadingTop = try await measure("top", "following")
+            try await camera(rail); try await pause()
+            let chromeReadingRight = try await measure("right", "following")
+            try check(abs((try await measure("top", "following"))-chromeReadingTop)<1 && chromeReadingRight <= model.webView.bounds.width-91,
+                "WebKit skips text hidden by sticky chrome without rolling back visible text")
+
+
+        } catch { results.append("FAIL: \(error)") }
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
+        try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+    }
+    func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
+        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+    }
+    func upgradeChecks() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            try? FileManager.default.removeItem(at: directory)
+        }
+        do {
+            let normal = session.selected
+            try await load(normal, "upgrades")
+            _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
+            let originalView = normal.webView
+            let originalScroll = (try await js(normal, "Math.min(250, Math.max(0, document.documentElement.scrollHeight-innerHeight))") as? Double) ?? 0
+            try await wait {
+                let actual = (try? await self.js(normal, "window.scrollY")) as? Double
+                return actual.map { abs($0-originalScroll) < 2 } == true && abs(originalView.scrollView.contentOffset.y-originalScroll) < 2
+            }
+            normal.openReader()
+            try await wait { normal.readerArticle != nil || normal.errorMessage != nil }
+            try check(normal.readerArticle?.blocks.count == 3, "Reader extracts article blocks without repeating the title")
+            try check(normal.readerArticle?.blocks.contains { $0.text.contains("FORM SECRET") } == false, "Reader excludes form content")
+            normal.cancelReader()
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Synthetic draft", "Reader preserves original input")
+            try check(abs(originalView.scrollView.contentOffset.y - originalScroll) < 2, "Reader preserves original scroll position")
+            let pendingSource = normal.restorationURL!
+            normal.readerRequest = UUID()
+            normal.readerLoading = true
+            _ = try await js(normal, "history.replaceState(null,'','#reader-stale')")
+            normal.finishReaderExtraction(nil, request: normal.readerRequest, generation: normal.documentGeneration, view: normal.webView, source: pendingSource)
+            try check(!normal.readerLoading && normal.readerArticle == nil, "same-document URL change clears stale Reader loading")
+            _ = try await js(normal, "history.replaceState(null,'',location.pathname)")
+            normal.openReader()
+            normal.cancelReader()
+            try await Task.sleep(for: .milliseconds(250))
+            try check(normal.readerArticle == nil && !normal.readerLoading, "cancelled Reader extraction cannot reopen")
+            normal.openReader()
+            try await load(normal, "next")
+            try await Task.sleep(for: .milliseconds(250))
+            try check(normal.readerArticle == nil, "navigation invalidates stale Reader work")
+            normal.openReader()
+            try await wait { !normal.readerLoading }
+            try check(normal.readerArticle == nil && normal.errorMessage != nil, "unsupported page keeps original with Reader explanation")
+            try await load(normal, "upgrades")
+            try await wait { normal.title == "A quieter way to browse" }
+            session.togglePin(normal)
+            session.createWorkspace("Research")
+            let researchID = session.workspaceID
+            try check(session.visibleTabs.count == 1 && session.selected.id != normal.id, "new workspace has an independent tab")
+            let initialResearch = session.selected
+            let sibling = session.newTab()
+            session.select(initialResearch.id)
+            session.close(initialResearch.id)
+            try check(session.selected.id == sibling.id && session.workspaceID == researchID, "closing selected tab prefers its surviving workspace")
+            let research = sibling
+            try await load(research, "upgrades")
+            session.move(normal, to: researchID)
+            try check(session.visibleTabs.first?.id == normal.id, "pinned tab sorts before other workspace tabs")
+            session.select(research.id)
+            research.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/preview")!)?.loadViewIfNeeded()
+            guard let peek = research.presentation.previewModelForTesting else { throw NSError(domain: "missing preview", code: 1) }
+            mount(peek)
+            try await wait {
+                guard peek.loadedWebView?.url?.path == "/preview", !peek.webView.isLoading else { return false }
+                return (try? await self.js(peek, "!!document.querySelector('#kept')")) as? Bool == true
+            }
+            _ = try await js(peek, "document.querySelector('#kept').value='Preview draft'")
+            let previewView = peek.webView
+            session.saveNow()
+            try check(store.load()?.session.tabs.contains { $0.address?.contains("/preview") == true } == false, "unkept Peek is absent from archive")
+            try check(!session.history.contains { $0.address.contains("/preview") }, "unkept Peek is absent from history")
+            try check(research.presentation.promoteLinkPreview(), "native preview promotion succeeds")
+            try check(session.selected.webView === previewView, "keeping Peek promotes the same web view")
+            try check(try await js(session.selected, "document.querySelector('#kept').value") as? String == "Preview draft", "Peek promotion preserves form state")
+            try check(session.selected.workspaceID == researchID, "Peek promotion keeps source workspace")
+            let privateTab = session.newTab(privateTab: true)
+            try await load(privateTab, "private-upgrade")
+            research.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/discarded-preview")!)?.loadViewIfNeeded()
+            let discarded = research.presentation.previewModelForTesting
+            research.presentation.endLinkPreview()
+            try check(research.presentation.previewModelForTesting == nil && discarded?.loadedWebView == nil, "native context preview dismissal tears down its web view")
+            session.togglePin(privateTab)
+            let privateResults = session.searchResults("", isPrivate: true)
+            try check(privateResults.filter { $0.kind == .tab }.allSatisfy { $0.tabID == privateTab.id }, "private unified search excludes normal workspace tabs")
+            try check(!privateResults.contains { $0.kind == .history }, "private unified search excludes normal history")
+            try check(!session.searchResults("", isPrivate: false).contains { $0.tabID == privateTab.id }, "normal unified search excludes private tabs")
+            privateTab.blockAds = false
+            session.saveNow()
+            let saved = store.load()!
+            try check(!saved.session.tabs.contains { $0.id == privateTab.id }, "private pinned tabs never persist")
+            try check(saved.sites["127.0.0.1"]?.blockAds != false, "private blocking exception never persists")
+            privateTab.presentation.makeLinkPreview(URL(string: "http://127.0.0.1:8765/private-peek")!)?.loadViewIfNeeded()
+            let privatePreview = privateTab.presentation.previewModelForTesting
+            try check(privatePreview?.isPrivate == true, "private Peek stays in private profile")
+            session.closePrivateTabs()
+            try check(privateTab.presentation.previewModelForTesting == nil && privatePreview?.loadedWebView == nil, "closing private session destroys its Peek")
+            let restored = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+            try check(restored.searchResults("quieter", isPrivate: false).contains { $0.kind == .tab && $0.address.hasSuffix("/upgrades") }, "search finds lazily restored tabs by locally saved title")
+            try check(restored.workspaces.contains { $0.id == researchID }, "workspace survives cold restoration")
+            try check(restored.tabs.first { $0.id == normal.id }?.isPinned == true, "pinned state survives cold restoration")
+            try check(restored.tabs.allSatisfy { !$0.isPrivate }, "restoration excludes all private upgrade state")
+            restored.tabs.forEach { $0.close() }
+            session.removeWorkspace(researchID)
+            try check(session.tabs.allSatisfy { $0.workspaceID == Workspace.defaultID }, "workspace removal keeps and relocates tabs")
+            mount(normal)
+            try await load(normal, "upgrades")
+            try check(normal.blockingStatus == "Basic protection on", "bundled content rules compile and attach before navigation")
+            // Substitute only the ad host with a loopback host; all rule flags and production installation remain identical.
+            let rulesURL = Bundle.main.url(forResource: "BlockingRules", withExtension: "json")!
+            let json = try String(contentsOf: rulesURL, encoding: .utf8)
+            let fixtureRules = json.replacingOccurrences(of: "doubleclick\\\\.net", with: "localhost")
+            ContentBlocking.useTestRules(fixtureRules)
+            try await load(normal, "upgrades")
+            let blocked = try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool
+            try check(blocked == true, "native blocker prevents third-party synthetic request")
+            normal.blockAds = false
+            try await wait { normal.blockingStatus == "Off for this site" && !normal.isLoading }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "site exception allows synthetic request after reload")
+            normal.blockAds = true
+            try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
+            normal.navigate(to: "http://localhost:8765/upgrades")
+            try await wait {
+                guard normal.webView.url?.host == "localhost", !normal.webView.isLoading else { return false }
+                return (try? await self.js(normal, "location.hostname === 'localhost' && document.readyState === 'complete'")) as? Bool == true
+            }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "blocking preserves first-party resources and main document")
+            // Isolate navigation-policy state from popup blocking: only the synthetic probe path is blocked.
+            let popupRules = #"[{"trigger":{"url-filter":"^http://localhost:8765/probe","load-type":["third-party"]},"action":{"type":"block"}}]"#
+            ContentBlocking.useTestRules(popupRules)
+            // A target=_blank exception belongs to the child; opener protection must remain installed.
+            normal.blockAds = false
+            try await wait { normal.blockingStatus == "Off for this site" && !normal.webView.isLoading }
+            results.append("STEP: saved localhost blocking exception")
+            let opener = session.newTab()
+            try await load(opener, "upgrades")
+            results.append("STEP: protected opener loaded")
+            opener.webView.configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
+            let beforeChild = session.tabs.count
+            _ = try await js(opener, "window.open('http://localhost:8765/upgrades','_blank');true")
+            try await wait { session.tabs.count > beforeChild }
+            results.append("STEP: excepted popup created")
+            let popup = session.selected
+            mount(popup)
+            try await wait { popup.webView.url?.host == "localhost" && !popup.webView.isLoading }
+            try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
+            try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
+            session.restoreBlocking(host: "localhost", isPrivate: false)
+            try check(!session.blockingExceptions(isPrivate: false).contains("localhost"), "restoring protection removes the saved site exception")
+            session.close(popup.id)
+            session.close(opener.id)
+            let count = session.tabs.count
+            let closing = session.newTab(url: URL(string: "http://127.0.0.1:8765/closing")!)
+            session.close(closing.id)
+            try await Task.sleep(for: .milliseconds(300))
+            try check(session.tabs.count == count && closing.loadedWebView == nil, "closing during navigation cannot revive a tab")
+            ContentBlocking.useTestRules(nil)
+            try check(ReaderArticle.parse(["title": "Bad", "blocks": [["kind": "script", "text": "bad"], ["kind": "paragraph", "text": "ok"]]], source: URL(string: "https://example.com")!) == nil, "Reader rejects malformed extracted blocks")
+        } catch { results.append("FAIL: \(error)") }
+        let destination = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("UpgradeChecks.txt")
+        try? results.joined(separator: "\n").write(to: destination, atomically: true, encoding: .utf8)
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--upgrade-checks") { await upgradeChecks(); return }
+        if ProcessInfo.processInfo.arguments.contains("--settling-checks") { await settlingChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--memory-checks") { await memoryChecks(); return }
         if ProcessInfo.processInfo.arguments.contains("--site-checks") {
             await siteChecks()

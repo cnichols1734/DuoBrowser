@@ -1,5 +1,6 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
@@ -17,8 +18,17 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Type','application/octet-stream')
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')
             self.end_headers(); self.wfile.write(b'Synthetic browser download.\n'); return
-        self.send_header('Content-Type','text/html'); self.end_headers()
-        if self.path.startswith('/reading'):
+        self.send_header('Content-Type','text/html'); self.send_header('Access-Control-Allow-Origin','*'); self.end_headers()
+        if self.path.startswith('/upgrades'):
+            paragraph = 'A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. ' * 4
+            self.wfile.write(('<meta name="viewport" content="width=device-width,initial-scale=1"><title>A quieter way to browse</title><style>body{font:18px -apple-system;margin:24px}p{line-height:1.6}input,a{min-height:44px}article{max-width:700px}</style><input id="kept" placeholder="Synthetic draft"><a href="/preview">Preview this reference</a><article><h1>A quieter way to browse</h1><p>'+paragraph+'</p><h2>Keep your place</h2><p>'+paragraph+'</p><form><p>FORM SECRET</p></form></article>').encode())
+            return
+        if self.path.startswith('/nested-news'):
+            self.wfile.write((Path(__file__).parent / 'Fixtures' / 'nested-news.html').read_bytes())
+            return
+        if self.path.startswith('/settling'):
+            self.wfile.write((Path(__file__).parent / 'Fixtures' / 'settling.html').read_bytes())
+        elif self.path.startswith('/reading'):
             self.wfile.write(b'<meta name="viewport" content="width=device-width"><title>Reading fixture</title><main style="height:2400px">Synthetic reading page</main>')
         elif self.path.startswith('/memory'):
             self.wfile.write(b'<meta name="viewport" content="width=device-width"><title>Memory fixture</title><input id="kept"><main style="height:2400px">Synthetic page</main>')
