@@ -18,7 +18,8 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
 - Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
-- A customizable tab-switcher background color, stored on the device.
+- A shared start-page/tab-switcher wallpaper and locally saved background tint.
+- Start-page shortcuts show site icons with a letter fallback. Icons load directly from each site’s `/favicon.ico` (including secure CDN redirects), without browsing paths, cookies or credentials; the bounded icon cache stays in memory. Private start pages do not load these shortcuts.
 - Native floating link previews that can become tabs without reloading.
 - Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.

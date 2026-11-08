@@ -5,6 +5,8 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"FA7100000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebsiteIcon.swift; sourceTree = "<group>"; };
+"FA7100000000000000000002" = { isa = PBXBuildFile; fileRef = "FA7100000000000000000001"; };
 "A1DDE5500000000000000003" = { isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 "A1DDE5500000000000000004" = { isa = PBXBuildFile; fileRef = "A1DDE5500000000000000003"; };
 "A1DDE5500000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressSuggestions.swift; sourceTree = "<group>"; };
@@ -163,6 +165,7 @@
 		"482182478A3ECD4745BEA917" = {
 			"isa" = "PBXGroup";
 			"children" = (
+"FA7100000000000000000001",
 "A1DDE5500000000000000003",
 "A1DDE5500000000000000001",
 				"41D68964F29244DDA0000001",
@@ -217,6 +220,7 @@
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+"FA7100000000000000000002",
 "A1DDE5500000000000000002",
 "CC6600000000000000000002",
 "AB7290C02026103000000002",

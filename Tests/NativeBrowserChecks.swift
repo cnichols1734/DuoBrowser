@@ -795,6 +795,29 @@ private final class NativeCheckRunner {
         controller.didMove(toParent: host)
     }
 
+    func websiteIconChecks() async throws {
+        let icon = WebsiteIconLoader.url(for: "https://example.com:8443/private/page?token=secret#section")
+        try check(icon?.absoluteString == "https://example.com:8443/favicon.ico", "icon request strips browsing paths, queries and fragments")
+        try check(WebsiteIconLoader.url(for: "https://user:secret@example.com") == nil, "icon request rejects embedded credentials")
+        try check(WebsiteIconLoader.redirectAllowed(URL(string: "https://cdn.example.com/icon.png")), "icons allow secure CDN redirects")
+        try check(!WebsiteIconLoader.redirectAllowed(URL(string: "http://cdn.example.com/icon.png")), "icons reject insecure redirects")
+        try check(WebsiteIconLoader.decode(Data("not an image".utf8)) == nil, "invalid favicon produces safe fallback")
+        try check(WebsiteIconLoader.decode(Data(repeating: 0, count: WebsiteIconLoader.maximumBytes + 1)) == nil, "oversized favicon is rejected")
+        let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "IconIsolation", .value: "synthetic"])!
+        HTTPCookieStorage.shared.setCookie(cookie)
+        defer { HTTPCookieStorage.shared.deleteCookie(cookie) }
+        let store = WebsiteIconStore()
+        let loaded = await store.image(for: "http://127.0.0.1:8765/ignored?secret=not-sent")
+        try check(loaded != nil, "favicon loads without shared cookies or credentials")
+        try check(loaded.map { max($0.size.width, $0.size.height) <= 144 } == true, "favicon decode has bounded pixel dimensions")
+        let cached = await store.image(for: "http://127.0.0.1:8765/other-page")
+        try check(cached === loaded, "same-origin shortcuts reuse the in-memory icon")
+        store.clear()
+        let fresh = await store.image(for: "http://127.0.0.1:8765/other-page")
+        try check(fresh != nil && fresh !== loaded, "clearing icons discards cached images")
+        store.clear()
+    }
+
     func addressCompletionChecks() throws {
         var query = ""
         var submitted = ""
@@ -864,6 +887,7 @@ private final class NativeCheckRunner {
         }
         do {
             try addressCompletionChecks()
+            try await websiteIconChecks()
             try check(!session.showSystemStatus, "status bar is hidden by default")
             session.showSystemStatus = true
             try check(defaults.bool(forKey: "browser.showSystemStatus"), "status bar choice is saved immediately")

@@ -380,10 +380,12 @@ final class BrowserSession: ObservableObject {
         saveNow()
     }
     func deleteHistory(ids: Set<UUID>? = nil) {
+        WebsiteIconStore.shared.clear()
         if let ids { history.removeAll { ids.contains($0.id) } } else { history.removeAll() }
         saveNow(replaceBackup: true)
     }
     func deleteBookmarks(ids: Set<UUID>) {
+        WebsiteIconStore.shared.clear()
         bookmarks.removeAll { ids.contains($0.id) }
         saveNow(replaceBackup: true)
     }

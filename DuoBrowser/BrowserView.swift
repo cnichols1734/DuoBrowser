@@ -37,7 +37,7 @@ struct ActiveBrowserView: View {
                     .accessibilityHidden(showingSearch || browser.showingStartPage)
                     .allowsHitTesting(!showingSearch && !browser.showingStartPage)
                 if browser.showingStartPage {
-                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport) { showingSearch = true }
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport)
                         .blur(radius: showingSearch ? 5 : 0)
                         .accessibilityHidden(showingSearch)
                         .allowsHitTesting(!showingSearch)
@@ -208,7 +208,6 @@ private struct BrowserStartPage: View {
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
     @ObservedObject var viewport: BrowserViewportState
-    let search: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -230,13 +229,7 @@ private struct BrowserStartPage: View {
                         section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
                         section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
                     }
-                    Button(action: search) {
-                        Label("Search or enter a website", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            .padding(.horizontal, 16)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16))
+
                 }
                 .frame(maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
@@ -257,8 +250,7 @@ private struct BrowserStartPage: View {
                     ForEach(entries) { entry in
                         Button { browser.navigate(to: entry.address) } label: {
                             VStack(alignment: .leading, spacing: 8) {
-                                Image(systemName: icon).font(.title3).frame(width: 48, height: 48)
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                                WebsiteIcon(address: entry.address)
                                 Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
                                     .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
                             }.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading).contentShape(Rectangle())

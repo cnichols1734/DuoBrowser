@@ -15,7 +15,9 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def do_GET(self):
         self.send_response(200)
-        if self.path.startswith('/reader-photo-'):
+        if self.path.startswith('/reader-photo-') or self.path == '/favicon.ico':
+            if self.path == '/favicon.ico' and (self.headers.get('Cookie') or self.headers.get('Authorization')):
+                self.end_headers(); self.wfile.write(b'Unexpected credentials'); return
             # Synthetic raster fixture, not captured browsing content.
             width, height = 320, 180
             color = (36, 122, 165) if 'one' in self.path else (185, 108, 64)
