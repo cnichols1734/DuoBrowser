@@ -132,7 +132,7 @@ struct Workspace: Codable, Identifiable, Equatable {
 }
 
 struct SearchResult: Identifiable {
-    enum Kind: Int { case tab, bookmark, history }
+    enum Kind: Int { case tab, bookmark, history, website }
     var id: String
     var title: String
     var address: String

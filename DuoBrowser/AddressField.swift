@@ -7,6 +7,7 @@ struct AddressField: UIViewRepresentable {
     var submit: () -> Void
     var cancel: () -> Void
     var cancelOnEndEditing = true
+    var isComposing: Binding<Bool> = .constant(false)
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextField {
         let field = BrowserAddressTextField()
@@ -36,7 +37,10 @@ struct AddressField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: AddressField
         init(_ parent: AddressField) { self.parent = parent }
-        @objc func changed(_ field: UITextField) { parent.text = field.text ?? "" }
+        @objc func changed(_ field: UITextField) {
+            parent.isComposing.wrappedValue = field.markedTextRange != nil
+            parent.text = field.text ?? ""
+        }
         func textFieldShouldReturn(_ field: UITextField) -> Bool { parent.submit(); field.resignFirstResponder(); return true }
         func textFieldDidEndEditing(_ field: UITextField) { if parent.cancelOnEndEditing { parent.cancel() } }
     }

@@ -66,3 +66,12 @@ Rechecked Apple's current Foundation Models documentation and the installed iOS 
 - [Foundation Models framework overview](https://developer.apple.com/foundation-models-framework/)
 
 Apple's task guidance lists code generation among uses the on-device model may not suit. Our design inference is to let the model select among implemented operations after deterministic geometry analysis. Runtime layout measurement and rollback remain authoritative. This architecture is a proposal; no model efficacy or inference performance was measured in this pass.
+
+## Address suggestions — November 8, 2026
+
+- [Apple's Safari search guide](https://support.apple.com/en-euro/guide/iphone/iph6297b394b/ios) documents suggestions above the search field and a separate Search Engine Suggestions setting.
+- [Firefox address-bar autocomplete](https://support.mozilla.org/en-US/kb/address-bar-autocomplete-firefox) combines search predictions, bookmarks, history and open tabs. [Firefox search suggestions](https://support.mozilla.org/en-US/kb/search-suggestions-firefox) explains that predictions transmit typed terms to the engine.
+- [Chrome's suggestion controls](https://support.google.com/chrome/answer/13730650) describe local suggestions and remote predictions, with sensitive-input exclusions.
+- [DuckDuckGo autocomplete settings](https://duckduckgo.com/duckduckgo-help-pages/privacy-pro/turn-off-autocomplete) distinguish autocomplete and recently visited sites. DuoBrowser keeps its existing DuckDuckGo search destination; a synthetic `pat` request to its autocomplete endpoint returned live search phrases on November 8.
+
+Implementation: immediate bundled website prefixes, followed by real DuckDuckGo predictions and local results in the existing keyboard-adjacent native palette. The bundled sites are a curated convenience list, not a measured popularity ranking. Predictions are optional, debounced, cancelled when obsolete, and excluded for private tabs, URL-like input and marked-text composition. No suggested website is preloaded. Predictions always perform a search, even when their text looks like a URL.

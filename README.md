@@ -103,3 +103,7 @@ Project context: [product brief](docs/PRODUCT_BRIEF.md), [architecture](docs/ARC
 ## License
 
 Project-owned code, documentation and artwork are available under the [MIT License](LICENSE), copyright 2026 Christopher Nichols. [Third-party notices](THIRD_PARTY_NOTICES.md) identify separately licensed material and development tools. Apple and website names remain their respective owners' trademarks; no affiliation or endorsement is implied.
+
+### Address suggestions
+
+Typing in the address bar shows familiar website matches immediately (for example, `go` → Google, `ap` → Apple, `pat` → Patriots). Optional DuckDuckGo search predictions appear alongside local tabs, bookmarks and history. Use the ellipsis in the search palette to turn **Search Engine Suggestions** off. When enabled, plain search text is sent to DuckDuckGo as you type; URLs, private-tab input and unfinished keyboard composition are excluded. Requests use an ephemeral session without shared cookies or a disk cache. Website matches remain available offline. The bundled website list is curated, not a live popularity chart.

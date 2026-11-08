@@ -185,3 +185,11 @@ Simulator integration checks pass for initial presentation, zoom out, new-tab pr
 
 
 The complete local native suite passed for the zoom implementation: stack/zoom, core browsing, Reader/upgrades, camera settling, cookie write/relaunch and memory checks. Review follow-up removes the empty stack from no-results layouts, derives visible cards from their transformed viewport bounds, keeps Close exposed at the leading corner, and preserves committed closes exactly once through filtering or stack teardown. Focused native regressions cover both wide-layout tails and filter/teardown completion. Device Hub selection checks and signed development installation succeeded; final physical zoom acceptance remains owner-driven.
+
+## Address suggestions and first TestFlight preparation — November 8, 2026
+
+Implemented instant bundled website matches, optional DuckDuckGo predictive searches, explicit search-versus-navigation actions, and a completion button for editing a predicted phrase. The keyboard-adjacent native palette retains local tabs/bookmarks/history, Dynamic Type and the original page context. Private tabs use only local suggestions. Network requests have debounce/cancellation, bounded responses, ephemeral storage, no shared credentials/cookies, no redirects, and conservative input exclusions. Added a privacy manifest for local settings and app-container file metadata.
+
+Verification in progress: 31 new portable suggestion assertions and the existing 62 portable checks passed; Debug and Release simulator builds, all browser-layout checks, SwiftLint, and 175 native regression assertions passed. A signed device archive also built. Manual UI testing and final release provenance are being recorded before TestFlight upload. Physical touch, spoken VoiceOver, energy/endurance, passkeys and authenticated-site acceptance remain unverified; simulator results do not close those gates.
+
+Manual closed-Duo testing confirmed `g`/`go` → Google, `ap` → Apple, `pat` → Patriots plus live DuckDuckGo predictions, completion-arrow editing, stale prediction removal on replacement input, website navigation, and the software-keyboard layout. This caught and fixed missing scene-phase propagation through the UIKit hosting container: prediction gating now follows UIApplication lifecycle notifications. Screenshots use only synthetic queries.

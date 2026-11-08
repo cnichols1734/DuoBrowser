@@ -8,6 +8,8 @@ swiftc -warnings-as-errors DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swi
 work/checks/archive
 swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/BrowserDataTests.swift -o work/checks/data
 work/checks/data
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/AddressSuggestions.swift Tests/AddressSuggestionsTests.swift -o work/checks/suggestions
+work/checks/suggestions
 swiftc -frontend -parse DuoBrowser/*.swift Tests/NativeBrowserChecks.swift
 for source in DuoBrowser/*.js Tests/*.cjs; do node --check "$source"; done
 python3 scripts/repository-check.py
