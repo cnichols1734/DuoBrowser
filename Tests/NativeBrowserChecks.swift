@@ -58,56 +58,45 @@ private final class NativeCheckRunner {
         controller.view.layoutIfNeeded()
         try await wait { controller.collectionView.numberOfItems(inSection: 0) == 6 }
         let layout = controller.stackLayout, collection = controller.collectionView
-        try check(abs(collection.contentOffset.x - layout.stride * 3) < 1, "stack opens on selected tab")
-        collection.contentOffset.x = layout.stride * 2.4
-        collection.layoutIfNeeded()
-        let center = layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))!.center.x
-        try check(abs(center - collection.contentOffset.x - 200 - layout.stride * 0.6) < 1,
-                  "native card layout follows fractional scroll position")
-        try check((layout.layoutAttributesForElements(in: collection.bounds)?.count ?? 99) <= 12,
-                  "native stack bounds per-frame layout work")
-        collection.contentOffset.x = layout.stride * 3
-        collection.layoutIfNeeded()
+        let first = layout.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame
+        let second = layout.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!.frame
+        try check(first.minY == second.minY && second.maxX > 370, "grid uses both columns across the display")
+        try check(!first.intersects(second), "neighboring tab hit targets do not overlap")
+        let source = controller.zoomSource(for: models[3].id, centered: true)
+        try check(source != nil && abs(source!.bounds.height - layout.cardWidth / 0.72) < 1,
+                  "zoom source is exactly the page preview, excluding its title")
         try await wait { dismissals[models[3].id] != nil }
-        let cardFrame = layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))!.frame
-        var closeTarget = collection.hitTest(CGPoint(x: cardFrame.minX + 22, y: cardFrame.minY + 50), with: nil)
-        while closeTarget != nil && !(closeTarget is TabStackCell) { closeTarget = closeTarget?.superview }
-        try check((closeTarget as? TabStackCell)?.representedID == models[3].id,
-                  "foreground close control is not covered by the next card")
         let departing = collection.cellForItem(at: IndexPath(item: 3, section: 0)) as! TabStackCell
-        departing.motionView.transform = CGAffineTransform(translationX: 0, y: -90)
+        departing.motionView.transform = CGAffineTransform(translationX: -90, y: 0)
         collection.setNeedsLayout()
         collection.layoutIfNeeded()
-        try check(departing.motionView.transform.ty == -90, "layout preserves the dragged card offset")
+        try check(departing.motionView.transform.tx == -90, "layout preserves the dragged card offset")
         dismissals[models[3].id]?()
-        var previousY: CGFloat = -90
+        var previousX: CGFloat = -90
         for _ in 0..<8 {
             try await Task.sleep(for: .milliseconds(20))
             guard visible.contains(where: { $0.id == models[3].id }), departing.representedID == models[3].id else { break }
             collection.setNeedsLayout()
             collection.layoutIfNeeded()
             if let presentation = departing.motionView.layer.presentation() {
-                let y = presentation.affineTransform().ty
-                try check(y <= previousY + 1, "committed dismissal travels upward through layout passes (\(previousY) to \(y))")
-                previousY = y
+                let x = presentation.affineTransform().tx
+                try check(x <= previousX + 1, "committed dismissal travels leftward through layout passes (\(previousX) to \(x))")
+                previousX = x
             }
         }
         try await wait { collection.numberOfItems(inSection: 0) == 5 }
         try check(!visible.contains { $0.id == models[3].id }, "animated close removes intended tab once")
-        try await wait { abs(collection.contentOffset.x - layout.stride * 3) < 1 }
-        try check(visible[3].id == models[4].id, "next tab fills foreground after deletion")
+        try check(visible[3].id == models[4].id, "next tab fills the removed grid position")
         reduced = true
         update()
-        collection.contentOffset.x = layout.stride * 2
         collection.layoutIfNeeded()
         let back = layout.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!
-        try check(back.transform == .identity && abs(back.center.x - collection.contentOffset.x - 200 + layout.stride) < 1,
-                  "native Reduce Motion removes depth and parallax")
+        try check(back.transform == .identity, "Reduce Motion keeps cards untransformed")
         controller.view.frame.size = CGSize(width: 700, height: 520)
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
-        try check(abs(collection.contentOffset.x - layout.stride * 2) < 1,
-                  "resizing preserves the focused tab")
+        try check(controller.zoomSource(for: visible[2].id, centered: true) != nil,
+                  "resizing preserves the selected preview as a zoom target")
         reduced = false
         update()
         let departingID = visible[2].id
@@ -142,14 +131,14 @@ private final class NativeCheckRunner {
             }
             controller.view.layoutIfNeeded()
             let collection = controller.collectionView, layout = controller.stackLayout
-            collection.contentOffset.x = 20.95 * layout.stride
+            _ = controller.zoomSource(for: models[20].id, centered: true)
             collection.layoutIfNeeded()
             let expected = Set(models.indices.compactMap { index -> Int? in
                 let attributes = layout.layoutAttributesForItem(at: IndexPath(item: index, section: 0))!
                 return attributes.frame.intersects(collection.bounds) ? index : nil
             })
             let actual = Set((layout.layoutAttributesForElements(in: collection.bounds) ?? []).map { $0.indexPath.item })
-            try check(actual == expected && actual.contains(24), "wide layout includes both visible tails, reduced motion \(reduced)")
+            try check(actual == expected && actual.contains(20), "wide grid includes all visible cards, reduced motion \(reduced)")
         }
     }
 
@@ -773,7 +762,41 @@ private final class NativeCheckRunner {
         try? results.joined(separator: "\n").write(to: destination, atomically: true, encoding: .utf8)
     }
 
+    /// Manual UI fixture: isolated synthetic tabs, never the simulator's normal browsing session.
+    func overviewDemo() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OverviewDemo-" + UUID().uuidString)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "OverviewDemo-" + UUID().uuidString)!,
+            archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        let pages = [("Field Notes", "#355c55"), ("Weekend Plans", "#52688c"),
+                     ("Reading List", "#885b42"), ("Studio Journal", "#665b78"), ("Garden Guide", "#507145")]
+        for (index, page) in pages.enumerated() {
+            let model = index == 0 ? session.selected : session.newTab()
+            mount(model)
+            model.webView.loadHTMLString("""
+                <html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+                <title>\(page.0)</title><style>body{margin:0;background:#f4f1e8;color:#252a29;font:18px -apple-system}
+                header{padding:60px 28px 36px;background:\(page.1);color:white}main{padding:24px 28px;line-height:1.6}
+                h1{font-size:42px;line-height:1.1}input{font:inherit;max-width:90%}</style></head>
+                <body><header><p>DUOBROWSER / LOCAL FIXTURE</p><h1>\(page.0)</h1></header><main>
+                <h2>A little room to explore.</h2><p>A synthetic page for checking tabs, gestures and smooth transitions.</p>
+                <p>Keep your place as you move between pages and open the display.</p><input value="Unsent test note">
+                <p style="height:700px">Scroll, return, and continue reading.</p></main></body></html>
+                """, baseURL: nil)
+            try? await wait { !model.webView.isLoading && model.title == page.0 }
+            model.captureSnapshot()
+            try? await wait { model.snapshot != nil }
+        }
+        session.select(session.visibleTabs[0].id)
+        let controller = BrowserZoomController(session: session)
+        host.addChild(controller)
+        controller.view.frame = host.view.bounds
+        controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        host.view.addSubview(controller.view)
+        controller.didMove(toParent: host)
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--tab-overview-demo") { await overviewDemo(); return }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
             do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
@@ -805,26 +828,19 @@ private final class NativeCheckRunner {
             try check(!session.showSystemStatus, "status bar is hidden by default")
             session.showSystemStatus = true
             try check(defaults.bool(forKey: "browser.showSystemStatus"), "status bar choice is saved immediately")
-            let stride: CGFloat = 240
-            func position(_ x: CGFloat) -> CGFloat { TabStackMotion.position(x, stride: stride, reduceMotion: false) }
-            let slow = position(-470) - position(-480), fast = position(10) - position(0)
-            try check(slow > 0 && slow < fast, "left cards travel slower without reversing")
-            try check(abs((position(0.01) - position(0)) - (position(0) - position(-0.01))) < 0.00001,
-                      "card velocity is continuous across foreground boundary")
-            try check((-2000...2000).allSatisfy { position(CGFloat($0) + 1) > position(CGFloat($0)) },
-                      "card ordering remains monotonic through stack")
-            try check(TabStackMotion.position(-300, stride: stride, reduceMotion: true) == -300,
-                      "Reduce Motion keeps uniform scrolling")
-            try check(TabStackMotion.target(proposed: -100, stride: stride, count: 5) == 0 &&
-                      TabStackMotion.target(proposed: 9000, stride: stride, count: 5) == 960,
-                      "snap destinations stay within first and last tab")
-            try check(TabStackMotion.target(proposed: 700, stride: stride, count: 5) == 720,
-                      "momentum projection can advance multiple cards")
-            try check(TabStackMotion.shouldDismiss(translation: -40, velocity: -1000, height: 450) &&
-                      !TabStackMotion.shouldDismiss(translation: -40, velocity: 0, height: 450),
-                      "upward flick closes while short slow drag cancels")
-            try check(!TabStackMotion.shouldDismiss(translation: -150, velocity: 400, height: 450),
-                      "reversing downward cancels dismissal")
+            try check(TabStackMotion.shouldDismiss(translation: -40, velocity: -1000, width: 210) &&
+                      !TabStackMotion.shouldDismiss(translation: -40, velocity: 0, width: 210),
+                      "left flick closes while short slow drag cancels")
+            try check(!TabStackMotion.shouldDismiss(translation: -150, velocity: 400, width: 210),
+                      "reversing right cancels dismissal")
+            try check(!TabStackMotion.shouldDismiss(translation: 150, velocity: 1000, width: 210),
+                      "rightward swipe never closes a tab")
+            try check(!TabStackMotion.shouldDismiss(translation: .nan, velocity: -1000, width: 210), "invalid drag does not close")
+            try check(!TabStackMotion.shouldDismiss(translation: -90, velocity: 0, width: 0), "unmeasured card does not close")
+            try check(TabStackMotion.shouldDismiss(translation: -100, velocity: 0, width: 210), "deliberate slow left drag closes")
+            try check(!TabStackMotion.shouldDismiss(translation: -10, velocity: -2000, width: 210), "tiny accidental flick does not close")
+            try check(TabStackMotion.shouldDismiss(translation: -75, velocity: 0, width: 210) &&
+                      !TabStackMotion.shouldDismiss(translation: -75, velocity: 0, width: 300), "dismissal threshold follows resized card width")
             let portrait = CGRect(x: 0, y: 0, width: 466, height: 678)
             try check(BrowserViewportState.controlLift(in: portrait, height: 180, safeBottom: 34,
                 regions: [CGRect(x: 390, y: 30, width: 60, height: 60)]) == 0, "top camera does not lift bottom controls")

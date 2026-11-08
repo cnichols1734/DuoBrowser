@@ -9,6 +9,7 @@ struct BrowserView: View {
 
     var body: some View {
         BrowserZoomPresenter(session: session)
+            .ignoresSafeArea(.container)
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -241,7 +242,7 @@ private struct BrowserStartPage: View {
                 .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
                 .frame(maxWidth: .infinity)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background { BrowserWallpaper() }
         }
     }
 
