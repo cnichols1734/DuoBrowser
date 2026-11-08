@@ -10,6 +10,7 @@ struct BrowserToolbar: View {
     let bottomSafeArea: CGFloat
     let accessibilityExpanded: Bool
     @State private var showingProtection = false
+    @State private var showingPrivacy = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -39,6 +40,7 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
@@ -236,6 +238,7 @@ struct BrowserToolbar: View {
             if browser.activeDownloads > 0 {
                 Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
             }
+            Button("Privacy Policy", systemImage: "hand.raised") { showingPrivacy = true }
             #if DEBUG
             Menu("Developer") {
                 Toggle("Show reserved regions", isOn: $session.showRegions)
@@ -246,5 +249,36 @@ struct BrowserToolbar: View {
             Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
         }
         .accessibilityLabel("Page options")
+    }
+}
+
+
+private struct BrowserPrivacyView: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Your browsing data") {
+                    Text("DuoBrowser has no app analytics, advertising SDKs or tracking service. History, bookmarks, settings and normal tabs are stored in the app on your device and may be included in system backups.")
+                    Text("Delete history and bookmarks in Bookmarks & History. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
+                }
+                Section("Private browsing") {
+                    Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Private mode does not hide your network traffic.")
+                }
+                Section("Websites and search") {
+                    Text("Websites receive normal browsing requests. Google receives searches and plain keywords typed for suggestions in normal tabs. Private tabs do not request typing suggestions. Shortcut icons load from site home pages and their icon hosts without your saved page paths, cookies or credentials. These services have their own privacy policies.")
+                }
+                Section("Photos and permissions") {
+                    Text("Only a wallpaper photo you choose is imported, resized and saved locally. Website camera, microphone and location requests use system permission prompts. No page content is sent to an AI service.")
+                }
+                Section("Beta testing and support") {
+                    Text("Apple handles TestFlight diagnostics and feedback according to its policies. If you contact support, we receive the information you choose to send. Do not include passwords or private browsing data.")
+                    Link("Full Privacy Policy", destination: URL(string: "https://github.com/cnichols1734/DuoBrowser/blob/main/PRIVACY.md")!)
+                    Link("Contact Support", destination: URL(string: "mailto:chrisnichols17@gmail.com")!)
+                }
+            }
+            .navigationTitle("Privacy Policy")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
     }
 }

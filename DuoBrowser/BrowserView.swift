@@ -225,7 +225,7 @@ private struct BrowserStartPage: View {
                         Label("Private browsing", systemImage: "hand.raised.fill")
                             .font(.headline)
                         Text("Your private tabs and browsing history aren't saved.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                     } else {
                         section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
                         section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
@@ -244,17 +244,17 @@ private struct BrowserStartPage: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             if entries.isEmpty {
-                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.secondary)
+                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 150 : 100), spacing: 16)], alignment: .leading, spacing: 18) {
                     ForEach(entries) { entry in
                         Button { browser.navigate(to: entry.address) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
+                            VStack(alignment: .center, spacing: 8) {
                                 WebsiteIcon(address: entry.address)
                                 Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
-                                    .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                            }.frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading).contentShape(Rectangle())
+                                    .font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                            }.frame(maxWidth: .infinity, minHeight: 96, alignment: .top).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityHint("Opens this page")
                     }
                 }

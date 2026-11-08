@@ -795,6 +795,55 @@ private final class NativeCheckRunner {
         controller.didMove(toParent: host)
     }
 
+    func betaReadinessChecks() throws {
+        let card = CGRect(x: 0, y: 0, width: 220, height: 300)
+        let rightCamera = CGRect(x: 160, y: 0, width: 60, height: 80)
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [], rightToLeft: false) == CGPoint(x: 172, y: 0), "LTR close starts in physical right corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [], rightToLeft: true) == .zero, "RTL close starts in physical left corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [rightCamera], rightToLeft: false) == .zero, "LTR close relocates into verified clear corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [rightCamera], rightToLeft: true) == .zero, "RTL close stays clear of physical right camera")
+        let island = CGRect(x: 0, y: 0, width: 220, height: 90)
+        let position = TabCardGeometry.closeOrigin(in: card, regions: [island], rightToLeft: false)
+        try check(position?.y == 94 && !CGRect(origin: position!, size: CGSize(width: 48, height: 48)).intersects(island), "full-width occlusion moves close below both blocked corners")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [card], rightToLeft: false) == nil, "fully occluded preview suppresses unsafe close target")
+        let insets = OverviewRegionView.clearInsets(in: CGRect(x: 0, y: 0, width: 466, height: 678),
+                                                   regions: [CGRect(x: 390, y: 30, width: 76, height: 70)])
+        try check(insets.right >= 84, "search and accessible-list controls clear side camera using runtime geometry")
+        let top = OverviewRegionView.clearInsets(in: card, regions: [island])
+        try check(top.top >= 98, "full-width occlusion reserves header/list top clearance")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WallpaperChecks-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.png")
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 1800, height: 1000), format: format).image { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1800, height: 1000))
+        }
+        try image.pngData()!.write(to: source)
+        let imported = try WallpaperImport(file: source)
+        let resized = UIImage(data: imported.jpeg)!
+        try check(max(resized.size.width, resized.size.height) == 1600, "file-representation wallpaper is downsampled before transfer")
+        let saved = directory.appendingPathComponent("saved.jpg")
+        let store = BrowserWallpaperStore(file: saved)
+        let old = store.beginImport()
+        store.remove()
+        try store.save(imported, token: old)
+        try check(store.image == nil && !FileManager.default.fileExists(atPath: saved.path), "remove invalidates an in-flight wallpaper import")
+        let prior = store.beginImport(), current = store.beginImport()
+        try store.save(imported, token: prior)
+        try check(store.image == nil, "superseded wallpaper import cannot overwrite selection")
+        try store.save(imported, token: current)
+        try check(store.image != nil && FileManager.default.fileExists(atPath: saved.path), "current wallpaper import commits locally")
+        store.remove()
+        try check(store.image == nil && !FileManager.default.fileExists(atPath: saved.path), "wallpaper removal clears memory and disk")
+        let huge = directory.appendingPathComponent("huge.raw")
+        FileManager.default.createFile(atPath: huge.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: huge); try handle.truncate(atOffset: 41 * 1024 * 1024); try handle.close()
+        var rejected = false
+        do { _ = try WallpaperImport(file: huge) } catch { rejected = true }
+        try check(rejected, "oversized wallpaper file is rejected before image allocation")
+    }
+
     func websiteIconChecks() async throws {
         let icon = WebsiteIconLoader.url(for: "https://example.com:8443/private/page?token=secret#section")
         try check(icon?.absoluteString == "https://example.com:8443/favicon.ico", "icon request strips browsing paths, queries and fragments")
@@ -898,6 +947,7 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try betaReadinessChecks()
             try addressCompletionChecks()
             try await websiteIconChecks()
             try check(!session.showSystemStatus, "status bar is hidden by default")

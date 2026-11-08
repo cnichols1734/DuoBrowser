@@ -1,6 +1,8 @@
 import SwiftUI
 import PhotosUI
 import ImageIO
+import UniformTypeIdentifiers
+import CoreTransferable
 
 struct TabOverview: View {
     @ObservedObject var session: BrowserSession
@@ -10,6 +12,7 @@ struct TabOverview: View {
     @State private var manageWorkspaces = false
     @State private var appearance = false
     @State private var controlLift: CGFloat = 0
+    @State private var contentInsets = UIEdgeInsets.zero
     @State private var photo: PhotosPickerItem?
     @State private var wallpaperError: String?
     @FocusState private var searchFocused: Bool
@@ -48,7 +51,8 @@ struct TabOverview: View {
                         Button("Cancel") { search = ""; searching = false; searchFocused = false }
                     }
                     .padding(12).glassEffect(.regular, in: Capsule())
-                    .padding(.horizontal, 16).padding(.top, 8)
+                    .padding(.horizontal, max(16, max(contentInsets.left, contentInsets.right) + 8))
+                    .padding(.top, max(8, contentInsets.top + 8))
                 }
                 if filteredTabs.isEmpty {
                     ContentUnavailableView.search(text: search)
@@ -59,6 +63,8 @@ struct TabOverview: View {
                             ForEach(filteredTabs) { tab in tabItem(tab, list: true).environmentObject(TabCardGeometry()) }
                         }.padding(16)
                     }.scrollDismissesKeyboard(.interactively)
+                    .padding(.horizontal, max(contentInsets.left, contentInsets.right))
+                    .padding(.top, searching ? 0 : contentInsets.top)
                 } else {
                     TabStack(tabs: filteredTabs, selectedID: session.selectedID,
                              reduceMotion: reduceMotion, close: { session.close($0) }) { tab, close in
@@ -71,7 +77,7 @@ struct TabOverview: View {
             }
             .background {
                 BrowserWallpaper()
-                OverviewRegionReader { controlLift = $0 }.allowsHitTesting(false)
+                OverviewRegionReader { controlLift = $0; contentInsets = $1 }.allowsHitTesting(false)
                 if reduceTransparency { Color(uiColor: .systemGroupedBackground) }
                 else { Rectangle().fill(.ultraThinMaterial) }
             }
@@ -88,7 +94,9 @@ struct TabOverview: View {
                 Form {
                     Section("Wallpaper") {
                         PhotosPicker("Choose Photo", selection: $photo, matching: .images)
-                        if wallpaper.image != nil { Button("Remove Photo") { wallpaper.remove() } }
+                        if wallpaper.image != nil || photo != nil {
+                            Button("Remove Photo") { photo = nil; wallpaper.remove(); wallpaperError = nil }
+                        }
                         ColorPicker("Background tint", selection: colorChoice, supportsOpacity: false)
                         if !backgroundHex.isEmpty { Button("Reset Tint") { backgroundHex = "" } }
                         if let wallpaperError { Text(wallpaperError).foregroundStyle(.secondary) }
@@ -99,12 +107,19 @@ struct TabOverview: View {
             }.presentationDetents([.medium])
         }
         .task(id: photo) {
-            guard let photo else { return }
+            guard let selectedPhoto = photo else { return }
+            let token = wallpaper.beginImport()
             do {
-                guard let data = try await photo.loadTransferable(type: Data.self), !Task.isCancelled else { return }
-                try wallpaper.save(data)
+                guard let imported = try await selectedPhoto.loadTransferable(type: WallpaperImport.self) else { throw CocoaError(.fileReadCorruptFile) }
+                guard !Task.isCancelled, photo == selectedPhoto else { return }
+                try wallpaper.save(imported, token: token)
                 wallpaperError = nil
-            } catch { wallpaperError = "This photo couldn't be used. Please choose another." }
+                photo = nil
+            } catch {
+                guard !Task.isCancelled, photo == selectedPhoto else { return }
+                wallpaperError = "This photo couldn't be used. Please choose another."
+                photo = nil
+            }
         }
     }
 
@@ -114,6 +129,7 @@ struct TabOverview: View {
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
         })
         .contextMenu {
+            Button("Close Tab", systemImage: "xmark", role: .destructive) { session.close(tab.id) }
             Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
             if !tab.isPrivate {
                 Menu("Move to Workspace") {
@@ -202,14 +218,14 @@ private struct TabPreview: View {
     }
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ZStack(alignment: geometry.closeOnLeading ? .topLeading : .topTrailing) {
+            ZStack(alignment: .topLeading) {
                 Button(action: select) {
                     GeometryReader { geometry in
                         Group {
                             if tab.showingStartPage {
                                 VStack(alignment: .leading, spacing: 12) {
                                     Text(tab.isPrivate ? "Private Browsing" : "Start Page").font(.headline)
-                                    if !tab.isPrivate { Text("Favorites").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                                    if !tab.isPrivate { Text("Favorites").font(.caption.weight(.semibold)).foregroundStyle(.primary) }
                                     Spacer()
                                 }
                                 .padding(16).frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
@@ -218,8 +234,8 @@ private struct TabPreview: View {
                                     .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
                             } else {
                                 VStack(spacing: 12) {
-                                    Image(systemName: "globe").font(.largeTitle).foregroundStyle(.tertiary)
-                                    Text(tab.siteName).font(.callout).foregroundStyle(.secondary).lineLimit(2)
+                                    Image(systemName: "globe").font(.largeTitle).foregroundStyle(.primary)
+                                    Text(tab.siteName).font(.callout).foregroundStyle(.primary).lineLimit(2)
                                 }
                                 .frame(width: geometry.size.width, height: geometry.size.height)
                             }
@@ -234,47 +250,68 @@ private struct TabPreview: View {
                 .accessibilityLabel("\(tab.isPinned ? "Pinned tab" : "Open tab"), \(tab.title)")
                 .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
 
-                Button(action: close) {
-                    Image(systemName: "xmark").font(.system(size: 16, weight: .medium))
-                        .frame(width: 32, height: 32)
-                        .glassEffect(.regular.interactive(), in: Circle())
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
+                if let origin = geometry.closeOrigin {
+                    Button(action: close) {
+                        Image(systemName: "xmark").font(.system(size: 16, weight: .medium))
+                            .frame(width: 32, height: 32)
+                            .glassEffect(.regular.interactive(), in: Circle())
+                            .frame(width: 48, height: 48).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .position(x: origin.x + 24, y: origin.y + 24)
+                    .accessibilityLabel("Close tab, \(tab.title)")
                 }
-                .buttonStyle(.plain)
-                .padding(2)
-                .accessibilityLabel("Close tab, \(tab.title)")
             }
         }
     }
 }
 
-/// App-owned wallpaper: only an explicitly selected photo is read, downsampled and stored locally.
-@MainActor
-final class BrowserWallpaperStore: ObservableObject {
-    static let shared = BrowserWallpaperStore()
-    @Published private(set) var image: UIImage?
-    private let file = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        .appendingPathComponent("BrowserWallpaper.jpg")
+/// Downsample within the provider file's lifetime; never materialize the full photo or leave a temporary copy.
+struct WallpaperImport: Transferable, Sendable {
+    let jpeg: Data
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(importedContentType: .image) { received in try Self(file: received.file) }
+    }
 
-    private init() { image = UIImage(contentsOfFile: file.path) }
-
-    func save(_ data: Data) throws {
-        guard data.count <= 40 * 1024 * 1024,
-              let source = CGImageSourceCreateWithData(data as CFData, nil),
+    init(file: URL) throws {
+        let size = try file.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? Int.max
+        guard size <= 40 * 1024 * 1024,
+              let source = CGImageSourceCreateWithURL(file as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
                 kCGImageSourceThumbnailMaxPixelSize: 1600
-              ] as CFDictionary), let jpeg = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85) else {
+              ] as CFDictionary), let data = UIImage(cgImage: thumbnail).jpegData(compressionQuality: 0.85) else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try jpeg.write(to: file, options: .atomic)
-        image = UIImage(cgImage: thumbnail)
+        jpeg = data
+    }
+}
+
+/// App-owned wallpaper: bounded file import with stale-result protection.
+@MainActor
+final class BrowserWallpaperStore: ObservableObject {
+    static let shared = BrowserWallpaperStore()
+    @Published private(set) var image: UIImage?
+    private let file: URL
+    private var generation = UUID()
+
+    init(file: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("BrowserWallpaper.jpg")) {
+        self.file = file
+        image = UIImage(contentsOfFile: file.path)
     }
 
-    func remove() { try? FileManager.default.removeItem(at: file); image = nil }
+    func beginImport() -> UUID { generation = UUID(); return generation }
+
+    func save(_ imported: WallpaperImport, token: UUID) throws {
+        guard token == generation else { return }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try imported.jpeg.write(to: file, options: .atomic)
+        image = UIImage(data: imported.jpeg)
+    }
+
+    func remove() { generation = UUID(); try? FileManager.default.removeItem(at: file); image = nil }
 }
 
 struct BrowserWallpaper: View {
@@ -298,31 +335,52 @@ struct BrowserWallpaper: View {
                     LinearGradient(colors: [tint.opacity(0.55), Color(uiColor: .systemGroupedBackground), tint.opacity(0.28)],
                                    startPoint: .topLeading, endPoint: .bottomTrailing)
                 }
-                Color.black.opacity(colorScheme == .dark ? 0.18 : 0)
+                // Keep primary text readable even over pure white/black photos.
+                (colorScheme == .dark ? Color.black : Color.white).opacity(wallpaper.image == nil ? 0 : 0.72)
             }
         }.ignoresSafeArea().accessibilityHidden(true)
     }
 }
 
 private struct OverviewRegionReader: UIViewRepresentable {
-    let changed: (CGFloat) -> Void
+    let changed: (CGFloat, UIEdgeInsets) -> Void
     func makeUIView(context: Context) -> OverviewRegionView { OverviewRegionView() }
     func updateUIView(_ view: OverviewRegionView, context: Context) { view.changed = changed; view.setNeedsLayout() }
 }
 
-private final class OverviewRegionView: UIView {
-    var changed: ((CGFloat) -> Void)?
+final class OverviewRegionView: UIView {
+    var changed: ((CGFloat, UIEdgeInsets) -> Void)?
     private var lastLift: CGFloat = -1
+    private var lastInsets = UIEdgeInsets.zero
     override func layoutSubviews() {
         super.layoutSubviews()
         let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
         let lift = BrowserViewportState.controlLift(in: bounds, height: 72, safeBottom: 0, regions: regions)
-        guard lift != lastLift else { return }
+        let insets = Self.clearInsets(in: bounds, regions: regions)
+        guard lift != lastLift || insets != lastInsets else { return }
+        lastInsets = insets
         lastLift = lift
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.lastLift == lift else { return }
-            self.changed?(lift)
+            guard let self, self.lastLift == lift, self.lastInsets == insets else { return }
+            self.changed?(lift, insets)
         }
+    }
+    static func clearInsets(in bounds: CGRect, regions: [CGRect]) -> UIEdgeInsets {
+        var result = UIEdgeInsets.zero
+        for region in regions {
+            let rect = region.intersection(bounds)
+            guard !rect.isNull, !rect.isEmpty else { continue }
+            let distances = [rect.minY - bounds.minY, bounds.maxX - rect.maxX,
+                             bounds.maxY - rect.maxY, rect.minX - bounds.minX]
+            guard let edge = distances.indices.min(by: { distances[$0] < distances[$1] }) else { continue }
+            switch edge {
+            case 0: result.top = max(result.top, rect.maxY - bounds.minY + 8)
+            case 1: result.right = max(result.right, bounds.maxX - rect.minX + 8)
+            case 2: result.bottom = max(result.bottom, bounds.maxY - rect.minY + 8)
+            default: result.left = max(result.left, rect.maxX - bounds.minX + 8)
+            }
+        }
+        return result
     }
     override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
 }

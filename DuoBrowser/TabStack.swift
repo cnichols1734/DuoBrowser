@@ -55,7 +55,22 @@ final class TabStackLayout: UICollectionViewFlowLayout {
 }
 
 final class TabCardGeometry: ObservableObject {
-    @Published var closeOnLeading = false
+    @Published var closeOrigin: CGPoint? = .zero
+
+    static func closeOrigin(in bounds: CGRect, regions: [CGRect], rightToLeft: Bool) -> CGPoint? {
+        let size: CGFloat = 48
+        guard bounds.width >= size, bounds.height >= size else { return nil }
+        let left = bounds.minX, right = bounds.maxX - size
+        let columns = rightToLeft ? [left, right] : [right, left]
+        let rows = ([bounds.minY] + regions.map { $0.maxY + 4 } + [bounds.maxY - size]).sorted()
+        for y in rows where y >= bounds.minY && y + size <= bounds.maxY {
+            for x in columns {
+                let target = CGRect(x: x, y: y, width: size, height: size)
+                if !regions.contains(where: { $0.intersects(target) }) { return target.origin }
+            }
+        }
+        return nil // A fully covered card retains its context-menu and swipe close actions.
+    }
 }
 
 final class TabStackCell: UICollectionViewCell {
@@ -101,10 +116,12 @@ final class TabStackCell: UICollectionViewCell {
 
     func updateOcclusions() {
         guard let window else { return }
-        let closeFrame = previewView.convert(CGRect(x: max(0, previewView.bounds.width - 48), y: 0, width: 48, height: 48), to: window)
-        let blocked = window.reservedRegions(kind: .occlusion).contains { $0.isActive && $0.frame.intersects(closeFrame) }
-        guard blocked != geometry.closeOnLeading else { return }
-        geometry.closeOnLeading = blocked
+        let regions = window.reservedRegions(kind: .occlusion).filter(\.isActive).map {
+            previewView.convert($0.frame, from: window)
+        }
+        let origin = TabCardGeometry.closeOrigin(in: previewView.bounds, regions: regions,
+                                                rightToLeft: effectiveUserInterfaceLayoutDirection == .rightToLeft)
+        if origin != geometry.closeOrigin { geometry.closeOrigin = origin }
     }
 
     override func prepareForReuse() {
