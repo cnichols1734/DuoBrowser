@@ -32,6 +32,13 @@ struct AddressSuggestionsTests {
         check(AddressSuggestions.decode(Data(repeating: 32, count: 32769), query: "pat").isEmpty, "Bounded response")
         let search = AddressSuggestions.searchURL("example.com & news")
         check(URLComponents(url: search, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == "example.com & news", "Prediction always searches, safely encoded")
+        let firstTab = SearchResult(id: "one", title: "Apple", address: "https://apple.com/", kind: .tab, tabID: UUID())
+        let secondTab = SearchResult(id: "two", title: "Apple", address: "https://apple.com/", kind: .tab, tabID: UUID(), detail: "Work")
+        let bookmark = SearchResult(id: "bookmark", title: "Apple", address: "https://apple.com/#top", kind: .bookmark)
+        let merged = AddressSuggestions.results("ap", local: [firstTab, secondTab, bookmark])
+        check(merged.map(\.id) == ["one", "two"], "Keep distinct tab identities; suppress promoted tab and bookmark duplicates")
+        let blank = SearchResult(id: "blank", title: "Start Page", address: "", kind: .tab, tabID: UUID())
+        check(AddressSuggestions.results("Start Page", local: [blank]).first?.tabID == blank.tabID, "Blank tabs remain valid switch targets")
         print("Address suggestions: \(checks) checks passed")
     }
 }

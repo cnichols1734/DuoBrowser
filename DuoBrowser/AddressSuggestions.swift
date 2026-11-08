@@ -26,6 +26,27 @@ enum AddressSuggestions {
         }
     }
 
+    static func results(_ query: String, local: [SearchResult]) -> [SearchResult] {
+        let popular = websites(for: query).map { website in
+            local.first { $0.kind == .tab && URL(string: $0.address)?.host == URL(string: website.address)?.host &&
+                ["", "/"].contains(URL(string: $0.address)?.path ?? "") && URL(string: $0.address)?.query == nil } ?? website
+        }
+        var destinations = Set<String>()
+        var tabIDs = Set<String>()
+        return (popular + local).filter { result in
+            var url = URLComponents(string: result.address)
+            url?.fragment = nil
+            if url?.path == "/" { url?.path = "" }
+            let key = url?.string ?? result.address
+            if result.kind == .tab {
+                // Two tabs at the same address can have different forms, navigation and workspaces.
+                destinations.insert(key)
+                return tabIDs.insert(result.id).inserted
+            }
+            return destinations.insert(key).inserted
+        }
+    }
+
     /// Only plain search terms go to the provider; never URLs, email, paths, or likely pasted tokens.
     static func remoteQuery(_ input: String, isPrivate: Bool, enabled: Bool, composing: Bool) -> String? {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)

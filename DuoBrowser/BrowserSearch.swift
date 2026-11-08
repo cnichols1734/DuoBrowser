@@ -23,22 +23,9 @@ struct BrowserSearch: View {
         return !value.contains(where: \.isWhitespace) && (value.contains(".") || value.contains("://") || value.hasPrefix("localhost"))
     }
     private var results: [SearchResult] {
-        let local = session.searchResults(query, isPrivate: browser.isPrivate).filter {
-            !hasQuery || WebAddress.valid(URL(string: $0.address)) != nil
-        }
-        let popular = AddressSuggestions.websites(for: query).map { website in
-            local.first { $0.kind == .tab && URL(string: $0.address)?.host == URL(string: website.address)?.host &&
-                ["", "/"].contains(URL(string: $0.address)?.path ?? "") && URL(string: $0.address)?.query == nil } ?? website
-        }
-        var seen = Set<String>()
-        return (popular + local).filter { result in
-            var url = URLComponents(string: result.address)
-            url?.fragment = nil
-            if url?.path == "/" { url?.path = "" }
-            let key = url?.string ?? result.address
-            return seen.insert(key).inserted
-        }
+        AddressSuggestions.results(query, local: session.searchResults(query, isPrivate: browser.isPrivate))
     }
+
     private var remoteQuery: String? {
         guard appActive else { return nil }
         return AddressSuggestions.remoteQuery(query, isPrivate: browser.isPrivate,
