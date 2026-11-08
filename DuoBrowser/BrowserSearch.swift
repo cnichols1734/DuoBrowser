@@ -47,10 +47,13 @@ struct BrowserSearch: View {
     private var visiblePredictions: [String] {
         predictionQuery == remoteQuery ? predictions : []
     }
+    private var showsDirectAction: Bool {
+        hasQuery && (!typeSize.isAccessibilitySize || availableHeight > inputHeight + resultHeight + 180)
+    }
     private var rowCount: Int { results.count + visiblePredictions.count }
     private var resultAreaHeight: CGFloat {
         min(CGFloat(rowCount) * resultHeight,
-            max(resultHeight, min(availableHeight - inputHeight - (hasQuery ? resultHeight : 0) - 100, resultHeight * 4)))
+            max(44, min(availableHeight - inputHeight - (showsDirectAction ? resultHeight : 0) - (typeSize.isAccessibilitySize ? 40 : 100), resultHeight * 4)))
     }
 
     var body: some View {
@@ -85,19 +88,22 @@ struct BrowserSearch: View {
                     .onChange(of: query) { _, _ in proxy.scrollTo("top", anchor: .top) }
                 }
             }
-            if hasQuery {
+            if showsDirectAction {
                 Button(action: navigate) {
                     searchRow(query, detail: isWebsite ? "Open website" : "Search DuckDuckGo")
                 }.buttonStyle(CommandRowStyle())
             }
             if rowCount > 0 || hasQuery { Divider().padding(.horizontal, 20) }
             HStack(spacing: 12) {
-                Image(systemName: browser.isPrivate ? "hand.raised" : "magnifyingglass")
-                    .font(.body.weight(.medium)).foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
+                if !typeSize.isAccessibilitySize {
+                    Image(systemName: browser.isPrivate ? "hand.raised" : "magnifyingglass")
+                        .font(.body.weight(.medium)).foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
                 AddressField(text: $query, submit: navigate, cancel: dismiss, cancelOnEndEditing: false, isComposing: $composing)
                     .frame(height: inputHeight)
                     .accessibilityLabel(browser.isPrivate ? "Private website address or search" : "Website address or search")
+                if typeSize.isAccessibilitySize && !browser.isPrivate { suggestionSettings }
                 Button(action: dismiss) {
                     if typeSize.isAccessibilitySize {
                         Image(systemName: "xmark").frame(width: 44, height: 44)
@@ -107,20 +113,15 @@ struct BrowserSearch: View {
                 .accessibilityLabel("Cancel search")
             }
             .padding(.horizontal, 20).padding(.vertical, 4)
-            HStack {
-                Text(browser.isPrivate ? "Private · suggestions stay on this device" :
-                    onlineSuggestions ? "Search suggestions from DuckDuckGo" : "On-device suggestions")
-                    .font(.caption).foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-                if !browser.isPrivate {
-                    Menu {
-                        Toggle("Search Engine Suggestions", isOn: $onlineSuggestions)
-                        Text("When enabled, search text is sent to DuckDuckGo as you type. Website addresses are excluded.")
-                    } label: {
-                        Image(systemName: "ellipsis.circle").frame(width: 44, height: 44)
-                    }.accessibilityLabel("Search suggestion settings")
-                }
-            }.padding(.horizontal, 20).padding(.bottom, 8)
+            if !typeSize.isAccessibilitySize {
+                HStack {
+                    Text(browser.isPrivate ? "Private · suggestions stay on this device" :
+                        onlineSuggestions ? "Search suggestions from DuckDuckGo" : "On-device suggestions")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    if !browser.isPrivate { suggestionSettings }
+                }.padding(.horizontal, 20).padding(.bottom, 8)
+            }
         }
         .foregroundStyle(.primary)
         .frame(maxWidth: .infinity)
@@ -151,10 +152,21 @@ struct BrowserSearch: View {
         }
     }
 
+    private var suggestionSettings: some View {
+        Menu {
+            Toggle("Search Engine Suggestions", isOn: $onlineSuggestions)
+            Text("When enabled, search text is sent to DuckDuckGo as you type. Website addresses are excluded.")
+        } label: {
+            Image(systemName: "ellipsis.circle").font(.body).frame(minWidth: 44, minHeight: 44)
+        }.accessibilityLabel("Search suggestion settings")
+    }
+
     private func resultRow(_ result: SearchResult) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: result.kind == .tab ? "square.on.square" : result.kind == .bookmark ? "bookmark" : result.kind == .website ? "globe" : "clock")
-                .font(.body).foregroundStyle(.secondary).frame(width: 24)
+            if !typeSize.isAccessibilitySize {
+                Image(systemName: result.kind == .tab ? "square.on.square" : result.kind == .bookmark ? "bookmark" : result.kind == .website ? "globe" : "clock")
+                    .font(.body).foregroundStyle(.secondary).frame(width: 24)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: result.title.isEmpty ? displayAddress(result.address) : result.title)
                     .font(.body.weight(.semibold)).lineLimit(1)
@@ -174,7 +186,9 @@ struct BrowserSearch: View {
 
     private func searchRow(_ phrase: String, detail: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "magnifyingglass").frame(width: 24).foregroundStyle(.secondary)
+            if !typeSize.isAccessibilitySize {
+                Image(systemName: "magnifyingglass").frame(width: 24).foregroundStyle(.secondary)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: phrase).font(.body).lineLimit(1)
                 Text(detail).font(.system(size: metadataSize)).foregroundStyle(.secondary)
