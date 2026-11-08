@@ -239,3 +239,8 @@ Signed development build 9 was installed and launched on the connected iPhone Du
 ### November 8 — 1.0.1 TestFlight preparation
 
 Centered shortcut labels and installed/launched development build10 on the connected Duo before continuing the release review, as requested. The owner then authorized TestFlight1.0.1 and a separate release agent. Fixed the seven tab/wallpaper review findings, added in-app/public privacy documentation, and configured web-content-only ATS for arbitrary browser HTTP navigation. Fourteen additional regression checks pass (87 core total). Detailed findings, evidence and explicit hardware limitations are in `docs/reviews/2026-11-08-testflight/README.md`. Apple approval is not presumed; the default-browser entitlement request remains deferred.
+
+### November 8 — beta review follow-up
+
+- Copilot confirmed the seven original findings resolved. Preserved saved prediction opt-outs without restoring the removed UI, measured full footer rows/bottom inset for occlusion avoidance, and retained redirected home-page URLs for Retina icon resolution.
+- Debug simulator build, 111 portable checks and strict lint pass. Four native regressions added; updated native suite, CI/review and rebuilt 1.0.1 archive are pending before TestFlight upload.

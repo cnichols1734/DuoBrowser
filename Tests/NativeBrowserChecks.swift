@@ -811,6 +811,16 @@ private final class NativeCheckRunner {
         try check(insets.right >= 84, "search and accessible-list controls clear side camera using runtime geometry")
         let top = OverviewRegionView.clearInsets(in: card, regions: [island])
         try check(top.top >= 98, "full-width occlusion reserves header/list top clearance")
+        let wide = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        try check(OverviewRegionView.footerLift(in: wide, height: 104, bottomInset: 34,
+                  regions: [CGRect(x: 18, y: 580, width: 70, height: 30)]) == 94,
+                  "measured two-row footer clears outer occlusion on wide display")
+        try check(OverviewRegionView.footerLift(in: wide, height: 104, bottomInset: 34,
+                  regions: [CGRect(x: 400, y: 540, width: 60, height: 40)]) == 134,
+                  "accessible footer upper mode row uses actual height and bottom inset")
+        try check(OverviewRegionView.footerLift(in: wide, height: 48, bottomInset: 34,
+                  regions: [CGRect(x: 400, y: 540, width: 60, height: 40)]) == 0,
+                  "single-row footer stays in place when clear")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WallpaperChecks-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -864,6 +874,10 @@ private final class NativeCheckRunner {
         try check(candidates.count == 2, "icon discovery rejects credentials, downgrades, data URLs and unsupported vectors")
         try check(candidates.first?.absoluteString == "https://cdn.example.com/touch.png?a=1&b=2", "Retina touch icon ranks above tiny favicon and decodes HTML ampersands")
         try check(candidates.last?.absoluteString == "https://example.com/small.ico", "relative icon resolves at origin")
+        let redirected = WebsiteIconLoader.candidates(in: "<link rel='apple-touch-icon' href='assets/touch.png'>",
+                                                      base: URL(string: "https://www.example.com/en/")!)
+        try check(redirected.first?.absoluteString == "https://www.example.com/en/assets/touch.png",
+                  "relative Retina icon preserves redirected document host and directory")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "IconIsolation", .value: "synthetic"])!
         HTTPCookieStorage.shared.setCookie(cookie)
         defer { HTTPCookieStorage.shared.deleteCookie(cookie) }

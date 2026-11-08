@@ -155,10 +155,10 @@ enum WebsiteIconLoader {
         let session = URLSession(configuration: config, delegate: WebsiteIconRedirects(), delegateQueue: nil)
         defer { session.invalidateAndCancel() }
         let root = url.deletingLastPathComponent()
-        async let fallback = data(from: url, session: session).flatMap(decode)
+        async let fallback = data(from: url, session: session).flatMap { decode($0.data) }
         let page = await data(from: root, session: session, headOnly: true)
-        let html = page.flatMap { String(data: $0, encoding: .utf8) } ?? ""
-        var urls = Array(candidates(in: html, base: root).prefix(3))
+        let html = page.flatMap { String(data: $0.data, encoding: .utf8) } ?? ""
+        var urls = Array(candidates(in: html, base: page?.url ?? root).prefix(3))
         // Reddit advertises only 64px in its head; its own published Retina asset is 192px.
         if ["reddit.com", "www.reddit.com"].contains(root.host?.lowercased() ?? ""),
            let retina = URL(string: "https://www.redditstatic.com/shreddit/assets/favicon/192x192.png") {
@@ -168,7 +168,7 @@ enum WebsiteIconLoader {
         let touch = root.appendingPathComponent("apple-touch-icon.png")
         if !urls.contains(touch) { urls.append(touch) }
         let best = await withTaskGroup(of: UIImage?.self) { group in
-            for candidate in urls { group.addTask { await data(from: candidate, session: session).flatMap(decode) } }
+            for candidate in urls { group.addTask { await data(from: candidate, session: session).flatMap { decode($0.data) } } }
             var best: UIImage?
             for await image in group {
                 if let image, pixels(image) > pixels(best) { best = image }
@@ -185,7 +185,7 @@ enum WebsiteIconLoader {
         return min(cg.width, cg.height)
     }
 
-    private static func data(from url: URL, session: URLSession, headOnly: Bool = false) async -> Data? {
+    private static func data(from url: URL, session: URLSession, headOnly: Bool = false) async -> (data: Data, url: URL)? {
         do {
             var request = URLRequest(url: url)
             if headOnly {
@@ -194,16 +194,17 @@ enum WebsiteIconLoader {
             }
             let (bytes, response) = try await session.bytes(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let finalURL = http.url,
                   headOnly || response.expectedContentLength <= maximumBytes else { return nil }
             var data = Data()
             let limit = headOnly ? 262_144 : maximumBytes
             for try await byte in bytes {
                 try Task.checkCancellation()
-                if data.count >= limit { return headOnly ? data : nil }
+                if data.count >= limit { return headOnly ? (data, finalURL) : nil }
                 data.append(byte)
             }
             try Task.checkCancellation()
-            return data
+            return (data, finalURL)
         } catch { return nil }
     }
 

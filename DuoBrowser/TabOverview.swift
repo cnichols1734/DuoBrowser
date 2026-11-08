@@ -12,6 +12,7 @@ struct TabOverview: View {
     @State private var manageWorkspaces = false
     @State private var appearance = false
     @State private var controlLift: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
     @State private var contentInsets = UIEdgeInsets.zero
     @State private var photo: PhotosPickerItem?
     @State private var wallpaperError: String?
@@ -72,12 +73,15 @@ struct TabOverview: View {
                     }
                 }
                 footer
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
                     .padding(.horizontal, 16).padding(.top, 8)
                     .padding(.bottom, max(8, geometry.safeAreaInsets.bottom) + controlLift)
             }
             .background {
                 BrowserWallpaper()
-                OverviewRegionReader { controlLift = $0; contentInsets = $1 }.allowsHitTesting(false)
+                OverviewRegionReader(footerHeight: footerHeight, bottomInset: max(8, geometry.safeAreaInsets.bottom)) {
+                    controlLift = $0; contentInsets = $1
+                }.allowsHitTesting(false)
                 if reduceTransparency { Color(uiColor: .systemGroupedBackground) }
                 else { Rectangle().fill(.ultraThinMaterial) }
             }
@@ -343,19 +347,26 @@ struct BrowserWallpaper: View {
 }
 
 private struct OverviewRegionReader: UIViewRepresentable {
+    let footerHeight: CGFloat
+    let bottomInset: CGFloat
     let changed: (CGFloat, UIEdgeInsets) -> Void
     func makeUIView(context: Context) -> OverviewRegionView { OverviewRegionView() }
-    func updateUIView(_ view: OverviewRegionView, context: Context) { view.changed = changed; view.setNeedsLayout() }
+    func updateUIView(_ view: OverviewRegionView, context: Context) {
+        view.footerHeight = footerHeight; view.bottomInset = bottomInset
+        view.changed = changed; view.setNeedsLayout()
+    }
 }
 
 final class OverviewRegionView: UIView {
+    var footerHeight: CGFloat = 0
+    var bottomInset: CGFloat = 8
     var changed: ((CGFloat, UIEdgeInsets) -> Void)?
     private var lastLift: CGFloat = -1
     private var lastInsets = UIEdgeInsets.zero
     override func layoutSubviews() {
         super.layoutSubviews()
         let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
-        let lift = BrowserViewportState.controlLift(in: bounds, height: 72, safeBottom: 0, regions: regions)
+        let lift = Self.footerLift(in: bounds, height: footerHeight, bottomInset: bottomInset, regions: regions)
         let insets = Self.clearInsets(in: bounds, regions: regions)
         guard lift != lastLift || insets != lastInsets else { return }
         lastInsets = insets
@@ -364,6 +375,19 @@ final class OverviewRegionView: UIView {
             guard let self, self.lastLift == lift, self.lastInsets == insets else { return }
             self.changed?(lift, insets)
         }
+    }
+    static func footerLift(in bounds: CGRect, height: CGFloat, bottomInset: CGFloat, regions: [CGRect]) -> CGFloat {
+        guard height > 0 else { return 0 }
+        // Measure the actual rows, but always reconstruct their unshifted position to avoid oscillation.
+        let footer = CGRect(x: bounds.minX + 16, y: bounds.maxY - bottomInset - height,
+                            width: max(0, bounds.width - 32), height: height)
+        var lift: CGFloat = 0
+        for _ in 0...regions.count {
+            let hits = regions.filter { $0.intersects(footer.offsetBy(dx: 0, dy: -lift)) }
+            guard let next = hits.map({ footer.maxY - $0.minY + 8 }).max(), next > lift else { break }
+            lift = next
+        }
+        return lift
     }
     static func clearInsets(in bounds: CGRect, regions: [CGRect]) -> UIEdgeInsets {
         var result = UIEdgeInsets.zero

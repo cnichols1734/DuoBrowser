@@ -7,6 +7,8 @@ struct BrowserSearch: View {
     @Binding var query: String
     let availableHeight: CGFloat
     let dismiss: () -> Void
+    // Preserve existing opt-outs while keeping the owner-requested compact UI.
+    @AppStorage("onlineSearchSuggestions") private var onlineSuggestions = true
     @State private var composing = false
     @State private var predictions: [String] = []
     @State private var predictionQuery = ""
@@ -28,7 +30,7 @@ struct BrowserSearch: View {
     private var remoteQuery: String? {
         guard appActive else { return nil }
         return AddressSuggestions.remoteQuery(query, isPrivate: browser.isPrivate,
-                                               enabled: true, composing: composing)
+                                               enabled: onlineSuggestions, composing: composing)
     }
     private var visiblePredictions: [String] {
         predictionQuery == remoteQuery ? predictions : []

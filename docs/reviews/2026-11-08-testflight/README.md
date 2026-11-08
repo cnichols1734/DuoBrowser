@@ -13,9 +13,12 @@ The owner authorized external/public TestFlight preparation and submission on No
 | P1 | Arbitrary wallpaper could obscure start-page/preview text | Appearance-aware 72% contrasting scrim for photos and primary text styles for exposed copy |
 | P1 | Missing accessible in-app privacy policy | Native policy sheet under Page options plus public PRIVACY.md; explicitly describes Google predictions, icon hosts, local storage, deletion and private limits |
 | P1 | General-purpose HTTP web content lacked explicit ATS configuration | Web-content-only ATS exemption, with review justification; native URLSession ATS and system TLS trust retained |
+| P1 | Existing suggestion opt-outs were ignored after hiding the bottom controls | Restore the saved preference gate without restoring the removed section or toggle |
+| P1 | Footer clearance assumed a 72-point centered band | Measure actual footer rows and bottom inset, check full width and successive occlusions |
+| P2 | Redirected home pages resolved relative icons at the original root | Retain final response URL as the icon document base |
 | P2 | Shortcut labels left aligned beneath icons | Centered both the tile stack and wrapped caption; build10 installed/launched on physical Duo first |
 
-The seven existing Copilot findings on PR12 were individually checked against source and addressed by these changes. A second agent independently reviewed the changed wallpaper, geometry, policy and Info.plist code; its additional nil-transfer retry finding was fixed.
+The seven existing Copilot findings on PR12 were individually checked against source and addressed by these changes. The second Copilot review confirmed all seven fixes and identified the three follow-ups above. A second agent independently reviewed the changed wallpaper, geometry, policy and Info.plist code; its additional nil-transfer retry finding was fixed.
 
 ## Technical UI audit
 
@@ -47,3 +50,5 @@ Privacy metadata conservatively discloses Search History and Browsing History fo
 ATS review justification: DuoBrowser is a general-purpose WKWebView browser. Users can navigate to arbitrary HTTP/HTTPS websites, requiring the web-content-only ATS exemption. App-native services retain ATS and certificate validation uses system trust.
 
 References: [Apple review guidelines](https://developer.apple.com/app-store/review/guidelines/), [external TestFlight review](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers), [web-content ATS key](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowsarbitraryloadsinwebcontent).
+
+Follow-up validation: Debug build, 111 portable checks and strict SwiftLint passed after the second review fixes. Four new native regressions cover the measured wide/two-row footer and redirected icon base; the final 91-core native suite and updated CI/review are pending at this commit.
