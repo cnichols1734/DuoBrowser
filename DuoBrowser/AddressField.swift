@@ -39,11 +39,12 @@ struct AddressField: UIViewRepresentable {
     final class Coordinator: NSObject, UITextFieldDelegate {
         var parent: AddressField
         var appliedCompletion: String?
+        var appliedPrefix: String?
         var allowsCompletion = true
         var applying = false
         func refresh(_ field: UITextField) {
             guard field.markedTextRange == nil else { return }
-            if let completed = appliedCompletion, let selection = field.selectedTextRange,
+            if let completed = appliedCompletion, appliedPrefix == parent.text, let selection = field.selectedTextRange,
                field.offset(from: field.beginningOfDocument, to: selection.start) != parent.text.utf16.count ||
                 field.offset(from: field.beginningOfDocument, to: selection.end) != completed.utf16.count {
                 // A user moved the caret or changed the selection; leave native editing alone.
@@ -59,7 +60,7 @@ struct AddressField: UIViewRepresentable {
                 // Recreate positions after replacing text, retaining the typed prefix unselected.
                 let prefix = field.position(from: field.beginningOfDocument, offset: typed.utf16.count) ?? start
                 field.selectedTextRange = field.textRange(from: prefix, to: field.endOfDocument)
-                appliedCompletion = completion
+                appliedCompletion = completion; appliedPrefix = typed
             } else {
                 if field.text != typed { field.text = typed }
                 appliedCompletion = nil
@@ -101,7 +102,7 @@ struct AddressField: UIViewRepresentable {
             return true
         }
         func textFieldDidChangeSelection(_ field: UITextField) {
-            guard !applying, let completed = appliedCompletion, let selection = field.selectedTextRange else { return }
+            guard !applying, appliedPrefix == parent.text, let completed = appliedCompletion, let selection = field.selectedTextRange else { return }
             let start = field.offset(from: field.beginningOfDocument, to: selection.start)
             let end = field.offset(from: field.beginningOfDocument, to: selection.end)
             if start != parent.text.utf16.count || end != completed.utf16.count {

@@ -14,7 +14,7 @@ struct BrowserStartPage: View {
         GeometryReader { geometry in
             let leading = max(20, viewport.nativeInsets.left)
             let trailing = max(20, viewport.nativeInsets.right)
-            let width = max(1, geometry.size.width - leading - trailing)
+            let width = min(760, max(1, geometry.size.width - leading - trailing))
             let columns = max(1, min(typeSize.isAccessibilitySize ? 3 : 6, Int(width / (iconSize + 16))))
             ScrollView {
                 VStack(alignment: .leading, spacing: 32) {

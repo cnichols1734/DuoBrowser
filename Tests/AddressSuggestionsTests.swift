@@ -45,6 +45,14 @@ struct AddressSuggestionsTests {
         check(AddressSuggestions.inlineCompletion("pat ri", candidates: AddressSuggestions.websites(for: "pat")) == nil, "Never replace search phrases")
         check(search.host == "www.google.com" && search.path == "/search", "Predictions search Google")
         check(WebAddress.resolve("patriots schedule")?.host == "www.google.com", "Typed searches use Google")
+        for address in ["http://www.example.org/path/", "https://www.example.org/path/?q=end/", "https://www.example.org:8443/a#fragment", "https://www.example.org/", "https://www.example.org/?q=end/"] {
+            let candidate = SearchResult(id: address, title: "Example", address: address, kind: .bookmark)
+            let displayed = AddressSuggestions.inlineCompletion("ex", candidates: [candidate])!
+            check(AddressSuggestions.acceptedCompletionURL("ex", displayed: displayed, candidates: [candidate])?.absoluteString == address,
+                  "Completion retains exact scheme, www, port, path, query and fragment")
+        }
+        let slashQuery = SearchResult(id: "slash", title: "Example", address: "https://example.org/?q=end/", kind: .bookmark)
+        check(AddressSuggestions.inlineCompletion("ex", candidates: [slashQuery]) == "example.org/?q=end/", "A slash inside a query is never trimmed")
         print("Address suggestions: \(checks) checks passed")
     }
 }

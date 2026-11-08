@@ -55,11 +55,16 @@ enum AddressSuggestions {
             var value = url.absoluteString
             if !input.contains("://"), let range = value.range(of: "://") { value = String(value[range.upperBound...]) }
             if !input.lowercased().hasPrefix("www."), value.hasPrefix("www.") { value.removeFirst(4) }
-            if value.hasSuffix("/") { value.removeLast() }
+            if url.path == "/", url.query == nil, url.fragment == nil, value.hasSuffix("/") { value.removeLast() }
             guard value.lowercased().hasPrefix(input.lowercased()), value.count > input.count else { continue }
             return input + value.dropFirst(input.count)
         }
         return nil
+    }
+
+    static func acceptedCompletionURL(_ input: String, displayed: String, candidates: [SearchResult]) -> URL? {
+        candidates.first { inlineCompletion(input, candidates: [$0]) == displayed }
+            .flatMap { WebAddress.valid(URL(string: $0.address)) }
     }
 
     /// Only plain search terms go to the provider; never URLs, email, paths, or likely pasted tokens.

@@ -810,6 +810,11 @@ private final class NativeCheckRunner {
         try check(field.text == "goog", "asynchronous results do not reinsert rejected suffix")
         _ = coordinator.textFieldShouldClear(field); field.text = ""; coordinator.changed(field); refresh()
         try check(typed.isEmpty && field.text == "", "clear removes typed text and completion")
+        type("g"); type("o")
+        typed = "google flights"; refresh()
+        try check(field.text == "google flights", "prediction arrow replaces an active domain completion")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "google flights", "Go submits the selected phrase rather than the previous domain")
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FavoriteChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
         let defaults = UserDefaults(suiteName: "DuoBrowser.FavoriteChecks")!
@@ -820,6 +825,10 @@ private final class NativeCheckRunner {
         try check(try session.importFavorites(entries) == 0 && session.bookmarks.count == 2, "reimport skips duplicates")
         try check(store.load()?.bookmarks.map(\.title) == ["One", "Two"], "import order survives archive reload")
         try check(session.history.isEmpty, "bookmark import never creates browsing history")
+        let many = (0..<501).map { LibraryEntry(address: "https://example.org/item/\($0)", title: "Item \($0)") }
+        try check(try session.importFavorites(many) == 498 && session.bookmarks.count == 500, "import respects remaining capacity")
+        let saved = Set(session.bookmarks.map(\.address))
+        try check(Set(many.map(\.address)).subtracting(saved).count == 3, "capacity overflow remains identifiable for retry")
     }
 
     func run() async {

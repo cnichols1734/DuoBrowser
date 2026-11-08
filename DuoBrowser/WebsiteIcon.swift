@@ -29,12 +29,20 @@ struct WebsiteIcon: View {
 final class WebsiteIconLoader {
     static let shared = WebsiteIconLoader()
     private let cache = NSCache<NSString, UIImage>()
-    private var failed = Set<String>()
+    private var pending: [String: Task<UIImage?, Never>] = [:]
     private init() { cache.countLimit = 100; cache.totalCostLimit = 6 * 1024 * 1024 }
     func icon(for address: String) async -> UIImage? {
         guard let url = WebAddress.valid(URL(string: address)), url.scheme == "https", let host = url.host else { return nil }
-        if let cached = cache.object(forKey: host as NSString) { return cached }
-        guard !failed.contains(host) else { return nil }
+        let key = host + ":" + String(url.port ?? 443)
+        if let cached = cache.object(forKey: key as NSString) { return cached }
+        if let pending = pending[key] { return await pending.value }
+        let task = Task { await load(url, host: host, key: key) }
+        pending[key] = task
+        let result = await task.value
+        pending[key] = nil
+        return result
+    }
+    private func load(_ url: URL, host: String, key: String) async -> UIImage? {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil; configuration.urlCache = nil
@@ -93,11 +101,10 @@ final class WebsiteIconLoader {
                     kCGImageSourceCreateThumbnailWithTransform: true
                 ] as CFDictionary) else { continue }
                 let image = UIImage(cgImage: thumbnail)
-                cache.setObject(image, forKey: host as NSString, cost: thumbnail.bytesPerRow * thumbnail.height)
+                cache.setObject(image, forKey: key as NSString, cost: thumbnail.bytesPerRow * thumbnail.height)
                 return image
             } catch { if Task.isCancelled { return nil } }
         }
-        if failed.count < 500 { failed.insert(host) }
         return nil
     }
     nonisolated private func read(_ url: URL, session: URLSession, limit: Int) async throws -> Data {

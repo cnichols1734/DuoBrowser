@@ -42,11 +42,16 @@ struct SafariImportView: View {
                     }
                     Button("Import Favorites") {
                         do {
-                            let count = try session.importFavorites(preview.entries(in: folder))
-                            message = count == 0 ? "These favorites are already saved." : "Added \(count) favorites."
-                            finished = true
+                            let entries = preview.entries(in: folder)
+                            let count = try session.importFavorites(entries)
+                            let saved = Set(session.bookmarks.map(\.address))
+                            let remaining = Set(entries.map(\.address)).subtracting(saved).count
+                            finished = remaining == 0
+                            message = remaining > 0
+                                ? "Added \(count) favorites. \(remaining) websites remain unsaved because the 500-favorite limit was reached. Remove some favorites, then retry this import."
+                                : count == 0 ? "These favorites are already saved." : "Added \(count) favorites."
                         } catch { message = error.localizedDescription }
-                    }.disabled(preview.entries(in: folder).isEmpty)
+                    }.disabled(loading || preview.entries(in: folder).isEmpty)
                 } else {
                     Section {
                         Text("Bring your Safari favorites into DuoBrowser.")
@@ -70,7 +75,7 @@ struct SafariImportView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.disabled(loading) } }
             .fileImporter(isPresented: $picking, allowedContentTypes: [.zip, .html], allowsMultipleSelection: false) { result in
                 guard case let .success(urls) = result, let url = urls.first else { return }
-                loading = true
+                loading = true; preview = nil; finished = false
                 Task {
                     do {
                         let value = try await Task.detached(priority: .userInitiated) { try SafariBookmarkImport.read(url) }.value

@@ -76,7 +76,7 @@ struct BrowserSearch: View {
             }
             HStack(spacing: 8) {
                 AddressField(text: $query, submit: { navigate(query) }, cancel: dismiss, cancelOnEndEditing: false,
-                             completion: completion, submitValue: navigate, isComposing: $composing)
+                             completion: completion, submitValue: submitAddress, isComposing: $composing)
                     .accessibilityLabel(browser.isPrivate ? "Private website address or search" : "Website address or search")
                     .frame(height: max(48, inputHeight)).padding(.horizontal, 16)
                     .glassEffect(.regular, in: Capsule())
@@ -120,7 +120,12 @@ struct BrowserSearch: View {
                 Text(verbatim: displayAddress(result.address)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer(minLength: 0)
-            if result.kind == .tab { Text("Switch").font(.caption).foregroundStyle(.secondary) }
+            if result.kind == .tab {
+                VStack(alignment: .trailing) {
+                    Text("Switch")
+                    if !result.detail.isEmpty { Text(verbatim: result.detail) }
+                }.font(.caption).foregroundStyle(.secondary)
+            }
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 56, alignment: .leading).contentShape(Rectangle())
     }
     private func searchRow(_ phrase: String) -> some View {
@@ -136,10 +141,15 @@ struct BrowserSearch: View {
         }.padding(.horizontal, 16).padding(.vertical, 8).frame(maxWidth: .infinity, minHeight: 50, alignment: .leading).contentShape(Rectangle())
     }
     private func search(_ phrase: String) { browser.navigate(to: AddressSuggestions.searchURL(phrase).absoluteString); dismiss() }
+    private func submitAddress(_ value: String) {
+        let original = AddressSuggestions.acceptedCompletionURL(query, displayed: value, candidates: results)
+        navigate(original?.absoluteString ?? value)
+    }
     private func navigate(_ value: String) { guard !value.isEmpty else { return }; browser.navigate(to: value); dismiss() }
     private func displayAddress(_ address: String) -> String {
         guard let url = URLComponents(string: address), let host = url.host else { return address }
-        return host + (url.percentEncodedPath == "/" ? "" : url.percentEncodedPath)
+        return host + (url.port.map { ":\($0)" } ?? "") + (url.percentEncodedPath == "/" ? "" : url.percentEncodedPath)
+            + (url.percentEncodedQuery.map { "?" + $0 } ?? "") + (url.percentEncodedFragment.map { "#" + $0 } ?? "")
     }
     private func open(_ result: SearchResult) {
         dismiss()
