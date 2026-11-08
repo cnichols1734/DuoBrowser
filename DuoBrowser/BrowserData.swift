@@ -20,7 +20,7 @@ enum WebAddress {
         if hostLike { return valid(URL(string: "https://" + text)) }
         // Explicit executable schemes are never interpreted as navigation.
         if ["javascript:", "data:", "file:", "about:", "blob:"].contains(where: { text.lowercased().hasPrefix($0) }) { return nil }
-        var search = URLComponents(string: "https://duckduckgo.com/")!
+        var search = URLComponents(string: "https://www.google.com/search")!
         search.queryItems = [URLQueryItem(name: "q", value: text)]
         return search.url
     }

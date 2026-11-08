@@ -508,6 +508,7 @@ final class BrowserChromeState: ObservableObject {
 /// Geometry-only state: observing this never subscribes the web-view wrapper to per-scroll progress.
 @MainActor
 final class BrowserViewportState: ObservableObject {
+    @Published var nativeInsets = UIEdgeInsets.zero
     @Published var bottomControlLift: CGFloat = 0
 
     static func controlLift(in bounds: CGRect, height: CGFloat, safeBottom: CGFloat, regions: [CGRect]) -> CGFloat {

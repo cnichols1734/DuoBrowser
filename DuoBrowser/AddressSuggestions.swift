@@ -47,6 +47,21 @@ enum AddressSuggestions {
         }
     }
 
+    static func inlineCompletion(_ input: String, candidates: [SearchResult]) -> String? {
+        guard !input.isEmpty, input == input.trimmingCharacters(in: .whitespacesAndNewlines),
+              !input.contains(where: \.isWhitespace) else { return nil }
+        for item in candidates {
+            guard let url = WebAddress.valid(URL(string: item.address)) else { continue }
+            var value = url.absoluteString
+            if !input.contains("://"), let range = value.range(of: "://") { value = String(value[range.upperBound...]) }
+            if !input.lowercased().hasPrefix("www."), value.hasPrefix("www.") { value.removeFirst(4) }
+            if value.hasSuffix("/") { value.removeLast() }
+            guard value.lowercased().hasPrefix(input.lowercased()), value.count > input.count else { continue }
+            return input + value.dropFirst(input.count)
+        }
+        return nil
+    }
+
     /// Only plain search terms go to the provider; never URLs, email, paths, or likely pasted tokens.
     static func remoteQuery(_ input: String, isPrivate: Bool, enabled: Bool, composing: Bool) -> String? {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,7 +88,7 @@ enum AddressSuggestions {
     }
 
     static func searchURL(_ phrase: String) -> URL {
-        var url = URLComponents(string: "https://duckduckgo.com/")!
+        var url = URLComponents(string: "https://www.google.com/search")!
         url.queryItems = [URLQueryItem(name: "q", value: phrase)]
         return url.url!
     }
@@ -96,8 +111,8 @@ final class SearchSuggestionClient: NSObject, URLSessionTaskDelegate, @unchecked
         configuration.timeoutIntervalForResource = 5
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        var url = URLComponents(string: "https://duckduckgo.com/ac/")!
-        url.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "type", value: "list")]
+        var url = URLComponents(string: "https://www.google.com/complete/search")!
+        url.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "client", value: "firefox"), URLQueryItem(name: "oe", value: "utf-8")]
         let (bytes, response) = try await session.bytes(from: url.url!)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return [] }
         var data = Data()

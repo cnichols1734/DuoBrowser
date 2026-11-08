@@ -75,3 +75,11 @@ Apple's task guidance lists code generation among uses the on-device model may n
 - [DuckDuckGo autocomplete settings](https://duckduckgo.com/duckduckgo-help-pages/privacy-pro/turn-off-autocomplete) distinguish autocomplete and recently visited sites. DuoBrowser keeps its existing DuckDuckGo search destination; a synthetic `pat` request to its autocomplete endpoint returned live search phrases on November 8.
 
 Implementation: immediate bundled website prefixes, followed by real DuckDuckGo predictions and local results in the existing keyboard-adjacent native palette. The bundled sites are a curated convenience list, not a measured popularity ranking. Predictions are optional, debounced, cancelled when obsolete, and excluded for private tabs, URL-like input and marked-text composition. No suggested website is preloaded. Predictions always perform a search, even when their text looks like a URL.
+
+## Safari Favorites and Google search — November 8, 2026
+
+The owner’s two Safari screenshots supersede the earlier command-palette design. Native system text, Favorites proportions, and bottom inline completion guide the implementation; Safari private UI code is not used. Custom Safari wallpaper and its tracker-count report are not copied or fabricated.
+
+[Apple’s Safari export documentation](https://developer.apple.com/documentation/safariservices/importing-data-exported-from-safari) provides `SFSafariSettings.openExportBrowsingDataSettings`, followed by a user-shared ZIP archive containing Netscape-format bookmark HTML. The installed SDK confirms the API is public on iOS 26+. Localized HTML filenames are supported. On the QA simulator, the shortcut returned an error; the app displayed the manual Settings route. Native Files selection, preview, and importing a synthetic Safari ZIP succeeded.
+
+Google is now the owner-selected default. [Chromium’s suggestion service tests](https://chromium.googlesource.com/chromium/src/+/refs/heads/main/components/omnibox/browser/remote_suggestions_service_unittest.cc) identify Google’s completion endpoint. A synthetic `goog` request to its browser JSON endpoint returned real suggestions. Requests remain optional, cancellable, bounded and excluded from private typing. Failures retain local results; this endpoint has no availability guarantee.

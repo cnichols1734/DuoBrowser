@@ -36,7 +36,7 @@ struct ActiveBrowserView: View {
                     .accessibilityHidden(showingSearch || browser.showingStartPage)
                     .allowsHitTesting(!showingSearch && !browser.showingStartPage)
                 if browser.showingStartPage {
-                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport) { showingSearch = true }
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport)
                         .blur(radius: showingSearch ? 5 : 0)
                         .accessibilityHidden(showingSearch)
                         .allowsHitTesting(!showingSearch)
@@ -62,14 +62,9 @@ struct ActiveBrowserView: View {
                 .accessibilityHidden(showingSearch)
 
                 if showingSearch {
-                    Color.black.opacity(0.18)
-                        .ignoresSafeArea(.container)
-                        .onTapGesture { closeSearch() }
-                        .accessibilityHidden(true)
-                    BrowserSearch(session: session, browser: browser, query: $input,
-                                  availableHeight: geometry.size.height, dismiss: closeSearch)
-                        .padding(.horizontal, browser.fullWidthLayout ? 16 : max(16, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing)))
-                        .padding(.bottom, 12 + (keyboardVisible ? 0 : viewport.bottomControlLift))
+                    BrowserSearch(session: session, browser: browser, viewport: viewport, query: $input,
+                                  dismiss: closeSearch)
+                        .padding(.bottom, keyboardVisible ? 0 : viewport.bottomControlLift)
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
                 }
             }
@@ -155,6 +150,10 @@ final class ViewportView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         webView.frame = fullWidth ? bounds : safeAreaLayoutGuide.layoutFrame
+        let nativeInsets = safeAreaInsets
+        if browser?.viewport.nativeInsets != nativeInsets {
+            DispatchQueue.main.async { [weak self] in self?.browser?.viewport.nativeInsets = nativeInsets }
+        }
         // Keep native controls clear of bottom camera/system occlusions in rotated poses.
         let occlusions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
         let lift = BrowserViewportState.controlLift(in: bounds, height: expandedHeight,
@@ -199,72 +198,5 @@ final class ViewportView: UIView {
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
         webView.scrollView.contentInset.bottom = 0
         webView.scrollView.verticalScrollIndicatorInsets = inset
-    }
-}
-
-private struct BrowserStartPage: View {
-    @ObservedObject var session: BrowserSession
-    @ObservedObject var browser: BrowserModel
-    @ObservedObject var chrome: BrowserChromeState
-    @ObservedObject var viewport: BrowserViewportState
-    let search: () -> Void
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
-                    HStack {
-                        Text(browser.isPrivate ? "Private Browsing" : "Start Page")
-                            .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.trailing, geometry.safeAreaInsets.trailing)
-                    if browser.isPrivate {
-                        Label("Private browsing", systemImage: "hand.raised.fill")
-                            .font(.headline)
-                        Text("Your private tabs and browsing history aren't saved.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
-                        section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
-                    }
-                    Button(action: search) {
-                        Label("Search or enter a website", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            .padding(.horizontal, 16)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16))
-                }
-                .frame(maxWidth: 680, alignment: .leading)
-                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
-                .frame(maxWidth: .infinity)
-            }
-            .background(Color(uiColor: .systemGroupedBackground))
-        }
-    }
-
-    private func section(_ title: String, entries: [LibraryEntry], empty: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-            if entries.isEmpty {
-                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 150 : 100), spacing: 16)], alignment: .leading, spacing: 18) {
-                    ForEach(entries) { entry in
-                        Button { browser.navigate(to: entry.address) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Image(systemName: icon).font(.title3).frame(width: 48, height: 48)
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                                Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
-                                    .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                            }.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityHint("Opens this page")
-                    }
-                }
-            }
-        }
     }
 }

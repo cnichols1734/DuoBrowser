@@ -379,6 +379,18 @@ final class BrowserSession: ObservableObject {
         bookmarks = Array(bookmarks.prefix(500))
         saveNow()
     }
+    func importFavorites(_ entries: [LibraryEntry]) throws -> Int {
+        let previous = bookmarks
+        var seen = Set(bookmarks.map(\.address))
+        let added = entries.filter { WebAddress.valid(URL(string: $0.address)) != nil && seen.insert($0.address).inserted }
+            .prefix(max(0, 500 - bookmarks.count))
+        bookmarks += added
+        guard saveNow() else {
+            bookmarks = previous
+            throw CocoaError(.fileWriteUnknown)
+        }
+        return added.count
+    }
     func deleteHistory(ids: Set<UUID>? = nil) {
         if let ids { history.removeAll { ids.contains($0.id) } } else { history.removeAll() }
         saveNow(replaceBackup: true)

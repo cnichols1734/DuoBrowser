@@ -39,6 +39,12 @@ struct AddressSuggestionsTests {
         check(merged.map(\.id) == ["one", "two"], "Keep distinct tab identities; suppress promoted tab and bookmark duplicates")
         let blank = SearchResult(id: "blank", title: "Start Page", address: "", kind: .tab, tabID: UUID())
         check(AddressSuggestions.results("Start Page", local: [blank]).first?.tabID == blank.tabID, "Blank tabs remain valid switch targets")
+        check(AddressSuggestions.inlineCompletion("go", candidates: AddressSuggestions.websites(for: "go")) == "google.com", "Inline domain completion")
+        check(AddressSuggestions.inlineCompletion("G", candidates: AddressSuggestions.websites(for: "G")) == "Google.com", "Keep typed case")
+        check(AddressSuggestions.inlineCompletion("google.com", candidates: AddressSuggestions.websites(for: "google.com")) == nil, "No suffix for complete domain")
+        check(AddressSuggestions.inlineCompletion("pat ri", candidates: AddressSuggestions.websites(for: "pat")) == nil, "Never replace search phrases")
+        check(search.host == "www.google.com" && search.path == "/search", "Predictions search Google")
+        check(WebAddress.resolve("patriots schedule")?.host == "www.google.com", "Typed searches use Google")
         print("Address suggestions: \(checks) checks passed")
     }
 }

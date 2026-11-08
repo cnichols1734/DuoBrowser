@@ -773,7 +773,62 @@ private final class NativeCheckRunner {
         try? results.joined(separator: "\n").write(to: destination, atomically: true, encoding: .utf8)
     }
 
+    func addressFieldChecks() throws {
+        var typed = "", submitted = ""
+        var input = AddressField(text: Binding(get: { typed }, set: { typed = $0 }), submit: {}, cancel: {},
+                                 cancelOnEndEditing: false, submitValue: { submitted = $0 })
+        let coordinator = input.makeCoordinator(), field = UITextField()
+        field.frame = CGRect(x: 20, y: 100, width: 300, height: 48)
+        host.view.addSubview(field); field.becomeFirstResponder()
+        defer { field.resignFirstResponder(); field.removeFromSuperview() }
+        func refresh() {
+            input.completion = AddressSuggestions.inlineCompletion(typed, candidates: AddressSuggestions.websites(for: typed))
+            coordinator.parent = input
+            coordinator.refresh(field)
+        }
+        func type(_ value: String) {
+            let selected = field.selectedTextRange
+            let start = selected.map { field.offset(from: field.beginningOfDocument, to: $0.start) } ?? (field.text ?? "").utf16.count
+            let length = selected.map { field.offset(from: $0.start, to: $0.end) } ?? 0
+            let range = NSRange(location: start, length: length)
+            if coordinator.textField(field, shouldChangeCharactersIn: range, replacementString: value) {
+                field.text = ((field.text ?? "") as NSString).replacingCharacters(in: range, with: value)
+                coordinator.changed(field)
+            }
+            refresh()
+        }
+        for letter in "goog" { type(String(letter)) }
+        try check(typed == "goog" && field.text == "google.com", "rapid typing preserves raw prefix and completed domain")
+        try check(field.selectedTextRange.map { field.offset(from: field.beginningOfDocument, to: $0.start) } == 4,
+                  "only untyped completion suffix is selected")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "google.com", "Go submits completed website")
+        _ = coordinator.textField(field, shouldChangeCharactersIn: NSRange(location: 4, length: 6), replacementString: "")
+        refresh()
+        try check(typed == "goog" && field.text == "goog", "Backspace removes suffix without deleting typed prefix")
+        refresh()
+        try check(field.text == "goog", "asynchronous results do not reinsert rejected suffix")
+        _ = coordinator.textFieldShouldClear(field); field.text = ""; coordinator.changed(field); refresh()
+        try check(typed.isEmpty && field.text == "", "clear removes typed text and completion")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("FavoriteChecks-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let defaults = UserDefaults(suiteName: "DuoBrowser.FavoriteChecks")!
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        let entries = [LibraryEntry(address: "https://example.org/one", title: "One"), LibraryEntry(address: "https://example.org/two", title: "Two")]
+        try check(try session.importFavorites(entries) == 2, "import saves selected favorites")
+        try check(try session.importFavorites(entries) == 0 && session.bookmarks.count == 2, "reimport skips duplicates")
+        try check(store.load()?.bookmarks.map(\.title) == ["One", "Two"], "import order survives archive reload")
+        try check(session.history.isEmpty, "bookmark import never creates browsing history")
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--address-field-checks") {
+            do { try addressFieldChecks() } catch { results.append("FAIL: \(error)") }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AddressFieldChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
             do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
