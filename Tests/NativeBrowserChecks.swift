@@ -803,12 +803,24 @@ private final class NativeCheckRunner {
         try check(!WebsiteIconLoader.redirectAllowed(URL(string: "http://cdn.example.com/icon.png")), "icons reject insecure redirects")
         try check(WebsiteIconLoader.decode(Data("not an image".utf8)) == nil, "invalid favicon produces safe fallback")
         try check(WebsiteIconLoader.decode(Data(repeating: 0, count: WebsiteIconLoader.maximumBytes + 1)) == nil, "oversized favicon is rejected")
+        let html = """
+        <link rel='icon' href='/small.ico' sizes='16x16'>
+        <link href='//cdn.example.com/touch.png?a=1&amp;b=2' sizes='192x192' rel='apple-touch-icon'>
+        <link rel='icon' sizes='512x512' href='http://downgrade.example/icon.png'>
+        <link rel='icon' sizes='512x512' href='https://user:secret@example.com/icon.png'>
+        <link rel='icon' sizes='512x512' href='data:image/png;base64,invalid'>
+        <link rel='icon' sizes='512x512' type='image/svg+xml' href='/icon.svg'>
+        """
+        let candidates = WebsiteIconLoader.candidates(in: html, base: URL(string: "https://example.com/")!)
+        try check(candidates.count == 2, "icon discovery rejects credentials, downgrades, data URLs and unsupported vectors")
+        try check(candidates.first?.absoluteString == "https://cdn.example.com/touch.png?a=1&b=2", "Retina touch icon ranks above tiny favicon and decodes HTML ampersands")
+        try check(candidates.last?.absoluteString == "https://example.com/small.ico", "relative icon resolves at origin")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "IconIsolation", .value: "synthetic"])!
         HTTPCookieStorage.shared.setCookie(cookie)
         defer { HTTPCookieStorage.shared.deleteCookie(cookie) }
         let store = WebsiteIconStore()
         let loaded = await store.image(for: "http://127.0.0.1:8765/ignored?secret=not-sent")
-        try check(loaded != nil, "favicon loads without shared cookies or credentials")
+        try check(loaded?.cgImage?.width == 144 && loaded?.cgImage?.height == 144, "Retina touch icon wins over 16-pixel favicon without shared cookies or credentials")
         try check(loaded.map { max($0.size.width, $0.size.height) <= 144 } == true, "favicon decode has bounded pixel dimensions")
         let cached = await store.image(for: "http://127.0.0.1:8765/other-page")
         try check(cached === loaded, "same-origin shortcuts reuse the in-memory icon")
@@ -930,6 +942,20 @@ private final class NativeCheckRunner {
             mount(normal)
             results.append("STEP: normal fixture loaded")
             _ = try await js(normal, "document.cookie='profile=normal;path=/'; localStorage.setItem('profile','normal');document.querySelector('#kept').value='unsent synthetic value'")
+            let priorID = session.selectedID
+            try check(!session.openExternalURL(URL(string: "javascript:alert(1)")!) && session.selectedID == priorID,
+                      "external handler rejects nonweb schemes without disturbing current tab")
+            try check(session.openExternalURL(URL(string: "http://127.0.0.1:8765/external?value=one#section")!), "external HTTP link accepted")
+            let external = session.selected
+            mount(external)
+            try await wait { !external.webView.isLoading && external.webView.url?.path == "/external" }
+            try check(external.id != normal.id && external.webView.url?.query == "value=one" && external.webView.url?.fragment == "section",
+                      "external link opens exact URL in a separate tab")
+            session.close(external.id)
+            session.select(normal.id)
+            mount(normal)
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "unsent synthetic value",
+                      "external navigation preserves existing form draft")
             normal.testNavigationObserver = { [weak self] in self?.results.append($0) }
             _ = try await js(normal, "(()=>{let f=document.createElement('iframe');f.id='srcdoc-test';f.srcdoc='<p>embedded fixture</p>';document.body.append(f)})()")
             results.append("STEP: srcdoc created")
@@ -948,6 +974,11 @@ private final class NativeCheckRunner {
             try check(try await js(firstPrivate, "document.cookie") as? String == "", "private cookie isolation")
             try check(try await js(firstPrivate, "localStorage.getItem('profile')") is NSNull, "private localStorage isolation")
             _ = try await js(firstPrivate, "document.cookie='profile=private;path=/';localStorage.setItem('profile','private')")
+            try check(session.openExternalURL(URL(string: "http://127.0.0.1:8765/external-private")!), "external link accepted in private mode")
+            let externalPrivate = session.selected
+            try check(externalPrivate.isPrivate && !externalPrivate.webView.configuration.websiteDataStore.isPersistent,
+                      "external link preserves ephemeral private mode")
+            session.close(externalPrivate.id)
             let secondPrivate = session.newTab()
             try await load(secondPrivate, "private-second")
             try check((try await js(secondPrivate, "document.cookie") as? String)?.contains("profile=private") == true, "private tabs share only their ephemeral session")

@@ -177,6 +177,16 @@ final class BrowserSession: ObservableObject {
         return tab
     }
 
+    /// External links open separately so existing forms/navigation and private mode are preserved.
+    @discardableResult
+    func openExternalURL(_ url: URL) -> Bool {
+        guard let valid = WebAddress.valid(url), tabs.count < 200 else { return false }
+        showingLibrary = false
+        showingWorkspaces = false
+        newTab(url: valid)
+        return true
+    }
+
     private func rememberSelection() {
         if privateMode { lastPrivateID = selectedID } else { lastNormalID = selectedID }
     }

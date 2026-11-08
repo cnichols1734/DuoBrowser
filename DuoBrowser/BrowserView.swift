@@ -10,6 +10,7 @@ struct BrowserView: View {
     var body: some View {
         BrowserZoomPresenter(session: session)
             .ignoresSafeArea(.container)
+            .onOpenURL { session.openExternalURL($0) }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -253,7 +254,7 @@ private struct BrowserStartPage: View {
                                 WebsiteIcon(address: entry.address)
                                 Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
                                     .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                            }.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading).contentShape(Rectangle())
+                            }.frame(maxWidth: .infinity, minHeight: 96, alignment: .topLeading).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityHint("Opens this page")
                     }
                 }
