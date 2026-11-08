@@ -12,7 +12,9 @@ struct BrowserSearch: View {
     @State private var predictions: [String] = []
     @State private var predictionQuery = ""
     @State private var appActive = UIApplication.shared.applicationState == .active
+    @Environment(\.dynamicTypeSize) private var typeSize
     @ScaledMetric(relativeTo: .body) private var inputHeight = 48.0
+    @ScaledMetric(relativeTo: .title2) private var resultIconSize = 30.0
 
     private var hasQuery: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     private var results: [SearchResult] { AddressSuggestions.results(query, local: session.searchResults(query, isPrivate: browser.isPrivate)) }
@@ -39,9 +41,10 @@ struct BrowserSearch: View {
                             HStack {
                                 Text(browser.isPrivate || !onlineSuggestions ? "Search" : "Google Suggestions")
                                     .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
                                 Spacer()
                                 if !browser.isPrivate { suggestionSettings }
-                            }.padding(.horizontal, 16).frame(height: 32)
+                            }.padding(.horizontal, 16).frame(height: typeSize.isAccessibilitySize ? nil : 32)
                             Button { search(query) } label: { searchRow(query) }.buttonStyle(.plain)
                             ForEach(visiblePredictions, id: \.self) { phrase in
                                 HStack(spacing: 0) {
@@ -110,7 +113,7 @@ struct BrowserSearch: View {
     private func destination(_ result: SearchResult) -> some View {
         HStack(spacing: 12) {
             Image(systemName: result.kind == .tab ? "square.on.square" : result.kind == .bookmark ? "bookmark" : result.kind == .history ? "clock" : "globe")
-                .font(.title2).frame(width: 30, height: 30)
+                .font(.title2).frame(width: resultIconSize, height: resultIconSize)
                 .background(Color(uiColor: .quaternarySystemFill), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: result.kind == .website ? displayAddress(result.address) : result.title).font(.body).lineLimit(1)
@@ -122,7 +125,7 @@ struct BrowserSearch: View {
     }
     private func searchRow(_ phrase: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary).frame(width: 30, height: 30)
+            Image(systemName: "magnifyingglass").font(.title2).foregroundStyle(.secondary).frame(width: resultIconSize, height: resultIconSize)
                 .background(Color(uiColor: .quaternarySystemFill), in: RoundedRectangle(cornerRadius: 10))
             Group {
                 if phrase.lowercased().hasPrefix(query.lowercased()), !query.isEmpty {
