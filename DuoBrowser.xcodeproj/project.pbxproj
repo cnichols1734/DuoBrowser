@@ -5,6 +5,10 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"A1DDE5500000000000000003" = { isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+"A1DDE5500000000000000004" = { isa = PBXBuildFile; fileRef = "A1DDE5500000000000000003"; };
+"A1DDE5500000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AddressSuggestions.swift; sourceTree = "<group>"; };
+"A1DDE5500000000000000002" = { isa = PBXBuildFile; fileRef = "A1DDE5500000000000000001"; };
 "CC6600000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserZoomPresenter.swift; sourceTree = "<group>"; };
 "CC6600000000000000000002" = { isa = PBXBuildFile; fileRef = "CC6600000000000000000001"; };
 "AB7290C02026103000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabStack.swift; sourceTree = "<group>"; };
@@ -159,6 +163,8 @@
 		"482182478A3ECD4745BEA917" = {
 			"isa" = "PBXGroup";
 			"children" = (
+"A1DDE5500000000000000003",
+"A1DDE5500000000000000001",
 				"41D68964F29244DDA0000001",
 				"80E262EA78178C607CB98FD6",
 				"B7F643DAAB884B9ACBDD9281",
@@ -211,6 +217,7 @@
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+"A1DDE5500000000000000002",
 "CC6600000000000000000002",
 "AB7290C02026103000000002",
 				"06B4A2B885D6259AD4F62EDE",
@@ -240,6 +247,7 @@
 			"isa" = "PBXResourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+"A1DDE5500000000000000004",
 				"41D68964F29244DDA0000002",
 				"280EC78FD2F34318F57091C8",
 				"AABB11223344556677880002",
@@ -278,6 +286,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER" = "dev.local.DuoBrowser";
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
+"INFOPLIST_KEY_ITSAppUsesNonExemptEncryption" = "NO";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
 				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
                 "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
@@ -319,6 +328,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER" = "dev.local.DuoBrowser";
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
+"INFOPLIST_KEY_ITSAppUsesNonExemptEncryption" = "NO";
 				"INFOPLIST_KEY_CFBundleDisplayName" = "DuoBrowser";
 				"ASSETCATALOG_COMPILER_APPICON_NAME" = "AppIcon";
                 "INFOPLIST_KEY_NSCameraUsageDescription" = "Allow websites you approve to use the camera for calls or uploads.";
