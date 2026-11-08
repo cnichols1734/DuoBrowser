@@ -396,7 +396,9 @@ final class OverviewRegionView: UIView {
             guard !rect.isNull, !rect.isEmpty else { continue }
             let distances = [rect.minY - bounds.minY, bounds.maxX - rect.maxX,
                              bounds.maxY - rect.maxY, rect.minX - bounds.minX]
-            guard let edge = distances.indices.min(by: { distances[$0] < distances[$1] }) else { continue }
+            // A spanning island belongs above/below content even when its nearest edges are the sides.
+            let edges = rect.width >= bounds.width ? [0, 2] : rect.height >= bounds.height ? [1, 3] : Array(distances.indices)
+            guard let edge = edges.min(by: { distances[$0] < distances[$1] }) else { continue }
             switch edge {
             case 0: result.top = max(result.top, rect.maxY - bounds.minY + 8)
             case 1: result.right = max(result.right, bounds.maxX - rect.minX + 8)

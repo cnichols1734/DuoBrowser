@@ -352,6 +352,12 @@ private final class NativeCheckRunner {
             try manyStore.write(BrowserArchive(session: TabArchive(tabs: records, selectedID: records[0].id)))
             let many = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.MemoryChecks.Lazy")!, archiveStore: manyStore, dataStore: .nonPersistent())
             try check(many.tabs.count == 200 && many.tabs.filter { $0.loadedWebView != nil }.count == 1, "two hundred restored tabs create one WKWebView")
+            many.showingTabs = true; many.showingLibrary = true
+            let fullSelection = many.selectedID
+            try check(!many.openExternalURL(URL(string: "https://example.com/incoming")!) && many.tabs.count == 200 && many.selectedID == fullSelection,
+                      "incoming link at capacity preserves all tabs and current selection")
+            try check(many.selected.errorMessage?.contains("200 tab limit") == true && !many.showingTabs && !many.showingLibrary,
+                      "incoming link at capacity reveals a visible close-a-tab explanation")
             many.tabs.forEach { $0.close() }
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MemoryChecks.txt")
@@ -811,6 +817,13 @@ private final class NativeCheckRunner {
         try check(insets.right >= 84, "search and accessible-list controls clear side camera using runtime geometry")
         let top = OverviewRegionView.clearInsets(in: card, regions: [island])
         try check(top.top >= 98, "full-width occlusion reserves header/list top clearance")
+        let screen = CGRect(x: 0, y: 0, width: 466, height: 678)
+        let floatingTop = OverviewRegionView.clearInsets(in: screen, regions: [CGRect(x: 0, y: 30, width: 466, height: 90)])
+        try check(floatingTop.top == 128 && floatingTop.left == 0 && floatingTop.right == 0,
+                  "inset full-width island reserves top space without collapsing horizontal content")
+        let floatingSide = OverviewRegionView.clearInsets(in: screen, regions: [CGRect(x: 30, y: 0, width: 90, height: 678)])
+        try check(floatingSide.left == 128 && floatingSide.top == 0 && floatingSide.bottom == 0,
+                  "inset full-height island reserves side space without collapsing vertical content")
         let wide = CGRect(x: 0, y: 0, width: 1000, height: 700)
         try check(OverviewRegionView.footerLift(in: wide, height: 104, bottomInset: 34,
                   regions: [CGRect(x: 18, y: 580, width: 70, height: 30)]) == 94,

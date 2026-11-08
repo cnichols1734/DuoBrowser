@@ -180,9 +180,14 @@ final class BrowserSession: ObservableObject {
     /// External links open separately so existing forms/navigation and private mode are preserved.
     @discardableResult
     func openExternalURL(_ url: URL) -> Bool {
-        guard let valid = WebAddress.valid(url), tabs.count < 200 else { return false }
+        guard let valid = WebAddress.valid(url) else { return false }
         showingLibrary = false
         showingWorkspaces = false
+        guard tabs.count < 200 else {
+            showingTabs = false
+            selected.errorMessage = "Close a tab before opening another (200 tab limit)."
+            return false
+        }
         newTab(url: valid)
         return true
     }

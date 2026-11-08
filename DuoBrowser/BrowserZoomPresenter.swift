@@ -44,7 +44,7 @@ final class BrowserZoomController: UIViewController {
         overview = UIHostingController(rootView: TabOverview(session: session))
         browser = UIHostingController(rootView: BrowserScreen(session: session))
         super.init(nibName: nil, bundle: nil)
-        overview.safeAreaRegions = []
+        overview.safeAreaRegions = .keyboard
         browser.modalPresentationStyle = .fullScreen
         browser.isModalInPresentation = true
         // The presenting SwiftUI hierarchy can be offscreen beneath the full-screen browser.

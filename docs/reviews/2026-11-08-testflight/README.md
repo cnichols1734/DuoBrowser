@@ -16,6 +16,9 @@ The owner authorized external/public TestFlight preparation and submission on No
 | P1 | Existing suggestion opt-outs were ignored after hiding the bottom controls | Restore the saved preference gate without restoring the removed section or toggle |
 | P1 | Footer clearance assumed a 72-point centered band | Measure actual footer rows and bottom inset, check full width and successive occlusions |
 | P2 | Redirected home pages resolved relative icons at the original root | Retain final response URL as the icon document base |
+| P1 | Tab search disabled keyboard avoidance with container insets | Keep the keyboard safe-area region; software keyboard and Cancel interaction verified |
+| P1 | Inset full-width occlusion classified as a side obstruction | Choose clearance axis for spanning regions before nearest-edge fallback |
+| P2 | Incoming link silently ignored at 200 tabs | Preserve selection/data and reveal the existing close-a-tab explanation |
 | P2 | Shortcut labels left aligned beneath icons | Centered both the tile stack and wrapped caption; build10 installed/launched on physical Duo first |
 
 The seven existing Copilot findings on PR12 were individually checked against source and addressed by these changes. The second Copilot review confirmed all seven fixes and identified the three follow-ups above. A second agent independently reviewed the changed wallpaper, geometry, policy and Info.plist code; its additional nil-transfer retry finding was fixed.
@@ -52,3 +55,5 @@ ATS review justification: DuoBrowser is a general-purpose WKWebView browser. Use
 References: [Apple review guidelines](https://developer.apple.com/app-store/review/guidelines/), [external TestFlight review](https://developer.apple.com/help/app-store-connect/test-a-beta-version/invite-external-testers), [web-content ATS key](https://developer.apple.com/documentation/bundleresources/information-property-list/nsapptransportsecurity/nsallowsarbitraryloadsinwebcontent).
 
 Follow-up validation: Debug build, 111 portable checks and strict SwiftLint passed after the second review fixes. Four new native regressions cover the measured wide/two-row footer and redirected icon base; the final 91-core native suite and updated CI/review are pending at this commit.
+
+Final review follow-up: all ten inline conversations are resolved. Copilot’s completed summary identified three additional unchanged-code cases; the keyboard, spanning-island and incoming-link-capacity fixes above address them. Independent source review found no blocker. Actual software-keyboard UI confirmed the footer lifts above it and Cancel dismisses cleanly. Maximum accessibility-text mode controls were also usable closed/unfolded. The final suite now requires 93 core and 13 memory checks; CI/release outcome remains pending.

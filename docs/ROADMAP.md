@@ -244,3 +244,5 @@ Centered shortcut labels and installed/launched development build10 on the conne
 
 - Copilot confirmed the seven original findings resolved. Preserved saved prediction opt-outs without restoring the removed UI, measured full footer rows/bottom inset for occlusion avoidance, and retained redirected home-page URLs for Retina icon resolution.
 - Debug simulator build, 111 portable checks and strict lint pass. Four native regressions added; updated native suite, CI/review and rebuilt 1.0.1 archive are pending before TestFlight upload.
+
+- Final completed review also found keyboard-safe-area, spanning-island classification and incoming-link-capacity feedback issues. Fixed all three, added four focused regressions, and verified search footer above the software keyboard with clean Cancel dismissal. Independent review passed; final 93-core/13-memory suite and CI are pending before upload.
