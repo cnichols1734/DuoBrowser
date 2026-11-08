@@ -12,7 +12,7 @@ import Foundation
         check(WebAddress.resolve("file:///tmp/test") == nil, "file URL")
         check(WebAddress.resolve("data:text/html,hi") == nil, "data URL")
         check(WebAddress.resolve("   ") == nil, "empty")
-        check(WebAddress.resolve("weather: Chicago")?.host == "duckduckgo.com", "colon search")
+        check(WebAddress.resolve("weather: Chicago")?.host == "www.google.com", "colon search")
         check(WebAddress.resolve("why a&b?")?.query?.contains("q=") == true, "search encoding")
         check(WebAddress.resolve("https://") == nil, "missing host")
         check(WebAddress.resolve("https://exa mple.com") == nil, "bad host")

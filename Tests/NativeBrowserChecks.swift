@@ -795,7 +795,45 @@ private final class NativeCheckRunner {
         controller.didMove(toParent: host)
     }
 
+    func addressCompletionChecks() throws {
+        var query = ""
+        var submitted = ""
+        let address = AddressField(text: Binding(get: { query }, set: { query = $0 }),
+                                   submit: { submitted = $0 }, cancel: {})
+        let coordinator = address.makeCoordinator()
+        let field = UITextField(frame: CGRect(x: 0, y: 0, width: 320, height: 52))
+        field.delegate = coordinator
+        field.addTarget(coordinator, action: #selector(AddressField.Coordinator.changed(_:)), for: .editingChanged)
+        host.view.addSubview(field)
+        defer { field.resignFirstResponder(); field.removeFromSuperview() }
+        field.becomeFirstResponder()
+        field.insertText("g")
+        try check(query == "g" && field.text == "www.google.com", "single letter completes domain while predictions retain keyword")
+        try check(field.selectedTextRange.map { field.text(in: $0) } == "oogle.com", "only remaining domain suffix is selected")
+        coordinator.synchronize(field, text: query)
+        try check(field.text == "www.google.com", "SwiftUI updates preserve inline completion")
+        field.insertText("o")
+        try check(query == "go" && field.text == "www.google.com", "typing replaces completion and extends keyword")
+        field.deleteBackward()
+        try check(query == "go" && field.text == "go", "backspace removes completion without immediately restoring it (query=\(query), field=\(field.text ?? ""))")
+        field.insertText(" garden")
+        try check(query == "go garden" && field.text == query, "multiword input remains a keyword search")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "go garden", "keyword return submits actual query")
+        query = ""
+        coordinator.synchronize(field, text: query)
+        field.insertText("g")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "www.google.com", "return accepts inline website completion")
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--address-completion-checks") {
+            do { try addressCompletionChecks() } catch { results.append("FAIL: \(error)") }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AddressCompletionChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--tab-overview-demo") { await overviewDemo(); return }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
             do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
@@ -825,6 +863,7 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try addressCompletionChecks()
             try check(!session.showSystemStatus, "status bar is hidden by default")
             session.showSystemStatus = true
             try check(defaults.bool(forKey: "browser.showSystemStatus"), "status bar choice is saved immediately")

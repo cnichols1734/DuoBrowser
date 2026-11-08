@@ -7,7 +7,6 @@ struct BrowserSearch: View {
     @Binding var query: String
     let availableHeight: CGFloat
     let dismiss: () -> Void
-    @AppStorage("onlineSearchSuggestions") private var onlineSuggestions = true
     @State private var composing = false
     @State private var predictions: [String] = []
     @State private var predictionQuery = ""
@@ -29,7 +28,7 @@ struct BrowserSearch: View {
     private var remoteQuery: String? {
         guard appActive else { return nil }
         return AddressSuggestions.remoteQuery(query, isPrivate: browser.isPrivate,
-                                               enabled: onlineSuggestions, composing: composing)
+                                               enabled: true, composing: composing)
     }
     private var visiblePredictions: [String] {
         predictionQuery == remoteQuery ? predictions : []
@@ -56,7 +55,7 @@ struct BrowserSearch: View {
                             ForEach(visiblePredictions, id: \.self) { phrase in
                                 HStack(spacing: 0) {
                                     Button { search(phrase) } label: {
-                                        searchRow(phrase, detail: "DuckDuckGo suggestion")
+                                        searchRow(phrase, detail: "Google suggestion")
                                     }.buttonStyle(CommandRowStyle())
                                     Button { query = phrase } label: {
                                         Image(systemName: "arrow.up.left").frame(width: 44, height: 44)
@@ -76,8 +75,8 @@ struct BrowserSearch: View {
                 }
             }
             if showsDirectAction {
-                Button(action: navigate) {
-                    searchRow(query, detail: isWebsite ? "Open website" : "Search DuckDuckGo")
+                Button { navigate(query) } label: {
+                    searchRow(query, detail: isWebsite ? "Open website" : "Search Google")
                 }.buttonStyle(CommandRowStyle())
             }
             if rowCount > 0 || hasQuery { Divider().padding(.horizontal, 20) }
@@ -87,10 +86,9 @@ struct BrowserSearch: View {
                         .font(.body.weight(.medium)).foregroundStyle(.secondary)
                         .accessibilityHidden(true)
                 }
-                AddressField(text: $query, submit: navigate, cancel: dismiss, cancelOnEndEditing: false, isComposing: $composing)
+                AddressField(text: $query, submit: { navigate($0) }, cancel: dismiss, cancelOnEndEditing: false, isComposing: $composing)
                     .frame(height: inputHeight)
                     .accessibilityLabel(browser.isPrivate ? "Private website address or search" : "Website address or search")
-                if typeSize.isAccessibilitySize && !browser.isPrivate { suggestionSettings }
                 Button(action: dismiss) {
                     if typeSize.isAccessibilitySize {
                         Image(systemName: "xmark").frame(width: 44, height: 44)
@@ -100,15 +98,7 @@ struct BrowserSearch: View {
                 .accessibilityLabel("Cancel search")
             }
             .padding(.horizontal, 20).padding(.vertical, 4)
-            if !typeSize.isAccessibilitySize {
-                HStack {
-                    Text(browser.isPrivate ? "Private · suggestions stay on this device" :
-                        onlineSuggestions ? "Search suggestions from DuckDuckGo" : "On-device suggestions")
-                        .font(.caption).foregroundStyle(.secondary)
-                    Spacer(minLength: 0)
-                    if !browser.isPrivate { suggestionSettings }
-                }.padding(.horizontal, 20).padding(.bottom, 8)
-            }
+
         }
         .foregroundStyle(.primary)
         .frame(maxWidth: .infinity)
@@ -137,15 +127,6 @@ struct BrowserSearch: View {
                 predictions = values
             } catch { /* Offline, cancellation and provider failures leave local results usable. */ }
         }
-    }
-
-    private var suggestionSettings: some View {
-        Menu {
-            Toggle("Search Engine Suggestions", isOn: $onlineSuggestions)
-            Text("When enabled, search text is sent to DuckDuckGo as you type. Website addresses are excluded.")
-        } label: {
-            Image(systemName: "ellipsis.circle").font(.body).frame(minWidth: 44, minHeight: 44)
-        }.accessibilityLabel("Search suggestion settings")
     }
 
     private func resultRow(_ result: SearchResult) -> some View {
@@ -199,7 +180,7 @@ struct BrowserSearch: View {
         if let id = result.tabID { session.select(id) }
         else { browser.navigate(to: result.address) }
     }
-    private func navigate() { guard hasQuery else { return }; browser.navigate(to: query); dismiss() }
+    private func navigate(_ address: String) { guard !address.isEmpty else { return }; browser.navigate(to: address); dismiss() }
 }
 
 private struct CommandRowStyle: ButtonStyle {
