@@ -38,7 +38,7 @@ Scores are a bounded source/simulator assessment, not accessibility certificatio
 
 ## Validation
 
-- Debug simulator build passed. Native suite passed: 24 tab/zoom, 93 core, 55 upgrade, 34 settling, 4 cookie persistence and 13 memory checks. Twenty-two new checks cover RTL/occlusion placement, header/list clearance, bounded file import stale wallpaper rollback, measured footer bounds, redirected icon bases and incoming links at capacity.
+- Debug simulator build passed. Native suite passed: 24 tab/zoom, 93 core, 55 upgrade, 34 settling, 4 cookie persistence and 13 memory checks. Twenty-two new checks cover RTL/occlusion placement, header/list clearance, bounded file import, stale wallpaper rollback, measured footer bounds, redirected icon bases and incoming links at capacity.
 - 111 portable Swift checks, 167 browser-layout assertions, strict SwiftLint and patch formatting passed.
 - Simulator interactions: centered labels; native Privacy Policy open/dismiss; selected synthetic black/white photo via PhotosPicker; import/removal; dark start-page and preview contrast; tab search Cancel clear of camera; closed/partially-open/open/rotation tab controls.
 - Physical Duo build10 installation/launch verified for the requested label fix. Physical passkeys/credential-provider matrix, voice accessibility, camera/mic/location grant/revoke, battery, thermal and interruption endurance remain beta acceptance work. No claim of Safari parity or guaranteed Apple approval.
@@ -64,3 +64,7 @@ References: [Apple review guidelines](https://developer.apple.com/app-store/revi
 - Beta description, review details and public privacy-policy URL saved. Search/Browsing History privacy answers are saved in App Store Connect; separate public product-page publication was not performed.
 - TestFlight internal group **DuoBrowser Internal** shows **Testing** for 1.0.1 (11), with the existing owner tester. External group **DuoBrowser Public Beta** shows **Waiting for Review** after successful submission. External approval/public testing is not yet granted. The [public TestFlight link](https://testflight.apple.com/join/8DbZWD5z) is created; App Store Connect states testers cannot join until a build is approved.
 - No production App Store release or default-browser capability request was submitted.
+
+## Physical Duo update, November 8, 2026
+
+The owner chose build 11 after comparing it with the installed 0.1.0 build 10. The original Release archive app was installed over the existing bundle on the connected physical iPhone Duo. Device tooling confirmed `dev.cnichols.duobrowser`, version 1.0.1 build 11, and a successful launch. This local install uses the archive development signature; TestFlight distributes the corresponding Apple-processed build. No app deletion or data reset was performed. The older Safari-import PR #11 was closed without merging at the owner's direction to keep the current build's features.
