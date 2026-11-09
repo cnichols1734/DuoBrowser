@@ -68,3 +68,7 @@ References: [Apple review guidelines](https://developer.apple.com/app-store/revi
 ## Physical Duo update, November 8, 2026
 
 The owner chose build 11 after comparing it with the installed 0.1.0 build 10. The original Release archive app was installed over the existing bundle on the connected physical iPhone Duo. Device tooling confirmed `dev.cnichols.duobrowser`, version 1.0.1 build 11, and a successful launch. This local install uses the archive development signature; TestFlight distributes the corresponding Apple-processed build. No app deletion or data reset was performed. The older Safari-import PR #11 was closed without merging at the owner's direction to keep the current build's features.
+
+## Release settings alignment
+
+The owner requested local, GitHub and Apple builds stay aligned. The project now defaults to version 1.0.1 build 11, with Release using the official `dev.cnichols.duobrowser` bundle identifier. Debug retains `dev.local.DuoBrowser` for isolated simulator checks. No developer team or signing credential is committed. These values match the overrides used for the already-uploaded archive. App code and resources remain identical to archive source `7ff8f60`; no replacement Apple build is needed. Future releases must increment the build number before uploading.
