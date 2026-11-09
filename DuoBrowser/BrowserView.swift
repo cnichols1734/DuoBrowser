@@ -9,6 +9,8 @@ struct BrowserView: View {
 
     var body: some View {
         BrowserZoomPresenter(session: session)
+            .ignoresSafeArea(.container)
+            .onOpenURL { session.openExternalURL($0) }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -36,7 +38,7 @@ struct ActiveBrowserView: View {
                     .accessibilityHidden(showingSearch || browser.showingStartPage)
                     .allowsHitTesting(!showingSearch && !browser.showingStartPage)
                 if browser.showingStartPage {
-                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport) { showingSearch = true }
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport)
                         .blur(radius: showingSearch ? 5 : 0)
                         .accessibilityHidden(showingSearch)
                         .allowsHitTesting(!showingSearch)
@@ -207,7 +209,6 @@ private struct BrowserStartPage: View {
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
     @ObservedObject var viewport: BrowserViewportState
-    let search: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -224,24 +225,18 @@ private struct BrowserStartPage: View {
                         Label("Private browsing", systemImage: "hand.raised.fill")
                             .font(.headline)
                         Text("Your private tabs and browsing history aren't saved.")
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                     } else {
                         section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
                         section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
                     }
-                    Button(action: search) {
-                        Label("Search or enter a website", systemImage: "magnifyingglass")
-                            .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
-                            .padding(.horizontal, 16)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(.regular.interactive(), in: RoundedRectangle(cornerRadius: 16))
+
                 }
                 .frame(maxWidth: 680, alignment: .leading)
                 .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
                 .frame(maxWidth: .infinity)
             }
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background { BrowserWallpaper() }
         }
     }
 
@@ -249,18 +244,17 @@ private struct BrowserStartPage: View {
         VStack(alignment: .leading, spacing: 14) {
             Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
             if entries.isEmpty {
-                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.secondary)
+                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.primary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 150 : 100), spacing: 16)], alignment: .leading, spacing: 18) {
                     ForEach(entries) { entry in
                         Button { browser.navigate(to: entry.address) } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Image(systemName: icon).font(.title3).frame(width: 48, height: 48)
-                                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+                            VStack(alignment: .center, spacing: 8) {
+                                WebsiteIcon(address: entry.address)
                                 Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
-                                    .font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                            }.frame(maxWidth: .infinity, minHeight: 72, alignment: .topLeading).contentShape(Rectangle())
+                                    .font(.caption).lineLimit(2).multilineTextAlignment(.center)
+                            }.frame(maxWidth: .infinity, minHeight: 96, alignment: .top).contentShape(Rectangle())
                         }.buttonStyle(.plain).accessibilityHint("Opens this page")
                     }
                 }

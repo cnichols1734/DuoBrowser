@@ -177,6 +177,21 @@ final class BrowserSession: ObservableObject {
         return tab
     }
 
+    /// External links open separately so existing forms/navigation and private mode are preserved.
+    @discardableResult
+    func openExternalURL(_ url: URL) -> Bool {
+        guard let valid = WebAddress.valid(url) else { return false }
+        showingLibrary = false
+        showingWorkspaces = false
+        guard tabs.count < 200 else {
+            showingTabs = false
+            selected.errorMessage = "Close a tab before opening another (200 tab limit)."
+            return false
+        }
+        newTab(url: valid)
+        return true
+    }
+
     private func rememberSelection() {
         if privateMode { lastPrivateID = selectedID } else { lastNormalID = selectedID }
     }
@@ -380,10 +395,12 @@ final class BrowserSession: ObservableObject {
         saveNow()
     }
     func deleteHistory(ids: Set<UUID>? = nil) {
+        WebsiteIconStore.shared.clear()
         if let ids { history.removeAll { ids.contains($0.id) } } else { history.removeAll() }
         saveNow(replaceBackup: true)
     }
     func deleteBookmarks(ids: Set<UUID>) {
+        WebsiteIconStore.shared.clear()
         bookmarks.removeAll { ids.contains($0.id) }
         saveNow(replaceBackup: true)
     }

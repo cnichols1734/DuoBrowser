@@ -4,7 +4,7 @@ from pathlib import Path
 import struct, zlib
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
+<link rel="icon" sizes="16x16" href="/favicon.ico"><link rel="apple-touch-icon" sizes="192x192" href="/touch-icon.png"><title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
 <h1>Browser checks</h1><input id="kept" placeholder="Preserved input"><a href="/next">Next page</a>
 <button onclick="alert('Synthetic alert')">Alert</button><button onclick="document.querySelector('#result').textContent=confirm('Synthetic confirm')">Confirm</button>
 <button onclick="document.querySelector('#result').textContent=prompt('Synthetic prompt','hello')">Prompt</button>
@@ -15,9 +15,11 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def do_GET(self):
         self.send_response(200)
-        if self.path.startswith('/reader-photo-'):
+        if self.path.startswith('/reader-photo-') or self.path in ('/favicon.ico', '/touch-icon.png'):
+            if self.path in ('/favicon.ico', '/touch-icon.png') and (self.headers.get('Cookie') or self.headers.get('Authorization')):
+                self.end_headers(); self.wfile.write(b'Unexpected credentials'); return
             # Synthetic raster fixture, not captured browsing content.
-            width, height = 320, 180
+            width, height = (16, 16) if self.path == "/favicon.ico" else ((192, 192) if self.path == "/touch-icon.png" else (320, 180))
             color = (36, 122, 165) if 'one' in self.path else (185, 108, 64)
             raw = b''.join(b'\x00' + bytes(color) * width for _ in range(height))
             def chunk(kind, payload):

@@ -20,9 +20,15 @@ enum WebAddress {
         if hostLike { return valid(URL(string: "https://" + text)) }
         // Explicit executable schemes are never interpreted as navigation.
         if ["javascript:", "data:", "file:", "about:", "blob:"].contains(where: { text.lowercased().hasPrefix($0) }) { return nil }
-        var search = URLComponents(string: "https://duckduckgo.com/")!
-        search.queryItems = [URLQueryItem(name: "q", value: text)]
-        return search.url
+        return searchURL(text)
+    }
+
+    static func searchURL(_ phrase: String) -> URL {
+        var search = URLComponents(string: "https://www.google.com/search")!
+        search.queryItems = [URLQueryItem(name: "q", value: phrase)]
+        // Search servers decode a literal plus as a space unless it is percent-escaped.
+        search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return search.url!
     }
 }
 

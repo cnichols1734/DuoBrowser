@@ -18,7 +18,8 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Normal and private tabs, previews, lazy restoration and a bounded preview cache.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
 - Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
-- A customizable tab-switcher background color, stored on the device.
+- A shared start-page/tab-switcher wallpaper and locally saved background tint.
+- Start-page shortcuts show site icons with a letter fallback. Icons prefer high-resolution touch icons discovered from each site’s public home page, with `/favicon.ico` as a fallback (including secure CDN redirects). Saved browsing paths, cookies and credentials are excluded; bounded downloads and the icon cache stay in memory. Private start pages do not load these shortcuts.
 - Native floating link previews that can become tabs without reloading.
 - Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
@@ -106,4 +107,4 @@ Project-owned code, documentation and artwork are available under the [MIT Licen
 
 ### Address suggestions
 
-Typing in the address bar shows familiar website matches immediately (for example, `go` → Google, `ap` → Apple, `pat` → Patriots). Optional DuckDuckGo search predictions appear alongside local tabs, bookmarks and history. Use the ellipsis in the search palette to turn **Search Engine Suggestions** off. When enabled, plain search text is sent to DuckDuckGo as you type; URLs, private-tab input and unfinished keyboard composition are excluded. Requests use an ephemeral session without shared cookies or a disk cache. Website matches remain available offline. The bundled website list is curated, not a live popularity chart.
+Searches from the start page and address bar use Google. Typing a known website prefix completes the address inline with the remaining suffix selected (`g` → `www.google.com`); continuing to type replaces that suffix, while Backspace dismisses it. The top website match remains above Google keyword predictions, local tabs, bookmarks and history. Predictions use the keyword you typed, not the completed domain. Plain search text is sent to Google as you type; URLs, private-tab input and unfinished keyboard composition are excluded. Requests use an ephemeral session without shared cookies or a disk cache. Website matches remain available offline. The bundled website list is curated, not a live popularity chart.

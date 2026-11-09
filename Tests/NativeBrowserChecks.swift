@@ -58,56 +58,45 @@ private final class NativeCheckRunner {
         controller.view.layoutIfNeeded()
         try await wait { controller.collectionView.numberOfItems(inSection: 0) == 6 }
         let layout = controller.stackLayout, collection = controller.collectionView
-        try check(abs(collection.contentOffset.x - layout.stride * 3) < 1, "stack opens on selected tab")
-        collection.contentOffset.x = layout.stride * 2.4
-        collection.layoutIfNeeded()
-        let center = layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))!.center.x
-        try check(abs(center - collection.contentOffset.x - 200 - layout.stride * 0.6) < 1,
-                  "native card layout follows fractional scroll position")
-        try check((layout.layoutAttributesForElements(in: collection.bounds)?.count ?? 99) <= 12,
-                  "native stack bounds per-frame layout work")
-        collection.contentOffset.x = layout.stride * 3
-        collection.layoutIfNeeded()
+        let first = layout.layoutAttributesForItem(at: IndexPath(item: 0, section: 0))!.frame
+        let second = layout.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!.frame
+        try check(first.minY == second.minY && second.maxX > 370, "grid uses both columns across the display")
+        try check(!first.intersects(second), "neighboring tab hit targets do not overlap")
+        let source = controller.zoomSource(for: models[3].id, centered: true)
+        try check(source != nil && abs(source!.bounds.height - layout.cardWidth / 0.72) < 1,
+                  "zoom source is exactly the page preview, excluding its title")
         try await wait { dismissals[models[3].id] != nil }
-        let cardFrame = layout.layoutAttributesForItem(at: IndexPath(item: 3, section: 0))!.frame
-        var closeTarget = collection.hitTest(CGPoint(x: cardFrame.minX + 22, y: cardFrame.minY + 50), with: nil)
-        while closeTarget != nil && !(closeTarget is TabStackCell) { closeTarget = closeTarget?.superview }
-        try check((closeTarget as? TabStackCell)?.representedID == models[3].id,
-                  "foreground close control is not covered by the next card")
         let departing = collection.cellForItem(at: IndexPath(item: 3, section: 0)) as! TabStackCell
-        departing.motionView.transform = CGAffineTransform(translationX: 0, y: -90)
+        departing.motionView.transform = CGAffineTransform(translationX: -90, y: 0)
         collection.setNeedsLayout()
         collection.layoutIfNeeded()
-        try check(departing.motionView.transform.ty == -90, "layout preserves the dragged card offset")
+        try check(departing.motionView.transform.tx == -90, "layout preserves the dragged card offset")
         dismissals[models[3].id]?()
-        var previousY: CGFloat = -90
+        var previousX: CGFloat = -90
         for _ in 0..<8 {
             try await Task.sleep(for: .milliseconds(20))
             guard visible.contains(where: { $0.id == models[3].id }), departing.representedID == models[3].id else { break }
             collection.setNeedsLayout()
             collection.layoutIfNeeded()
             if let presentation = departing.motionView.layer.presentation() {
-                let y = presentation.affineTransform().ty
-                try check(y <= previousY + 1, "committed dismissal travels upward through layout passes (\(previousY) to \(y))")
-                previousY = y
+                let x = presentation.affineTransform().tx
+                try check(x <= previousX + 1, "committed dismissal travels leftward through layout passes (\(previousX) to \(x))")
+                previousX = x
             }
         }
         try await wait { collection.numberOfItems(inSection: 0) == 5 }
         try check(!visible.contains { $0.id == models[3].id }, "animated close removes intended tab once")
-        try await wait { abs(collection.contentOffset.x - layout.stride * 3) < 1 }
-        try check(visible[3].id == models[4].id, "next tab fills foreground after deletion")
+        try check(visible[3].id == models[4].id, "next tab fills the removed grid position")
         reduced = true
         update()
-        collection.contentOffset.x = layout.stride * 2
         collection.layoutIfNeeded()
         let back = layout.layoutAttributesForItem(at: IndexPath(item: 1, section: 0))!
-        try check(back.transform == .identity && abs(back.center.x - collection.contentOffset.x - 200 + layout.stride) < 1,
-                  "native Reduce Motion removes depth and parallax")
+        try check(back.transform == .identity, "Reduce Motion keeps cards untransformed")
         controller.view.frame.size = CGSize(width: 700, height: 520)
         controller.view.setNeedsLayout()
         controller.view.layoutIfNeeded()
-        try check(abs(collection.contentOffset.x - layout.stride * 2) < 1,
-                  "resizing preserves the focused tab")
+        try check(controller.zoomSource(for: visible[2].id, centered: true) != nil,
+                  "resizing preserves the selected preview as a zoom target")
         reduced = false
         update()
         let departingID = visible[2].id
@@ -142,14 +131,14 @@ private final class NativeCheckRunner {
             }
             controller.view.layoutIfNeeded()
             let collection = controller.collectionView, layout = controller.stackLayout
-            collection.contentOffset.x = 20.95 * layout.stride
+            _ = controller.zoomSource(for: models[20].id, centered: true)
             collection.layoutIfNeeded()
             let expected = Set(models.indices.compactMap { index -> Int? in
                 let attributes = layout.layoutAttributesForItem(at: IndexPath(item: index, section: 0))!
                 return attributes.frame.intersects(collection.bounds) ? index : nil
             })
             let actual = Set((layout.layoutAttributesForElements(in: collection.bounds) ?? []).map { $0.indexPath.item })
-            try check(actual == expected && actual.contains(24), "wide layout includes both visible tails, reduced motion \(reduced)")
+            try check(actual == expected && actual.contains(20), "wide grid includes all visible cards, reduced motion \(reduced)")
         }
     }
 
@@ -363,6 +352,12 @@ private final class NativeCheckRunner {
             try manyStore.write(BrowserArchive(session: TabArchive(tabs: records, selectedID: records[0].id)))
             let many = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.MemoryChecks.Lazy")!, archiveStore: manyStore, dataStore: .nonPersistent())
             try check(many.tabs.count == 200 && many.tabs.filter { $0.loadedWebView != nil }.count == 1, "two hundred restored tabs create one WKWebView")
+            many.showingTabs = true; many.showingLibrary = true
+            let fullSelection = many.selectedID
+            try check(!many.openExternalURL(URL(string: "https://example.com/incoming")!) && many.tabs.count == 200 && many.selectedID == fullSelection,
+                      "incoming link at capacity preserves all tabs and current selection")
+            try check(many.selected.errorMessage?.contains("200 tab limit") == true && !many.showingTabs && !many.showingLibrary,
+                      "incoming link at capacity reveals a visible close-a-tab explanation")
             many.tabs.forEach { $0.close() }
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("MemoryChecks.txt")
@@ -773,7 +768,184 @@ private final class NativeCheckRunner {
         try? results.joined(separator: "\n").write(to: destination, atomically: true, encoding: .utf8)
     }
 
+    /// Manual UI fixture: isolated synthetic tabs, never the simulator's normal browsing session.
+    func overviewDemo() async {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("OverviewDemo-" + UUID().uuidString)
+        let session = BrowserSession(storage: UserDefaults(suiteName: "OverviewDemo-" + UUID().uuidString)!,
+            archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        let pages = [("Field Notes", "#355c55"), ("Weekend Plans", "#52688c"),
+                     ("Reading List", "#885b42"), ("Studio Journal", "#665b78"), ("Garden Guide", "#507145")]
+        for (index, page) in pages.enumerated() {
+            let model = index == 0 ? session.selected : session.newTab()
+            mount(model)
+            model.webView.loadHTMLString("""
+                <html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+                <title>\(page.0)</title><style>body{margin:0;background:#f4f1e8;color:#252a29;font:18px -apple-system}
+                header{padding:60px 28px 36px;background:\(page.1);color:white}main{padding:24px 28px;line-height:1.6}
+                h1{font-size:42px;line-height:1.1}input{font:inherit;max-width:90%}</style></head>
+                <body><header><p>DUOBROWSER / LOCAL FIXTURE</p><h1>\(page.0)</h1></header><main>
+                <h2>A little room to explore.</h2><p>A synthetic page for checking tabs, gestures and smooth transitions.</p>
+                <p>Keep your place as you move between pages and open the display.</p><input value="Unsent test note">
+                <p style="height:700px">Scroll, return, and continue reading.</p></main></body></html>
+                """, baseURL: nil)
+            try? await wait { !model.webView.isLoading && model.title == page.0 }
+            model.captureSnapshot()
+            try? await wait { model.snapshot != nil }
+        }
+        session.select(session.visibleTabs[0].id)
+        let controller = BrowserZoomController(session: session)
+        host.addChild(controller)
+        controller.view.frame = host.view.bounds
+        controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        host.view.addSubview(controller.view)
+        controller.didMove(toParent: host)
+    }
+
+    func betaReadinessChecks() throws {
+        let card = CGRect(x: 0, y: 0, width: 220, height: 300)
+        let rightCamera = CGRect(x: 160, y: 0, width: 60, height: 80)
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [], rightToLeft: false) == CGPoint(x: 172, y: 0), "LTR close starts in physical right corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [], rightToLeft: true) == .zero, "RTL close starts in physical left corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [rightCamera], rightToLeft: false) == .zero, "LTR close relocates into verified clear corner")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [rightCamera], rightToLeft: true) == .zero, "RTL close stays clear of physical right camera")
+        let island = CGRect(x: 0, y: 0, width: 220, height: 90)
+        let position = TabCardGeometry.closeOrigin(in: card, regions: [island], rightToLeft: false)
+        try check(position?.y == 94 && !CGRect(origin: position!, size: CGSize(width: 48, height: 48)).intersects(island), "full-width occlusion moves close below both blocked corners")
+        try check(TabCardGeometry.closeOrigin(in: card, regions: [card], rightToLeft: false) == nil, "fully occluded preview suppresses unsafe close target")
+        let insets = OverviewRegionView.clearInsets(in: CGRect(x: 0, y: 0, width: 466, height: 678),
+                                                   regions: [CGRect(x: 390, y: 30, width: 76, height: 70)])
+        try check(insets.right >= 84, "search and accessible-list controls clear side camera using runtime geometry")
+        let top = OverviewRegionView.clearInsets(in: card, regions: [island])
+        try check(top.top >= 98, "full-width occlusion reserves header/list top clearance")
+        let screen = CGRect(x: 0, y: 0, width: 466, height: 678)
+        let floatingTop = OverviewRegionView.clearInsets(in: screen, regions: [CGRect(x: 0, y: 30, width: 466, height: 90)])
+        try check(floatingTop.top == 128 && floatingTop.left == 0 && floatingTop.right == 0,
+                  "inset full-width island reserves top space without collapsing horizontal content")
+        let floatingSide = OverviewRegionView.clearInsets(in: screen, regions: [CGRect(x: 30, y: 0, width: 90, height: 678)])
+        try check(floatingSide.left == 128 && floatingSide.top == 0 && floatingSide.bottom == 0,
+                  "inset full-height island reserves side space without collapsing vertical content")
+        let wide = CGRect(x: 0, y: 0, width: 1000, height: 700)
+        try check(OverviewRegionView.footerLift(in: wide, height: 104, bottomInset: 34,
+                  regions: [CGRect(x: 18, y: 580, width: 70, height: 30)]) == 94,
+                  "measured two-row footer clears outer occlusion on wide display")
+        try check(OverviewRegionView.footerLift(in: wide, height: 104, bottomInset: 34,
+                  regions: [CGRect(x: 400, y: 540, width: 60, height: 40)]) == 134,
+                  "accessible footer upper mode row uses actual height and bottom inset")
+        try check(OverviewRegionView.footerLift(in: wide, height: 48, bottomInset: 34,
+                  regions: [CGRect(x: 400, y: 540, width: 60, height: 40)]) == 0,
+                  "single-row footer stays in place when clear")
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("WallpaperChecks-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let source = directory.appendingPathComponent("source.png")
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 1800, height: 1000), format: format).image { context in
+            UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1800, height: 1000))
+        }
+        try image.pngData()!.write(to: source)
+        let imported = try WallpaperImport(file: source)
+        let resized = UIImage(data: imported.jpeg)!
+        try check(max(resized.size.width, resized.size.height) == 1600, "file-representation wallpaper is downsampled before transfer")
+        let saved = directory.appendingPathComponent("saved.jpg")
+        let store = BrowserWallpaperStore(file: saved)
+        let old = store.beginImport()
+        store.remove()
+        try store.save(imported, token: old)
+        try check(store.image == nil && !FileManager.default.fileExists(atPath: saved.path), "remove invalidates an in-flight wallpaper import")
+        let prior = store.beginImport(), current = store.beginImport()
+        try store.save(imported, token: prior)
+        try check(store.image == nil, "superseded wallpaper import cannot overwrite selection")
+        try store.save(imported, token: current)
+        try check(store.image != nil && FileManager.default.fileExists(atPath: saved.path), "current wallpaper import commits locally")
+        store.remove()
+        try check(store.image == nil && !FileManager.default.fileExists(atPath: saved.path), "wallpaper removal clears memory and disk")
+        let huge = directory.appendingPathComponent("huge.raw")
+        FileManager.default.createFile(atPath: huge.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: huge); try handle.truncate(atOffset: 41 * 1024 * 1024); try handle.close()
+        var rejected = false
+        do { _ = try WallpaperImport(file: huge) } catch { rejected = true }
+        try check(rejected, "oversized wallpaper file is rejected before image allocation")
+    }
+
+    func websiteIconChecks() async throws {
+        let icon = WebsiteIconLoader.url(for: "https://example.com:8443/private/page?token=secret#section")
+        try check(icon?.absoluteString == "https://example.com:8443/favicon.ico", "icon request strips browsing paths, queries and fragments")
+        try check(WebsiteIconLoader.url(for: "https://user:secret@example.com") == nil, "icon request rejects embedded credentials")
+        try check(WebsiteIconLoader.redirectAllowed(URL(string: "https://cdn.example.com/icon.png")), "icons allow secure CDN redirects")
+        try check(!WebsiteIconLoader.redirectAllowed(URL(string: "http://cdn.example.com/icon.png")), "icons reject insecure redirects")
+        try check(WebsiteIconLoader.decode(Data("not an image".utf8)) == nil, "invalid favicon produces safe fallback")
+        try check(WebsiteIconLoader.decode(Data(repeating: 0, count: WebsiteIconLoader.maximumBytes + 1)) == nil, "oversized favicon is rejected")
+        let html = """
+        <link rel='icon' href='/small.ico' sizes='16x16'>
+        <link href='//cdn.example.com/touch.png?a=1&amp;b=2' sizes='192x192' rel='apple-touch-icon'>
+        <link rel='icon' sizes='512x512' href='http://downgrade.example/icon.png'>
+        <link rel='icon' sizes='512x512' href='https://user:secret@example.com/icon.png'>
+        <link rel='icon' sizes='512x512' href='data:image/png;base64,invalid'>
+        <link rel='icon' sizes='512x512' type='image/svg+xml' href='/icon.svg'>
+        """
+        let candidates = WebsiteIconLoader.candidates(in: html, base: URL(string: "https://example.com/")!)
+        try check(candidates.count == 2, "icon discovery rejects credentials, downgrades, data URLs and unsupported vectors")
+        try check(candidates.first?.absoluteString == "https://cdn.example.com/touch.png?a=1&b=2", "Retina touch icon ranks above tiny favicon and decodes HTML ampersands")
+        try check(candidates.last?.absoluteString == "https://example.com/small.ico", "relative icon resolves at origin")
+        let redirected = WebsiteIconLoader.candidates(in: "<link rel='apple-touch-icon' href='assets/touch.png'>",
+                                                      base: URL(string: "https://www.example.com/en/")!)
+        try check(redirected.first?.absoluteString == "https://www.example.com/en/assets/touch.png",
+                  "relative Retina icon preserves redirected document host and directory")
+        let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "IconIsolation", .value: "synthetic"])!
+        HTTPCookieStorage.shared.setCookie(cookie)
+        defer { HTTPCookieStorage.shared.deleteCookie(cookie) }
+        let store = WebsiteIconStore()
+        let loaded = await store.image(for: "http://127.0.0.1:8765/ignored?secret=not-sent")
+        try check(loaded?.cgImage?.width == 144 && loaded?.cgImage?.height == 144, "Retina touch icon wins over 16-pixel favicon without shared cookies or credentials")
+        try check(loaded.map { max($0.size.width, $0.size.height) <= 144 } == true, "favicon decode has bounded pixel dimensions")
+        let cached = await store.image(for: "http://127.0.0.1:8765/other-page")
+        try check(cached === loaded, "same-origin shortcuts reuse the in-memory icon")
+        store.clear()
+        let fresh = await store.image(for: "http://127.0.0.1:8765/other-page")
+        try check(fresh != nil && fresh !== loaded, "clearing icons discards cached images")
+        store.clear()
+    }
+
+    func addressCompletionChecks() throws {
+        var query = ""
+        var submitted = ""
+        let address = AddressField(text: Binding(get: { query }, set: { query = $0 }),
+                                   submit: { submitted = $0 }, cancel: {})
+        let coordinator = address.makeCoordinator()
+        let field = UITextField(frame: CGRect(x: 0, y: 0, width: 320, height: 52))
+        field.delegate = coordinator
+        field.addTarget(coordinator, action: #selector(AddressField.Coordinator.changed(_:)), for: .editingChanged)
+        host.view.addSubview(field)
+        defer { field.resignFirstResponder(); field.removeFromSuperview() }
+        field.becomeFirstResponder()
+        field.insertText("g")
+        try check(query == "g" && field.text == "www.google.com", "single letter completes domain while predictions retain keyword")
+        try check(field.selectedTextRange.map { field.text(in: $0) } == "oogle.com", "only remaining domain suffix is selected")
+        coordinator.synchronize(field, text: query)
+        try check(field.text == "www.google.com", "SwiftUI updates preserve inline completion")
+        field.insertText("o")
+        try check(query == "go" && field.text == "www.google.com", "typing replaces completion and extends keyword")
+        field.deleteBackward()
+        try check(query == "go" && field.text == "go", "backspace removes completion without immediately restoring it (query=\(query), field=\(field.text ?? ""))")
+        field.insertText(" garden")
+        try check(query == "go garden" && field.text == query, "multiword input remains a keyword search")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "go garden", "keyword return submits actual query")
+        query = ""
+        coordinator.synchronize(field, text: query)
+        field.insertText("g")
+        _ = coordinator.textFieldShouldReturn(field)
+        try check(submitted == "www.google.com", "return accepts inline website completion")
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--address-completion-checks") {
+            do { try addressCompletionChecks() } catch { results.append("FAIL: \(error)") }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AddressCompletionChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--tab-overview-demo") { await overviewDemo(); return }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
             do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
@@ -802,29 +974,25 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try betaReadinessChecks()
+            try addressCompletionChecks()
+            try await websiteIconChecks()
             try check(!session.showSystemStatus, "status bar is hidden by default")
             session.showSystemStatus = true
             try check(defaults.bool(forKey: "browser.showSystemStatus"), "status bar choice is saved immediately")
-            let stride: CGFloat = 240
-            func position(_ x: CGFloat) -> CGFloat { TabStackMotion.position(x, stride: stride, reduceMotion: false) }
-            let slow = position(-470) - position(-480), fast = position(10) - position(0)
-            try check(slow > 0 && slow < fast, "left cards travel slower without reversing")
-            try check(abs((position(0.01) - position(0)) - (position(0) - position(-0.01))) < 0.00001,
-                      "card velocity is continuous across foreground boundary")
-            try check((-2000...2000).allSatisfy { position(CGFloat($0) + 1) > position(CGFloat($0)) },
-                      "card ordering remains monotonic through stack")
-            try check(TabStackMotion.position(-300, stride: stride, reduceMotion: true) == -300,
-                      "Reduce Motion keeps uniform scrolling")
-            try check(TabStackMotion.target(proposed: -100, stride: stride, count: 5) == 0 &&
-                      TabStackMotion.target(proposed: 9000, stride: stride, count: 5) == 960,
-                      "snap destinations stay within first and last tab")
-            try check(TabStackMotion.target(proposed: 700, stride: stride, count: 5) == 720,
-                      "momentum projection can advance multiple cards")
-            try check(TabStackMotion.shouldDismiss(translation: -40, velocity: -1000, height: 450) &&
-                      !TabStackMotion.shouldDismiss(translation: -40, velocity: 0, height: 450),
-                      "upward flick closes while short slow drag cancels")
-            try check(!TabStackMotion.shouldDismiss(translation: -150, velocity: 400, height: 450),
-                      "reversing downward cancels dismissal")
+            try check(TabStackMotion.shouldDismiss(translation: -40, velocity: -1000, width: 210) &&
+                      !TabStackMotion.shouldDismiss(translation: -40, velocity: 0, width: 210),
+                      "left flick closes while short slow drag cancels")
+            try check(!TabStackMotion.shouldDismiss(translation: -150, velocity: 400, width: 210),
+                      "reversing right cancels dismissal")
+            try check(!TabStackMotion.shouldDismiss(translation: 150, velocity: 1000, width: 210),
+                      "rightward swipe never closes a tab")
+            try check(!TabStackMotion.shouldDismiss(translation: .nan, velocity: -1000, width: 210), "invalid drag does not close")
+            try check(!TabStackMotion.shouldDismiss(translation: -90, velocity: 0, width: 0), "unmeasured card does not close")
+            try check(TabStackMotion.shouldDismiss(translation: -100, velocity: 0, width: 210), "deliberate slow left drag closes")
+            try check(!TabStackMotion.shouldDismiss(translation: -10, velocity: -2000, width: 210), "tiny accidental flick does not close")
+            try check(TabStackMotion.shouldDismiss(translation: -75, velocity: 0, width: 210) &&
+                      !TabStackMotion.shouldDismiss(translation: -75, velocity: 0, width: 300), "dismissal threshold follows resized card width")
             let portrait = CGRect(x: 0, y: 0, width: 466, height: 678)
             try check(BrowserViewportState.controlLift(in: portrait, height: 180, safeBottom: 34,
                 regions: [CGRect(x: 390, y: 30, width: 60, height: 60)]) == 0, "top camera does not lift bottom controls")
@@ -851,6 +1019,20 @@ private final class NativeCheckRunner {
             mount(normal)
             results.append("STEP: normal fixture loaded")
             _ = try await js(normal, "document.cookie='profile=normal;path=/'; localStorage.setItem('profile','normal');document.querySelector('#kept').value='unsent synthetic value'")
+            let priorID = session.selectedID
+            try check(!session.openExternalURL(URL(string: "javascript:alert(1)")!) && session.selectedID == priorID,
+                      "external handler rejects nonweb schemes without disturbing current tab")
+            try check(session.openExternalURL(URL(string: "http://127.0.0.1:8765/external?value=one#section")!), "external HTTP link accepted")
+            let external = session.selected
+            mount(external)
+            try await wait { !external.webView.isLoading && external.webView.url?.path == "/external" }
+            try check(external.id != normal.id && external.webView.url?.query == "value=one" && external.webView.url?.fragment == "section",
+                      "external link opens exact URL in a separate tab")
+            session.close(external.id)
+            session.select(normal.id)
+            mount(normal)
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "unsent synthetic value",
+                      "external navigation preserves existing form draft")
             normal.testNavigationObserver = { [weak self] in self?.results.append($0) }
             _ = try await js(normal, "(()=>{let f=document.createElement('iframe');f.id='srcdoc-test';f.srcdoc='<p>embedded fixture</p>';document.body.append(f)})()")
             results.append("STEP: srcdoc created")
@@ -869,6 +1051,11 @@ private final class NativeCheckRunner {
             try check(try await js(firstPrivate, "document.cookie") as? String == "", "private cookie isolation")
             try check(try await js(firstPrivate, "localStorage.getItem('profile')") is NSNull, "private localStorage isolation")
             _ = try await js(firstPrivate, "document.cookie='profile=private;path=/';localStorage.setItem('profile','private')")
+            try check(session.openExternalURL(URL(string: "http://127.0.0.1:8765/external-private")!), "external link accepted in private mode")
+            let externalPrivate = session.selected
+            try check(externalPrivate.isPrivate && !externalPrivate.webView.configuration.websiteDataStore.isPersistent,
+                      "external link preserves ephemeral private mode")
+            session.close(externalPrivate.id)
             let secondPrivate = session.newTab()
             try await load(secondPrivate, "private-second")
             try check((try await js(secondPrivate, "document.cookie") as? String)?.contains("profile=private") == true, "private tabs share only their ephemeral session")

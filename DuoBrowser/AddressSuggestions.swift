@@ -7,7 +7,7 @@ enum AddressSuggestions {
         ("YouTube", "youtube.com"), ("Wikipedia", "wikipedia.org"), ("Reddit", "reddit.com"),
         ("Facebook", "facebook.com"), ("Instagram", "instagram.com"), ("Netflix", "netflix.com"),
         ("Gmail", "gmail.com"), ("Google Maps", "maps.google.com"), ("Microsoft", "microsoft.com"),
-        ("GitHub", "github.com"), ("DuckDuckGo", "duckduckgo.com"), ("Yahoo", "yahoo.com"),
+        ("GitHub", "github.com"), ("Yahoo", "yahoo.com"),
         ("Bing", "bing.com"), ("eBay", "ebay.com"), ("Walmart", "walmart.com"),
         ("Target", "target.com"), ("ESPN", "espn.com"), ("New England Patriots", "patriots.com"),
         ("Patagonia", "patagonia.com"), ("Patreon", "patreon.com"), ("Pinterest", "pinterest.com"),
@@ -24,6 +24,19 @@ enum AddressSuggestions {
         return websites.filter { $0.1.hasPrefix(prefix) || $0.0.lowercased().hasPrefix(prefix) }.prefix(3).map {
             SearchResult(id: "website:" + $0.1, title: $0.0, address: "https://" + $0.1, kind: .website)
         }
+    }
+
+    /// Complete only a known domain prefix, keeping the typed keyword separate for predictions.
+    static func inlineCompletion(_ input: String) -> (text: String, selectionStart: Int)? {
+        let lower = input.lowercased()
+        guard !lower.isEmpty, !lower.contains(where: \.isWhitespace) else { return nil }
+        let prefix = lower.hasPrefix("www.") ? String(lower.dropFirst(4)) : lower
+        guard !prefix.isEmpty, let host = websites.first(where: { $0.1.hasPrefix(prefix) })?.1,
+              prefix.count < host.count else { return nil }
+        let addedPrefix = host.split(separator: ".").count == 2 ? "www." : ""
+        guard !lower.hasPrefix("www.") || !addedPrefix.isEmpty else { return nil }
+        let display = addedPrefix + host
+        return (display, addedPrefix.utf16.count + prefix.utf16.count)
     }
 
     static func results(_ query: String, local: [SearchResult]) -> [SearchResult] {
@@ -50,7 +63,7 @@ enum AddressSuggestions {
     /// Only plain search terms go to the provider; never URLs, email, paths, or likely pasted tokens.
     static func remoteQuery(_ input: String, isPrivate: Bool, enabled: Bool, composing: Bool) -> String? {
         let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard enabled, !isPrivate, !composing, (2...100).contains(value.count),
+        guard enabled, !isPrivate, !composing, (1...100).contains(value.count),
               value.unicodeScalars.allSatisfy({ CharacterSet.letters.union(.decimalDigits)
                 .union(CharacterSet(charactersIn: " '-")).contains($0) }),
               !value.lowercased().hasPrefix("localhost"),
@@ -73,9 +86,7 @@ enum AddressSuggestions {
     }
 
     static func searchURL(_ phrase: String) -> URL {
-        var url = URLComponents(string: "https://duckduckgo.com/")!
-        url.queryItems = [URLQueryItem(name: "q", value: phrase)]
-        return url.url!
+        WebAddress.searchURL(phrase)
     }
 }
 
@@ -84,6 +95,13 @@ final class SearchSuggestionClient: NSObject, URLSessionTaskDelegate, @unchecked
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         completionHandler(nil)
+    }
+
+    static func requestURL(_ query: String) -> URL {
+        var url = URLComponents(string: "https://www.google.com/complete/search")!
+        url.queryItems = [URLQueryItem(name: "output", value: "chrome"), URLQueryItem(name: "q", value: query),
+                          URLQueryItem(name: "ie", value: "UTF-8"), URLQueryItem(name: "oe", value: "UTF-8")]
+        return url.url!
     }
 
     func fetch(_ query: String) async throws -> [String] {
@@ -96,9 +114,7 @@ final class SearchSuggestionClient: NSObject, URLSessionTaskDelegate, @unchecked
         configuration.timeoutIntervalForResource = 5
         let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        var url = URLComponents(string: "https://duckduckgo.com/ac/")!
-        url.queryItems = [URLQueryItem(name: "q", value: query), URLQueryItem(name: "type", value: "list")]
-        let (bytes, response) = try await session.bytes(from: url.url!)
+        let (bytes, response) = try await session.bytes(from: Self.requestURL(query))
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return [] }
         var data = Data()
         for try await byte in bytes {
