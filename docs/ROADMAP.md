@@ -246,3 +246,11 @@ Centered shortcut labels and installed/launched development build10 on the conne
 - Debug simulator build, 111 portable checks and strict lint pass. Four native regressions added; updated native suite, CI/review and rebuilt 1.0.1 archive are pending before TestFlight upload.
 
 - Final completed review also found keyboard-safe-area, spanning-island classification and incoming-link-capacity feedback issues. Fixed all three, added four focused regressions, and verified search footer above the software keyboard with clean Cancel dismissal. Independent review passed; final 93-core/13-memory suite and CI are pending before upload.
+
+### November 8 — 1.0.1 TestFlight submission completed
+
+- Centered favorite/recent-item captions were installed and launched on the connected iPhone Duo as build10 before the beta review.
+- PR12 merged as `fc324bfcf168c3f8e86acacfc412986c347b3e6e`. The 1.0.1 (11) archive uses source `7ff8f6084e6c8f82d9a264a9e0500cb8c4c9c009`, whose tree is identical to the merge. All required CI jobs passed on that source. Every finding from the completed Copilot reviews was investigated and fixed; independent follow-up review and local/native regression checks passed.
+- Final native receipts: 24 tab/zoom, 93 core, 55 upgrade, 34 settling, 4 cookie persistence and 13 memory checks. Maximum-text closed/open controls and software-keyboard footer avoidance were exercised in the simulator. Physical accessibility, credentials/permission combinations, endurance and live occlusion/frame-pacing acceptance remain beta work.
+- Upload succeeded. **DuoBrowser Internal: Testing. DuoBrowser Public Beta: Waiting for Review.** This is an external TestFlight review submission, not Apple approval or an App Store release. Default-browser capability remains deferred and absent from signing.
+- See the [beta release record](reviews/2026-11-08-testflight/README.md) for provenance, disclosures and remaining limits. These results supersede the earlier pending-validation notes above.

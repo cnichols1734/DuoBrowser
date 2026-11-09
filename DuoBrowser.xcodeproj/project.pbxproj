@@ -304,8 +304,8 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"MARKETING_VERSION" = "0.1.0";
-				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "1.0.1";
+				"CURRENT_PROJECT_VERSION" = "11";
 				"LD_RUNPATH_SEARCH_PATHS" = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -330,7 +330,7 @@
 			"isa" = "XCBuildConfiguration";
 			"name" = "Release";
 			"buildSettings" = {
-				"PRODUCT_BUNDLE_IDENTIFIER" = "dev.local.DuoBrowser";
+				"PRODUCT_BUNDLE_IDENTIFIER" = "dev.cnichols.duobrowser";
 				"PRODUCT_NAME" = "$(TARGET_NAME)";
 				"GENERATE_INFOPLIST_FILE" = "YES";
 				"INFOPLIST_FILE" = "DuoBrowser/Info.plist";
@@ -347,8 +347,8 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
 				"CODE_SIGN_STYLE" = "Automatic";
-				"MARKETING_VERSION" = "0.1.0";
-				"CURRENT_PROJECT_VERSION" = "1";
+				"MARKETING_VERSION" = "1.0.1";
+				"CURRENT_PROJECT_VERSION" = "11";
 				"LD_RUNPATH_SEARCH_PATHS" = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
