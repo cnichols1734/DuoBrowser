@@ -2,6 +2,7 @@
 import SwiftUI
 import WebKit
 import Darwin
+import BrowserKit
 
 /// Debug-only integration harness. Uses synthetic loopback pages and isolated stores, never real browsing data.
 struct NativeBrowserChecks: UIViewControllerRepresentable {
@@ -938,7 +939,132 @@ private final class NativeCheckRunner {
         try check(submitted == "www.google.com", "return accepts inline website completion")
     }
 
+    func setupChecks() async throws {
+        let suite = "DuoBrowser.SetupTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let transport = SetupFixtureTransport()
+        let model = BrowserSetupModel(storage: defaults, transferEnabled: true, transport: transport)
+        try check(!model.completed && model.step == .welcome, "new install begins with welcome")
+        model.next(); model.choices.history = false
+        let restored = BrowserSetupModel(storage: defaults)
+        try check(restored.step == .transfer && !restored.choices.history, "interrupted setup restores step and category choices")
+        let invalid = NSUserActivity(activityType: BEBrowserDataImportManager.userActivityType)
+        try check(!model.receive(invalid, isPrivate: false), "missing transfer token rejected")
+        let token = UUID()
+        let activity = NSUserActivity(activityType: BEBrowserDataImportManager.userActivityType)
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: token]
+        try check(!model.receive(activity, isPrivate: true), "private session rejects incoming transfer")
+        let disabled = BrowserSetupModel(storage: defaults, transferEnabled: false)
+        try check(!disabled.receive(activity, isPrivate: false), "unentitled build rejects incoming transfer")
+        try check(model.receive(activity, isPrivate: false), "valid system activity starts direct import")
+        try await wait { transport.continuation != nil }
+        transport.continuation?.yield(BEBrowserDataBookmark(isFolder: false, title: "Synthetic bookmark", identifier: "bookmark", url: URL(string: "https://example.com/import"), parentIdentifier: nil))
+        transport.continuation?.yield(BEBrowserDataReadingListItem(title: "Read", url: URL(string: "https://example.com/read")!, dateOfLastVisit: nil))
+        transport.continuation?.finish()
+        try await wait { model.state == .review }
+        try check(session.bookmarks.isEmpty && store.load()?.bookmarks.isEmpty != false, "received data does not save before review")
+        try check(model.batch?.readingList.count == 1, "undated Reading List item is retained")
+        try check(!model.receive(activity, isPrivate: false), "replayed token cannot replace review")
+        model.save(into: session)
+        try check(model.state == .saved && session.bookmarks.count == 1 && session.readingList.count == 1, "confirmed selection commits supported data")
+        try check(store.load()?.readingList?.count == 1, "confirmed transfer survives archive reload")
+        model.save(into: session)
+        try check(session.bookmarks.count == 1, "double save cannot duplicate data")
+        model.finish()
+        try check(BrowserSetupModel(storage: defaults).completed, "completed setup stays completed after relaunch")
+        model.reopen()
+        try check(model.step == .welcome, "setup can reopen from Page options")
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: UUID()]
+        transport.continuation = nil
+        try check(model.receive(activity, isPrivate: false), "new token begins a new transfer")
+        try await wait { transport.continuation != nil }
+        let stale = transport.continuation
+        model.cancel()
+        stale?.yield(BEBrowserDataBookmark(isFolder: false, title: "Late", identifier: "late", url: URL(string: "https://example.com/late"), parentIdentifier: nil))
+        stale?.finish()
+        try await Task.sleep(for: .milliseconds(100))
+        try check(model.state == .idle && model.batch == nil && session.bookmarks.count == 1, "canceled stream cannot repopulate review or save late items")
+        try check(!model.receive(activity, isPrivate: false), "late return after cancel rejected")
+        model.reopen()
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: UUID()]
+        transport.continuation = nil
+        try check(model.receive(activity, isPrivate: false), "a new import can retry after cancellation")
+        try await wait { transport.continuation != nil }
+        transport.continuation?.yield(BEBrowserDataBookmark(isFolder: false, title: "Partial", identifier: "partial", url: URL(string: "https://example.com/partial"), parentIdentifier: nil))
+        transport.continuation?.finish(throwing: CocoaError(.fileReadUnknown))
+        try await wait { model.state == .failed }
+        try check(model.batch == nil && session.bookmarks.count == 1, "failed streams discard partial data")
+        model.reopen()
+        if let scene = host.view.window?.windowScene {
+            model.request(scene: scene)
+            try await wait { transport.requestContinuation != nil }
+            model.cancel()
+            transport.requestContinuation?.resume(returning: true)
+            transport.requestContinuation = nil
+            try await Task.sleep(for: .milliseconds(100))
+            try check(model.state == .idle && model.message == nil, "stale request completion cannot overwrite cancellation")
+            model.request(scene: scene)
+            try await wait { transport.requestContinuation != nil }
+            transport.requestContinuation?.resume(returning: true)
+            transport.requestContinuation = nil
+            try await wait { model.state == .failed }
+            try check(model.batch == nil, "unexpected files response fails without opening a file picker")
+        } else { throw NSError(domain: "setup harness needs window scene", code: 1) }
+        var incoming = BrowserImportBatch()
+        try incoming.addPage(address: "https://example.com/history", title: "History", date: Date(), isHistory: true)
+        try model.reviewForTesting(incoming)
+        model.choices = ImportChoices(bookmarks: false, favorites: false, history: true, readingList: false)
+        // Make the destination unwritable without changing permissions on any real browsing files.
+        let blocked = directory.appendingPathComponent("not-a-directory")
+        try Data().write(to: blocked)
+        let failing = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: blocked), dataStore: .nonPersistent())
+        defer { failing.tabs.forEach { $0.close() } }
+        model.save(into: failing)
+        try check(model.state == .review && failing.history.isEmpty, "failed durable save preserves review and rolls back library")
+        model.cancel()
+        try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
+    }
+
+    func setupPreview() throws {
+        let defaults = UserDefaults(suiteName: "DuoBrowser.SetupPreview")!
+        let session = BrowserSession(storage: defaults,
+            archiveStore: BrowserArchiveStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("SetupPreview-" + UUID().uuidString)),
+            dataStore: .nonPersistent())
+        let model = BrowserSetupModel(storage: defaults, transferEnabled: true, transport: SetupFixtureTransport())
+        model.choices = ImportChoices()
+        var batch = BrowserImportBatch()
+        try batch.addBookmark(.init(identifier: "favorites", parent: nil, title: "Favorites", address: nil, isFolder: true))
+        try batch.addBookmark(.init(identifier: "book", parent: "favorites", title: "Synthetic Favorite", address: "https://example.com/favorite", isFolder: false))
+        try batch.addBookmark(.init(identifier: "folder", parent: nil, title: "Research", address: nil, isFolder: true))
+        try batch.addBookmark(.init(identifier: "ordinary", parent: "folder", title: "Synthetic Bookmark", address: "https://example.com/bookmark", isFolder: false))
+        try batch.addPage(address: "https://example.com/history", title: "Synthetic Visit", date: Date(timeIntervalSince1970: 1234), isHistory: true)
+        try batch.addPage(address: "https://example.com/read", title: "Synthetic Reading List", date: Date(timeIntervalSince1970: 1234), isHistory: false)
+        try model.reviewForTesting(batch)
+        model.step = .transfer
+        let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model))
+        host.present(preview, animated: false)
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--setup-preview") {
+            try? await wait { self.host.view.window != nil }
+            try? setupPreview()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--setup-checks") {
+            do { try await setupChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SetupChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--address-completion-checks") {
             do { try addressCompletionChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AddressCompletionChecks.txt")
@@ -1154,6 +1280,17 @@ private final class NativeCheckRunner {
         text.text = results.joined(separator: "\n")
         text.isEditable = false
         host.view.addSubview(text)
+    }
+}
+@MainActor
+private final class SetupFixtureTransport: BrowserTransferTransport {
+    var continuation: AsyncThrowingStream<BEBrowserData, Error>.Continuation?
+    var requestContinuation: CheckedContinuation<Bool, Error>?
+    func request(scene: UIWindowScene) async throws -> Bool {
+        try await withCheckedThrowingContinuation { requestContinuation = $0 }
+    }
+    func items(token: UUID) -> AsyncThrowingStream<BEBrowserData, Error> {
+        AsyncThrowingStream { continuation = $0 }
     }
 }
 #endif

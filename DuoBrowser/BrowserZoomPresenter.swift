@@ -24,6 +24,7 @@ private struct BrowserScreen: View {
     var body: some View {
         ActiveBrowserView(session: session, browser: session.selected, viewport: session.selected.viewport)
             .id(session.selectedID)
+            .sheet(isPresented: $session.showingSetup) { BrowserSetup(session: session, model: session.setup) }
             .sheet(isPresented: $session.showingLibrary) { BrowserLibrary(session: session) }
             .sheet(isPresented: $session.showingWorkspaces) { WorkspaceView(session: session) }
     }

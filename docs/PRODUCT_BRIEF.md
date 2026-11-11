@@ -64,3 +64,7 @@ Use Apple's Duo layout guidance and reserved-region APIs in RESEARCH.md. During 
 - Which 5–10 sites matter most in the owner's daily browsing? Until supplied, use varied synthetic fixtures and public sites.
 - Decide the default adaptation mode after real-site testing and review of default-browser requirements.
 - Decide broader iPhone/iPad support after the Duo experiment succeeds.
+
+## First-run setup — November 11, 2026
+
+The owner requested a complete, optional click-through walkthrough with direct Safari migration and individually selectable data categories. No saving an export file and reopening it later. Welcome, Transfer, Default Browser, and a short controls tour lead into browsing; Page options can reopen setup. Transfer availability must reflect the signed build and system response. A missing Apple capability must not prevent browsing or introduce a file-based workaround. Imported data is reviewed before it is saved. See [direct-transfer behavior and Apple activation](SAFARI_TRANSFER.md).

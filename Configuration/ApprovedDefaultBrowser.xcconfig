@@ -1,0 +1,5 @@
+// Opt in only after Apple grants the managed capability to dev.cnichols.duobrowser.
+// Use: xcodebuild ... -configuration Release -xcconfig Configuration/ApprovedDefaultBrowser.xcconfig
+// The signed app AND embedded profile must contain com.apple.developer.web-browser.
+CODE_SIGN_ENTITLEMENTS = Configuration/DefaultBrowser.entitlements
+DUOBROWSER_DIRECT_TRANSFER_ENABLED = YES

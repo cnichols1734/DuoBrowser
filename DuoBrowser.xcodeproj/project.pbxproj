@@ -5,6 +5,13 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"DB5100000000000000000000" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserImport.swift; sourceTree = "<group>"; };
+"DB5200000000000000000000" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000000"; };
+"DB5100000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSetupModel.swift; sourceTree = "<group>"; };
+"DB5200000000000000000001" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000001"; };
+"DB5100000000000000000002" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSetup.swift; sourceTree = "<group>"; };
+"DB5200000000000000000002" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000002"; };
+
 "FA7100000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebsiteIcon.swift; sourceTree = "<group>"; };
 "FA7100000000000000000002" = { isa = PBXBuildFile; fileRef = "FA7100000000000000000001"; };
 "A1DDE5500000000000000003" = { isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -169,7 +176,10 @@
 "A1DDE5500000000000000003",
 "A1DDE5500000000000000001",
 				"41D68964F29244DDA0000001",
-				"80E262EA78178C607CB98FD6",
+				"DB5100000000000000000000",
+"DB5100000000000000000001",
+"DB5100000000000000000002",
+"80E262EA78178C607CB98FD6",
 				"B7F643DAAB884B9ACBDD9281",
 				"D4047B891DE2FE8B64BC4CE2",
 				"499E8B100639209979D2F241",
@@ -224,7 +234,10 @@
 "A1DDE5500000000000000002",
 "CC6600000000000000000002",
 "AB7290C02026103000000002",
-				"06B4A2B885D6259AD4F62EDE",
+				"DB5200000000000000000000",
+"DB5200000000000000000001",
+"DB5200000000000000000002",
+"06B4A2B885D6259AD4F62EDE",
 				"633D407FA64D304DEE8BABB4",
 				"8706D5B2472C6173E7D3BED0",
 				"8AD28E05760063DD7CB8F2FC",
@@ -304,6 +317,7 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
 				"CODE_SIGN_STYLE" = "Automatic";
+                "DUOBROWSER_DIRECT_TRANSFER_ENABLED" = "NO";
 				"MARKETING_VERSION" = "1.0.1";
 				"CURRENT_PROJECT_VERSION" = "11";
 				"LD_RUNPATH_SEARCH_PATHS" = (
@@ -347,6 +361,7 @@
 				"SUPPORTED_PLATFORMS" = "iphoneos iphonesimulator";
 				"SUPPORTS_MACCATALYST" = "NO";
 				"CODE_SIGN_STYLE" = "Automatic";
+                "DUOBROWSER_DIRECT_TRANSFER_ENABLED" = "NO";
 				"MARKETING_VERSION" = "1.0.1";
 				"CURRENT_PROJECT_VERSION" = "11";
 				"LD_RUNPATH_SEARCH_PATHS" = (
