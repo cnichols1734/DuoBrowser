@@ -51,3 +51,8 @@ Four new native assertions exercise authenticated GET restart followed by immedi
 - Removal checks the UUID directory entry itself for a symbolic link before the existence check that follows links. Four added portable checks cover a dangling link's quota block, actual unlink/recovery removal, restored admission and preserving a live link's external target. All 32 download-store assertions pass, alongside strict lint and source parsing.
 
 Reviewed threads: [document-generation binding](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087538), [dangling-link removal](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087587).
+
+
+## Hosted receipt timeout diagnostics
+
+The older combined PR22 head `6fbd2d3` timed out waiting 180 seconds for DownloadChecks on a slow hosted simulator; no failing assertion receipt was emitted, and the initial app installation alone took about 4.5 minutes. This does not establish a functional test result. Downloads now receives a 600-second group receipt allowance, while every functional assertion and per-interaction deadline stays unchanged. A fresh Debug-only progress file records a bounded last-passed synthetic label/count every five checks (also startup/first check); timeout output prints it to identify the last completed stage. Both receipt and progress are reset before every launch. Progress can diagnose a timeout but cannot satisfy the success gate.

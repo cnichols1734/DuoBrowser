@@ -19,10 +19,23 @@ struct NativeBrowserChecks: UIViewControllerRepresentable {
 final class NativeCheckRunner {
     let host: UIViewController
     var results: [String] = []
-    init(host: UIViewController) { self.host = host }
+    private var passedChecks = 0
+    init(host: UIViewController) {
+        self.host = host
+        writeProgress(last: "Harness started.")
+    }
+    private func writeProgress(last label: String) {
+        // Only this Debug synthetic harness writes progress; never capture a live page or browsing state.
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NativeCheckProgress.txt")
+        let text = "\(passedChecks) checks passed\nLast: \(label.prefix(512))\n"
+        try? text.write(to: file, atomically: true, encoding: .utf8)
+    }
     func check(_ value: Bool, _ label: String) throws {
         if !value { throw NSError(domain: label, code: 1) }
         results.append("PASS: " + label)
+        passedChecks += 1
+        if passedChecks == 1 || passedChecks.isMultiple(of: 5) { writeProgress(last: label) }
     }
     func tabStackChecks() async throws {
         let models = (0..<6).map { _ in BrowserModel(dataStore: .nonPersistent()) }
