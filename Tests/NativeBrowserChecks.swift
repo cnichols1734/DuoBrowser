@@ -1749,11 +1749,14 @@ final class NativeCheckRunner {
         try check(!session.clearHistoryFromSettings() && session.history.map(\.id) == historyBeforeClear, "failed history clear preserves retry rows and reports failure")
         try check(session.recentlyClosed.map(\.id) == recoveryBeforeClear && recoveryTab.loadedWebView == nil && session.closedTabNotice == nil, "failed history clear restores recovery records without resurrecting live Undo")
         try check(session.selected.errorMessage == "Your browsing changes could not be saved on this device.", "history clear failure surfaces its save error")
+        let failedTab = session.selected
+        let retryTab = session.tabs.first { !$0.isPrivate && $0.id != failedTab.id }!
+        retryTab.errorMessage = "Synthetic unrelated page error"
+        session.select(retryTab.id)
         try FileManager.default.removeItem(at: backup)
         try check(session.clearHistoryFromSettings() && archive.load()?.history.isEmpty == true && archive.load()?.recentlyClosed?.isEmpty == true, "history and recovery clear together in both archive generations after retry")
-        try check(session.selected.errorMessage == nil, "successful retry clears its prior persistence error")
-        session.selected.errorMessage = "Synthetic unrelated page error"
-        try check(session.saveNow() && session.selected.errorMessage == "Synthetic unrelated page error", "successful save preserves unrelated page errors")
+        try check(failedTab.errorMessage == nil, "successful retry from another tab clears the original tab's persistence error")
+        try check(session.saveNow() && retryTab.errorMessage == "Synthetic unrelated page error", "successful save preserves unrelated errors on the selected tab")
         session.selected.errorMessage = nil
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
         try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")

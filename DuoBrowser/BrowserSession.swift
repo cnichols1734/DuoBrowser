@@ -683,7 +683,7 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
-            if selected.errorMessage == saveError { selected.errorMessage = nil }
+            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = nil }
             return true
         } catch { selected.errorMessage = saveError; return false }
     }

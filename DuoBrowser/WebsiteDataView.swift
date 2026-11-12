@@ -6,6 +6,7 @@ struct ClearBrowsingDataView: View {
     @State private var selection = BrowsingDataSelection()
     @State private var confirm = false
     @State private var result: String?
+    @State private var websiteMessage: String?
 
     var body: some View {
         Form {
@@ -22,7 +23,7 @@ struct ClearBrowsingDataView: View {
                     .disabled(selection.isEmpty || model.isBusy || session.privateMode)
                 if model.isBusy { ProgressView("Removing data…") }
                 if let result { Text(result).foregroundStyle(.secondary) }
-                if let message = model.message { Text(message).foregroundStyle(.secondary) }
+                if let websiteMessage { Text(websiteMessage).foregroundStyle(.secondary) }
             } footer: {
                 Text("Saved pages, bookmarks, downloaded files and open tabs remain. Open websites can save new data after clearing. Private browsing is separate.")
             }
@@ -41,12 +42,15 @@ struct ClearBrowsingDataView: View {
         let requested = selection
         Task { @MainActor in
             guard !session.privateMode, !model.isBusy else { return }
+            result = nil
+            websiteMessage = nil
             if requested.history && !session.clearHistoryFromSettings() {
                 result = "Browsing history couldn’t be cleared. Try again."
                 return
             }
             if await model.clear(requested) { result = "Selected data cleared." }
             else if requested.history { result = "Browsing history cleared." }
+            websiteMessage = model.message
         }
     }
 }
