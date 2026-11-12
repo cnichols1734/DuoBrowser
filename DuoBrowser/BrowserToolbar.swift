@@ -11,6 +11,7 @@ struct BrowserToolbar: View {
     let bottomSafeArea: CGFloat
     let accessibilityExpanded: Bool
     @State private var showingProtection = false
+    @State private var websiteSettings: WebsiteSettingsScope?
     @State private var showingSettings = false
     @State private var savingPage: LibraryEntry?
     @State private var showingDownloads = false
@@ -55,6 +56,7 @@ struct BrowserToolbar: View {
             })
         }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
+        .sheet(item: $websiteSettings) { scope in WebsiteSettingsView(session: session, browser: browser, scope: scope) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
 
@@ -253,11 +255,8 @@ struct BrowserToolbar: View {
                 Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
                     .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
                 Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
-                Menu("Website Settings", systemImage: "globe") {
-                    Toggle("Original Layout", isOn: $browser.originalPageLayout)
-                    Toggle("Desktop Website", isOn: $browser.desktopSite)
-                    Toggle("Full-width Page", isOn: $browser.fullWidthLayout)
-                }
+                Button("Website Settings", systemImage: "globe") { websiteSettings = WebsiteSettingsScope(browser: browser) }
+                    .disabled(browser.restorationURL?.host == nil)
             }
             Section {
                 Button("New Tab", systemImage: "plus") { session.newTab() }

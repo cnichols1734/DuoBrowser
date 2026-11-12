@@ -1877,6 +1877,30 @@ final class NativeCheckRunner {
         host.present(preview, animated: false)
     }
 
+    private func websiteSettingsChecks(session: BrowserSession, normal: BrowserModel, privateTab: BrowserModel) async throws {
+        let scope = WebsiteSettingsScope(browser: normal)
+        try check(scope.matches(normal) && scope.host == "127.0.0.1" && !scope.isPrivate, "website settings capture the exact normal host and tab")
+        try check(scope.set(true, for: \.originalPageLayout, on: normal) && scope.set(false, for: \.fullWidthLayout, on: normal), "website settings update original and full-width controls")
+        let address = normal.restorationURL!
+        let preference = normal.preferenceForURL?(address)
+        try check(preference?.originalLayout == true && preference?.fullWidth == false, "website settings persist through the existing host preference store")
+        try check(normal.preferenceForURL?(URL(string: "https://other.example")!).originalLayout == false, "website settings leave unrelated hosts at their defaults")
+        try await load(privateTab, "upgrades")
+        let privateScope = WebsiteSettingsScope(browser: privateTab)
+        try check(privateScope.isPrivate && !privateTab.originalPageLayout && privateTab.fullWidthLayout, "private website settings do not inherit normal host changes")
+        try check(!scope.set(true, for: \.desktopSite, on: privateTab) && !privateTab.desktopSite, "website settings reject a stale setter targeting another tab or profile")
+        privateScope.set(true, for: \.originalPageLayout, on: privateTab)
+        try check(privateTab.preferenceForURL?(address).originalLayout == true && normal.preferenceForURL?(address).fullWidth == false, "private site changes stay in the private preference store")
+        mount(normal)
+        normal.navigate(to: "http://localhost:8765/upgrades")
+        try await wait { !normal.isLoading && normal.loadedWebView?.url?.host == "localhost" }
+        try check(!scope.matches(normal) && !scope.set(true, for: \.originalPageLayout, on: normal) && !normal.originalPageLayout,
+                  "navigation to another host invalidates the open settings scope without changing that host")
+        try await load(normal, "upgrades")
+        scope.set(false, for: \.originalPageLayout, on: normal)
+        scope.set(true, for: \.fullWidthLayout, on: normal)
+    }
+
     func settingsChecks() async throws {
         let suite = "DuoBrowser.SettingsChecks." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
@@ -1904,6 +1928,7 @@ final class NativeCheckRunner {
         session.switchMode(false)
         let normal = session.selected
         try await load(normal, "upgrades")
+        try await websiteSettingsChecks(session: session, normal: normal, privateTab: privateTab)
         _ = try await js(normal, "localStorage.setItem('settings-check','normal'); document.querySelector('#kept').value='Keep this draft'")
         _ = try await normal.webView.callAsyncJavaScript("const c = await caches.open('settings-cache'); await c.put('/settings-cache-file', new Response('synthetic')); return true", arguments: [:], in: nil, contentWorld: .page)
         let privateStore = privateTab.webView.configuration.websiteDataStore
