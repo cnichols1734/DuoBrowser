@@ -85,3 +85,34 @@ Build/test results and simulator UI evidence are tracked in the
 Physical-device battery/endurance, full spoken VoiceOver and representative
 real-site/ad/video effectiveness require separate evidence; do not infer them
 from source list size or synthetic test passes.
+
+### Review follow-up — November 12
+
+The converter recognizes `badfilter` only as an option, so an ordinary URL such as
+`badfilter.js` remains a blocking pattern. Domain anchors accept hierarchical URL
+schemes, including `ws` and `wss`. A combined `document,subdocument` exception emits
+separate document-wide and URL-scoped iframe alternatives. Converter cache version
+3 invalidates older compiled manifests and rule identifiers.
+
+Network `domain=` restrictions use requesting-frame URL conditions, separately
+from cosmetic domain handling. Apple documents `if-frame-url` and
+`unless-frame-url` in [Creating a content blocker](https://developer.apple.com/documentation/safariservices/creating-a-content-blocker),
+and [WebKit's content-extension backend](https://github.com/WebKit/WebKit/blob/main/Source/WebCore/contentextensions/ContentExtensionsBackend.cpp)
+uses the initiating document's frame URL for these conditions. Mixed positive and
+negative scopes remain unsupported. A domain-scoped document-wide exception would
+need both frame and top-page conditions; the converter skips that component while
+retaining supported URL/resource alternatives rather than dropping its scope.
+
+Portable coverage now has 41 converter assertions. Added native checks exercise
+matching and unrelated nested frames, negative scopes, the combined iframe
+exception, ordinary `badfilter` paths, and WebSocket handshake delivery/non-delivery
+with bounded fixture counters. These new runtime checks await the integrated run.
+A failed maintained-readiness assertion now includes bounded DEBUG-only stage
+elapsed times and preparation/fallback status, without browsing data. Hosted cold
+compilation may wait up to 300 seconds for full protection; UpgradeChecks has a
+600-second receipt budget, and the iOS CI job has 45 minutes for fresh simulator
+startup, Debug/Release and the expanded native suite. The immediate-navigation
+baseline and full maintained-rule functional assertions remain required.
+The unreachable-loopback first-navigation check uses the same 60-second network
+completion bound as fixture loading and reports loading/start-page state on timeout;
+the shorter interaction deadlines remain unchanged.

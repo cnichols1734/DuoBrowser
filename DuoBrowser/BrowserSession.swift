@@ -289,7 +289,7 @@ final class BrowserSession: ObservableObject {
             position + 1 < order.count ? order[position + 1] : (position > 0 ? order[position - 1] : nil)
         }
         let tab = tabs.remove(at: index)
-        if !tab.isPrivate, let url = tab.restorationURL {
+        if !tab.isPrivate, let url = WebAddress.valid(tab.restorationURL) {
             let record = ClosedTabRecord(address: url.absoluteString, title: tab.title,
                 scrollY: tab.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? tab.pendingScrollY,
                 workspaceID: tab.workspaceID, pinned: tab.isPinned)

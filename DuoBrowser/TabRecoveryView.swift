@@ -61,27 +61,37 @@ struct RecentlyClosedView: View {
 
 struct ClosedTabNotice: View {
     @ObservedObject var session: BrowserSession
+    var heightChanged: (CGFloat) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var typeSize
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    private var persistent: Bool { voiceOverEnabled || typeSize.isAccessibilitySize }
+    private var record: ClosedTabRecord? {
+        guard !session.privateMode else { return nil }
+        return session.recentlyClosed.first { $0.id == session.closedTabNotice }
+    }
 
     var body: some View {
-        if !session.privateMode, let id = session.closedTabNotice,
-           session.recentlyClosed.contains(where: { $0.id == id }) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { Text("Tab closed"); actions(id) }
-                VStack(alignment: .leading, spacing: 4) { Text("Tab closed"); actions(id) }
+        Group {
+            if let record, record.noticeRemaining(persistent: persistent) != 0 {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) { Text("Tab closed"); actions(record.id) }
+                    VStack(alignment: .leading, spacing: 4) { Text("Tab closed"); actions(record.id) }
+                }
+                .font(.callout)
+                .padding(.horizontal, 16).padding(.vertical, 4)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
+                .padding(.horizontal, 16)
+                .accessibilityElement(children: .contain)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { heightChanged($0) }
+                .onDisappear { heightChanged(0) }
             }
-            .font(.callout)
-            .padding(.horizontal, 16).padding(.vertical, 4)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 20))
-            .padding(.horizontal, 16)
-            .accessibilityElement(children: .contain)
-            .task(id: id) {
-                // A lasting Recently Closed entry remains after the transient notice is dismissed.
-                guard !UIAccessibility.isVoiceOverRunning, !typeSize.isAccessibilitySize else { return }
-                try? await Task.sleep(for: .seconds(8))
-                guard !Task.isCancelled, session.closedTabNotice == id else { return }
-                session.closedTabNotice = nil
-            }
+        }
+        .task(id: "\(record?.id.uuidString ?? "none")-\(persistent)") {
+            // Recreating the view, switching profiles, or changing text size never resets the close timestamp.
+            guard let record, let remaining = record.noticeRemaining(persistent: persistent) else { return }
+            if remaining > 0 { try? await Task.sleep(for: .seconds(remaining)) }
+            guard !Task.isCancelled, session.closedTabNotice == record.id else { return }
+            session.closedTabNotice = nil
         }
     }
 

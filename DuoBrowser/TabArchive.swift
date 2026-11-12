@@ -46,14 +46,18 @@ struct ClosedTabRecord: Codable, Identifiable {
     var pinned: Bool
     var closedAt = Date()
 
+    /// Accessibility notices stay available until explicitly dismissed; ordinary notices use the original close time.
+    func noticeRemaining(at now: Date = Date(), persistent: Bool) -> TimeInterval? {
+        if persistent { return nil }
+        let remaining = 8 - now.timeIntervalSince(closedAt)
+        return remaining.isFinite ? min(8, max(0, remaining)) : 0
+    }
+
     static func validated(_ records: [ClosedTabRecord]) -> [ClosedTabRecord] {
         var seen = Set<UUID>()
         return Array(records.filter { record in
-            guard seen.insert(record.id).inserted, record.address.utf8.count <= 16_384,
-                  let url = URLComponents(string: record.address),
-                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
-                  url.url != nil else { return false }
+            guard seen.insert(record.id).inserted,
+                  WebAddress.valid(URL(string: record.address)) != nil else { return false }
             return true
         }.prefix(limit)).map { record in
             var record = record

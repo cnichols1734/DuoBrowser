@@ -22,7 +22,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         path = urlsplit(self.path)
         token = parse_qs(path.query).get('token', [''])[0][:64]
-        if path.path == '/frame-ad' and token:
+        if path.path in ('/frame-ad', '/scope-probe', '/scope-negative', '/socket-probe') and token:
             with FRAME_LOCK:
                 if len(FRAME_REQUESTS) >= 128: FRAME_REQUESTS.clear()
                 FRAME_REQUESTS[token] = FRAME_REQUESTS.get(token, 0) + 1
@@ -46,6 +46,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')
             self.end_headers(); self.wfile.write(b'Synthetic browser download.\n'); return
         self.send_header('Content-Type','text/html'); self.send_header('Access-Control-Allow-Origin','*'); self.end_headers()
+        if path.path in ('/scoped-frame', '/scoped-parent', '/frame-exception'):
+            self.wfile.write(b'''<!doctype html><meta name="viewport" content="width=device-width"><title>Scoped frame fixture</title><body><script>
+            const params=new URLSearchParams(location.search),token=params.get('token');
+            if(location.pathname==='/frame-exception')parent.postMessage({token,loaded:true},'*');
+            else if(location.pathname==='/scoped-parent'){
+                const child=document.createElement('iframe');
+                window.addEventListener('message',event=>{if(event.source===child.contentWindow&&event.data?.token===token)parent.postMessage(event.data,'*')});
+                child.src='http://127.0.0.1:8765/scoped-frame?token='+encodeURIComponent(token);
+                document.body ? document.body.append(child) : document.documentElement.append(child);
+            }else{
+                const probe=params.get('negative')==='1'?'scope-negative':'scope-probe';
+                fetch('http://127.0.0.1:8765/'+probe+'?token='+encodeURIComponent(token)).then(()=>false).catch(()=>true)
+                    .then(blocked=>parent.postMessage({token,blocked},'*'));
+            }
+            </script>'''); return
         if self.path.startswith('/reader-article'):
             paragraph = 'Reading uses the available screen width and keeps photographs between the paragraphs where the author placed them. The original page and its draft stay untouched. '
             html = '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Photo reading fixture</title><style>body{margin:16px;font:18px/1.5 sans-serif}img{width:100%;height:auto}figure{margin:0}main{padding-bottom:900px}</style><input id="kept" placeholder="Preserved draft"><main><article><h1>Photo reading fixture</h1><p>' + paragraph * 2 + '</p><figure><img src="/reader-photo-one.png" alt="First synthetic landscape" width="320" height="180"><figcaption>First photograph caption</figcaption></figure><p>' + paragraph * 2 + '</p><figure><img src="/reader-photo-two.png" alt="Second synthetic landscape" width="320" height="180"><figcaption>Second photograph caption</figcaption></figure><p>' + paragraph * 2 + '</p></article></main>'
