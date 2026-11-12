@@ -67,6 +67,19 @@ struct OfflineArticleStore {
         guard FileManager.default.fileExists(atPath: url(id).path) else { return }
         try deleteFile(url(id))
     }
+    /// UUID files are the durable cleanup queue. Failed removals remain discoverable on the next pass.
+    @discardableResult
+    func reconcile(retaining references: Set<UUID>) -> Bool {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return true }
+        guard let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return false }
+        var complete = true
+        for file in files where file.pathExtension == "json" {
+            guard let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !references.contains(id) else { continue }
+            do { try remove(id) } catch { complete = false }
+        }
+        return complete
+    }
+
 }
 
 enum SavedPageError: LocalizedError {
@@ -85,29 +98,50 @@ enum SavedPageError: LocalizedError {
 }
 
 enum SavedPagesPolicy {
-    static func canMove(_ id: UUID?, to parent: UUID?, folders: [BookmarkFolder]) -> Bool {
-        var seen = Set<UUID>()
-        var current = parent
-        while let next = current {
-            guard next != id, seen.insert(next).inserted, seen.count < 32,
-                  let folder = folders.first(where: { $0.id == next }) else { return false }
-            current = folder.parentID
-        }
-        // Moving a parent must not push its existing descendants past the archive depth limit.
-        if let id {
-            var frontier = [id]
-            var descendants = Set<UUID>()
-            var depth = 0
+    /// Build once for a picker: O(folders + descendants), then at most 31 parent lookups per destination.
+    struct Destinations {
+        let lookup: [UUID: BookmarkFolder]
+        private var descendants = Set<UUID>()
+        private var height = 0
+        private var valid = true
+        init(movingID: UUID?, folders: [BookmarkFolder]) {
+            lookup = Dictionary(folders.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+            guard let movingID else { return }
+            let children = Dictionary(grouping: folders.compactMap { folder in folder.parentID.map { ($0, folder.id) } }, by: { $0.0 })
+            var frontier = [movingID]
             while !frontier.isEmpty {
-                guard depth + seen.count <= 31 else { return false }
+                guard height <= 31 else { valid = false; return }
                 var next: [UUID] = []
                 for node in frontier {
-                    guard descendants.insert(node).inserted else { return false }
-                    next += folders.filter { $0.parentID == node }.map(\.id)
+                    guard descendants.insert(node).inserted else { valid = false; return }
+                    next += (children[node] ?? []).map { $0.1 }
                 }
-                frontier = next; depth += 1
+                frontier = next
+                if !frontier.isEmpty { height += 1 }
             }
         }
-        return true
+        func canMove(to parent: UUID?) -> Bool {
+            guard valid else { return false }
+            var seen = Set<UUID>()
+            var current = parent
+            while let next = current {
+                guard !descendants.contains(next), seen.insert(next).inserted, seen.count < 32,
+                      let folder = lookup[next] else { return false }
+                current = folder.parentID
+            }
+            return height + seen.count <= 31
+        }
+        func path(_ folder: BookmarkFolder) -> String {
+            var names = [folder.title]
+            var parent = folder.parentID
+            for _ in 0..<32 {
+                guard let id = parent, let next = lookup[id] else { break }
+                names.insert(next.title, at: 0); parent = next.parentID
+            }
+            return names.joined(separator: " / ")
+        }
+    }
+    static func canMove(_ id: UUID?, to parent: UUID?, folders: [BookmarkFolder]) -> Bool {
+        Destinations(movingID: id, folders: folders).canMove(to: parent)
     }
 }

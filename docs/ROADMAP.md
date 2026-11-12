@@ -301,3 +301,5 @@ Debug and Release simulator builds passed; 139 portable assertions (28 new impor
 The final synthetic review UI was exercised with Favorites mapped and History deselected; it saved one bookmark, one favorite, zero history entries, and one Reading List item. [Verification and screenshot](reviews/2026-11-11-setup/README.md).
 
 - PR #15 review follow-up: preserve distinct same-named source folders with one-to-one destination matching; apply archive file protection within atomic writes so there is no throwing post-commit operation. Portable coverage now totals 148 assertions. Device-only protection-class checks added because the simulator omits that metadata. Initial hosted CI failed during simulator startup before native tests; require passing CI on the corrected head before merge.
+
+Saved-pages review follow-up: archive replacement commits the primary last, saved reading remains available during status-write failure, duplicate-URL edits use IDs, offline cleanup retains both archive generations and retries orphan files, and folder pickers reuse a bounded index. Portable fault/recovery/large-library checks pass; final native verification is pending.

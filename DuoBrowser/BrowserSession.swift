@@ -40,7 +40,7 @@ final class BrowserSession: ObservableObject {
     private let settingsStorage: UserDefaults
     private let normalStore: WKWebsiteDataStore
     let offlineStore: OfflineArticleStore
-    private let archiveStore: BrowserArchiveStore
+    let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
     private var filterRefreshObserver: AnyCancellable?
@@ -86,6 +86,7 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders = saved?.bookmarkFolders ?? []
         readingList = saved?.readingList ?? []
         recentlyClosed = saved?.recentlyClosed ?? []
+        reconcileOfflineCopies()
         normalSites = saved?.sites ?? [:]
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
