@@ -6,6 +6,7 @@
     <key>NSAppTransportSecurity</key><dict>
         <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
     </dict>
+    <key>LSApplicationQueriesSchemes</key><array><string>apollo</string></array>
     <key>NSUserActivityTypes</key><array>
         <string>BEBrowserDataExchangeImportActivity</string>
     </array>

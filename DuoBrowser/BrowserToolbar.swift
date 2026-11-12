@@ -11,6 +11,7 @@ struct BrowserToolbar: View {
     let accessibilityExpanded: Bool
     @State private var showingProtection = false
     @State private var showingPrivacy = false
+    @State private var showingSettings = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -40,6 +41,7 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
         .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
@@ -225,7 +227,7 @@ struct BrowserToolbar: View {
             Button("Set Up DuoBrowser", systemImage: "sparkles") {
                 session.setup.reopen(); session.showingSetup = true
             }
-            Button("Website Protection", systemImage: browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
+            Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
             Toggle(isOn: $session.showSystemStatus) {
                 Label("Time, Signal & Battery", systemImage: "info.circle")
             }
@@ -241,6 +243,7 @@ struct BrowserToolbar: View {
             if browser.activeDownloads > 0 {
                 Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
             }
+            Button("Settings", systemImage: "gearshape") { showingSettings = true }
             Button("Privacy Policy", systemImage: "hand.raised") { showingPrivacy = true }
             #if DEBUG
             Menu("Developer") {

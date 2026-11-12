@@ -6,6 +6,7 @@ const path = require('node:path');
     const browser = await chromium.launch({ headless: true });
     try {
         for (const [suite, source] of [
+            ['RedditTapTests.cjs', 'RedditTap.js'],
             ['PageLayoutTests.cjs', 'PageLayout.js'],
             ['ReaderTests.cjs', 'Reader.js'],
             ['CameraAvoidanceTests.cjs', 'CameraAvoidance.js'],

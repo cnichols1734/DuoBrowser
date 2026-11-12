@@ -27,6 +27,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
+- Settings includes a global **Block Ads & Trackers** switch and a **Reddit** link preference. Tapped Reddit content links can open in an installed Apollo Reborn, with a remembered first choice, Ask Every Time, browser fallback, and confirmation in private tabs. Artemis is pending a verified deep-link contract. See [coverage and verification](docs/REDDIT_LINKS_AND_BLOCKING.md).
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 
 Layout fitting is local and deterministic. There are no AI calls or site-specific repair rules. Ambiguous layouts fall back without alteration; not every website can be repaired safely.

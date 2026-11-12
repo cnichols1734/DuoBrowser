@@ -136,6 +136,7 @@ final class ReaderRenderer: ObservableObject {
         let blocking = sourceBrowser.blockAds
         browser.preferenceForURL = { _ in SitePreference(originalLayout: false, desktop: false, fullWidth: true, blockAds: blocking) }
         browser.blockAds = blocking
+        browser.setAdBlockingEnabled(sourceBrowser.adBlockingEnabled)
         browser.webView.allowsBackForwardNavigationGestures = false
         browser.webView.scrollView.refreshControl = nil
         loadingObserver = browser.$isLoading.sink { [weak self] loading in
