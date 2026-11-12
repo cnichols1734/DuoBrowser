@@ -1243,6 +1243,31 @@ private final class NativeCheckRunner {
             in: nil, contentWorld: BrowserModel.redditTapWorld)
         try check(trusted as? Bool == false, "programmatic click cannot mint trusted authorization (\(String(describing: trusted)))")
         try check(try await js(model, "typeof globalThis.__duoRedditTap") as? String == "undefined", "page world cannot access isolated click authorization")
+        var consumedLinks: [URL] = []
+        model.testRedditTapAuthorization = { destination in
+            consumedLinks.append(destination)
+            return true
+        }
+        routing.preference = .apollo
+        let openedBeforeIneligibleLinks = opened.count
+        _ = try await js(model, "var frame=document.createElement('iframe');frame.name='routingFixture';frame.id='routingFixture';document.body.append(frame);true")
+        try await wait {
+            (try? await self.js(model, "document.querySelector('#routingFixture').contentDocument.readyState === 'complete'")) as? Bool == true
+        }
+        _ = try await js(model, "var frameLink=document.createElement('a');frameLink.href='http://127.0.0.1:8765/reddit-frame-target';frameLink.target='routingFixture';document.body.append(frameLink);frameLink.click();true")
+        try await wait {
+            (try? await self.js(model, "document.querySelector('#routingFixture').contentWindow.location.pathname === '/reddit-frame-target' && document.querySelector('#routingFixture').contentDocument.readyState === 'complete'")) as? Bool == true
+        }
+        try check(consumedLinks.map(\.path) == ["/reddit-frame-target"], "iframe-targeted link consumes authorization before eligibility checks")
+        try check(model.webView.url == page && opened.count == openedBeforeIneligibleLinks,
+                  "ineligible iframe link loads its original frame without app launch or main-page navigation")
+        _ = try await js(model, "var localLink=document.createElement('a');localLink.href='http://127.0.0.1:8765/reddit-main-target';document.body.append(localLink);localLink.click();true")
+        try await wait { model.webView.url?.path == "/reddit-main-target" && !model.webView.isLoading }
+        try check(consumedLinks.map(\.path) == ["/reddit-frame-target", "/reddit-main-target"],
+                  "non-Reddit main-frame link also consumes authorization")
+        let navigatedPath = try await js(model, "location.pathname") as? String
+        try check(opened.count == openedBeforeIneligibleLinks && navigatedPath == "/reddit-main-target",
+                  "non-Reddit link preserves original web navigation without app launch")
     }
 
     func run() async {

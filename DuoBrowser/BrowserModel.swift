@@ -460,6 +460,25 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {
+            decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: false, decisionHandler: decisionHandler)
+            return
+        }
+        if navigationAction.targetFrame?.isMainFrame != false { policyGeneration = UUID() }
+        let generation = policyGeneration
+        let interaction = presentation.interactionID
+        // Consume every link action before URL, frame, or download eligibility. Even an
+        // ineligible or rewritten link must not leave a token for another navigation.
+        authorizeRedditTap(url) { [weak self] trusted in
+            guard let self, !self.closed, self.policyGeneration == generation,
+                  self.presentation.interactionID == interaction else { decisionHandler(.cancel, preferences); return }
+            self.decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: trusted, decisionHandler: decisionHandler)
+        }
+    }
+
+    private func decideNavigation(_ webView: WKWebView, action navigationAction: WKNavigationAction,
+                                  preferences: WKWebpagePreferences, trustedTap: Bool,
+                                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
         #if DEBUG
         testNavigationObserver?("ACTION: \(navigationAction.request.url?.absoluteString ?? "nil") path=\(navigationAction.request.url?.path ?? "nil") frame=\(String(describing: navigationAction.targetFrame?.isMainFrame))")
         #endif
@@ -474,23 +493,16 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                 guard let self else { return false }
                 return !self.closed && self.policyGeneration == generation && self.presentation.interactionID == interaction
             }
-            if let redditLinks, RedditLinks.destination(url) != nil,
+            if trustedTap, let redditLinks, RedditLinks.destination(url) != nil,
                webView.window != nil,
                RedditLinks.eligible(isLink: navigationAction.navigationType == .linkActivated,
                                     sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
                                     targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
                                     method: navigationAction.request.httpMethod, download: navigationAction.shouldPerformDownload) {
-                authorizeRedditTap(url) { [weak self] trusted in
-                    guard let self, isCurrent() else { decisionHandler(.cancel, preferences); return }
-                    guard trusted else {
-                        self.allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
-                        return
-                    }
-                    redditLinks.route(url, isPrivate: self.isPrivate, isCurrent: isCurrent,
-                                      choose: self.presentation.chooseRedditApp) { [weak self] cancel in
-                        guard let self, !cancel, isCurrent() else { decisionHandler(.cancel, preferences); return }
-                        self.allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
-                    }
+                redditLinks.route(url, isPrivate: self.isPrivate, isCurrent: isCurrent,
+                                  choose: self.presentation.chooseRedditApp) { [weak self] cancel in
+                    guard let self, !cancel, isCurrent() else { decisionHandler(.cancel, preferences); return }
+                    self.allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
                 }
             } else {
                 allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
