@@ -656,6 +656,7 @@ final class BrowserSession: ObservableObject {
     }
     @discardableResult
     func saveNow(replaceBackup: Bool = false) -> Bool {
+        let saveError = "Your browsing changes could not be saved on this device."
         saveTask?.cancel(); saveTask = nil
         let normal = tabs.filter { !$0.isPrivate }
         guard let first = normal.first else { return false }
@@ -667,7 +668,8 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
+            if selected.errorMessage == saveError { selected.errorMessage = nil }
             return true
-        } catch { selected.errorMessage = "Your browsing changes could not be saved on this device."; return false }
+        } catch { selected.errorMessage = saveError; return false }
     }
 }
