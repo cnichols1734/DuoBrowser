@@ -127,12 +127,21 @@ final class BrowserSession: ObservableObject {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--browser-checks") { return }
         #endif
-        if adBlockingEnabled { Task { await FilterCatalog.shared.refreshIfNeeded() } }
+        if adBlockingEnabled { requestFilterRefresh() }
         filterRefreshObserver = NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
             .sink { [weak self] _ in
                 guard let self, !self.privateMode, self.adBlockingEnabled else { return }
-                Task { await FilterCatalog.shared.refreshIfNeeded() }
+                self.requestFilterRefresh()
             }
+    }
+
+    private func requestFilterRefresh() {
+        Task { [weak self] in
+            await FilterCatalog.shared.refreshIfNeeded {
+                guard let self else { return false }
+                return !self.privateMode && self.adBlockingEnabled && UIApplication.shared.applicationState == .active
+            }
+        }
     }
 
     private func store(isPrivate: Bool) -> WKWebsiteDataStore {
