@@ -1,11 +1,11 @@
 module.exports = async function(page, source) {
     let passed = 0;
     const assert = (value, label) => { if (!value) throw new Error(label); passed++; };
-    await page.setContent('<a id="link" href="https://www.reddit.com/r/swift/">Reddit</a><button>Elsewhere</button>');
+    // Same-document links exercise real default activation without leaving the fixture.
+    await page.setContent('<a id="link" href="#reddit">Reddit</a><button>Elsewhere</button>');
     await page.evaluate(source);
-    await page.evaluate(() => document.addEventListener('click', e => e.preventDefault()));
     const consume = url => page.evaluate(url => globalThis.__duoRedditTap.consume(url), url);
-    const url = 'https://www.reddit.com/r/swift/';
+    const url = await page.locator('a').evaluate(a => a.href);
     await page.evaluate(() => document.querySelector('a').click());
     assert(!await consume(url), 'programmatic click must not authorize handoff');
     await page.locator('a').click();
@@ -29,13 +29,20 @@ module.exports = async function(page, source) {
     await page.evaluate(() => window.addEventListener('click', event => {
         // A hostile page can intercept events before they reach document listeners.
         if (!event.isTrusted) event.stopImmediatePropagation();
-        event.preventDefault();
     }, true));
     await page.locator('a').click();
     assert(await consume(url), 'trusted click is recorded before page window capture handlers');
     await page.locator('a').click();
     await page.evaluate(() => document.querySelector('a').click());
     assert(!await consume(url), 'window capture interruption cannot preserve a stale real-tap token');
+    await page.evaluate(() => document.addEventListener('click', event => event.preventDefault(), { once: true }));
+    await page.locator('a').click();
+    await page.evaluate(url => {
+        const detached = document.createElement('a');
+        detached.href = url;
+        detached.click();
+    }, url);
+    assert(!await consume(url), 'canceled tap cannot authorize a detached scripted anchor');
     await page.locator('a').evaluate(a => a.download = 'download');
     await page.locator('a').click();
     assert(!await consume(url), 'download links are excluded');

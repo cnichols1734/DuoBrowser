@@ -542,6 +542,48 @@ private final class NativeCheckRunner {
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
+    func readerBlockingChecks(_ session: BrowserSession) async throws {
+        let originalPreference = session.adBlockingEnabled
+        let selectedID = session.selectedID
+        defer {
+            session.adBlockingEnabled = originalPreference
+            session.select(selectedID)
+            mount(session.selected)
+        }
+        // Exercise Reader's production loadHTMLString path with real image requests. Unique
+        // URLs prevent a previous unblocked response from satisfying a later blocked load.
+        for isPrivate in [false, true] {
+            for enabled in [false, true] {
+                session.adBlockingEnabled = enabled
+                let source = session.newTab(privateTab: isPrivate)
+                defer { session.close(source.id) }
+                try await load(source, "reader-blocking-source")
+                let token = UUID().uuidString
+                let thirdParty = URL(string: "http://localhost:8765/reader-photo-one.png?reader=\(token)")!
+                let firstParty = URL(string: "http://127.0.0.1:8765/reader-photo-two.png?reader=\(token)")!
+                let article = ReaderArticle(title: "Reader blocking fixture",
+                    source: URL(string: "http://127.0.0.1:8765/reader-blocking-source")!,
+                    blocks: [
+                        .init(kind: "image", text: "Third-party probe", imageURL: thirdParty, width: 320, height: 180),
+                        .init(kind: "image", text: "First-party control", imageURL: firstParty, width: 320, height: 180)
+                    ])
+                let reader = ReaderRenderer(article: article, sourceBrowser: source)
+                defer { reader.close() }
+                mount(reader.browser)
+                reader.load()
+                try await wait(timeout: 30) {
+                    (try? await self.js(reader.browser, "document.readyState === 'complete' && document.images.length === 2 && Array.from(document.images).every(image => image.complete)")) as? Bool == true
+                }
+                let mode = isPrivate ? "private" : "normal"
+                let widths = try await js(reader.browser, "Array.from(document.images, image => image.naturalWidth)") as? [Int]
+                try check(widths == (enabled ? [0, 320] : [320, 320]),
+                          "\(mode) Reader \(enabled ? "blocks" : "allows") third-party image while preserving first-party image with global switch \(enabled ? "on" : "off")")
+                try check(reader.browser.isPrivate == isPrivate &&
+                          reader.browser.webView.configuration.websiteDataStore === source.webView.configuration.websiteDataStore,
+                          "\(mode) Reader image requests retain the source WebKit profile")
+            }
+        }
+    }
     func readerRenderingChecks(_ source: BrowserModel) async throws {
         try await load(source, "reader-article")
         _ = try await js(source, "document.querySelector('#kept').value='Reader preserved draft'")
@@ -720,6 +762,7 @@ private final class NativeCheckRunner {
             let json = try String(contentsOf: rulesURL, encoding: .utf8)
             let fixtureRules = json.replacingOccurrences(of: "doubleclick\\\\.net", with: "localhost")
             ContentBlocking.useTestRules(fixtureRules)
+            try await readerBlockingChecks(session)
             try await load(normal, "upgrades")
             let blocked = try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool
             try check(blocked == true, "native blocker prevents third-party synthetic request")
