@@ -4,8 +4,41 @@ The owner’s screenshot showed the introduction aligned to the narrower camera-
 
 Setup now uses the full horizontal bounds while preserving vertical safe-area behavior. Welcome, transfer, default-browser and tour headings and actions share that center axis. Progress has an independent centered position, so different Back and Skip widths cannot shift it. Transfer rows retain readable leading alignment inside the centered column. Accessibility-sized actions remain in the scroll view.
 
-Only top controls that actually overlap an active system occlusion receive vertical clearance. UIKit reports the current reserved frames and margins; the shared navigation row moves below those rectangles, leaving the page’s horizontal axis unchanged. No camera position, pose-width rule or persistent full-height camera rail is introduced. Measurements use the setup coordinate space and remove existing clearance before recalculation to avoid oscillation.
+Only top controls that actually overlap an active system occlusion receive vertical clearance. UIKit’s returned reserved-region frame already includes system margins; it is used directly. The shared navigation row moves below those rectangles, leaving the page’s horizontal axis unchanged. Multiple regions are ordered by their bottom edge so clearing a lower control cannot move a higher control into a previously skipped tall region. No camera position, pose-width rule or persistent full-height camera rail is introduced. Measurements use the setup coordinate space and remove existing clearance before recalculation to avoid oscillation.
 
-Twelve new native assertions exercise measured obstruction clearance, an unoccupied camera edge, multiple obstructions, all four steps with left/right asymmetric safe areas and maximum accessibility text. Existing setup transfer, cancellation, review, persistence and reentry checks remain in the same batch. The expected Setup receipt is 36 checks.
+Setup has one SwiftUI hosting coordinate space. Its unused NavigationStack was removed; custom Back/Skip navigation, interactive-dismiss protection and the scene reference for Safari transfer remain. The full-width reader and the measured controls live inside the same horizontal expansion. Debug-only UIView probes independently convert the actual rendered heading, action, progress and canvas bounds into their UIWindow; native tests compare these with the hosting view’s physical window bounds. This caught an ambiguous earlier cross-host coordinate measurement and verifies both left- and right-side asymmetric safe areas without weakening the centering assertions.
 
-Debug and Release simulator builds, 328 portable assertions, source parsing, strict SwiftLint and repository/whitespace checks pass. The 12 new native assertions compile. Runtime and visible closed/open/partial/rotated checks are pending the coordinated simulator slot and will be recorded separately; source review is not evidence of visual centering. Simulator evidence does not establish hardware touch, battery, real Safari transfer eligibility or full spoken VoiceOver behavior.
+Thirteen new native assertions exercise obstruction clearance, an unoccupied camera edge, multiple obstructions, staggered controls, all four steps with left/right asymmetric safe areas and maximum accessibility text. Existing setup transfer, cancellation, review, persistence and reentry checks remain in the same batch. All 37 focused Setup checks pass on the final product/probe source `b394999`. Debug and Release simulator builds pass on that source; 328 portable assertions and strict lint also passed before the final fixture-only upstream merge. The ultimate combined-stack receipt is recorded below.
+
+## Visible simulator evidence
+
+The final Debug app was installed on the isolated iOS 27.1 Duo QA simulator, using `--browser-checks --setup-preview` and synthetic transfer data. These captures show the final single-host source; native captures exclude Device Hub’s physical bezel overlay.
+
+- [Welcome, closed portrait](welcome-closed.png): heading, body, illustration, progress and primary action share the full display’s center.
+- [Transfer, open display](transfer-open.png): centered heading and actions, with leading-aligned transfer rows inside the centered column.
+- [Default browser, partially folded](default-partial.png): centered content in the active app presentation; the other portion of the native display capture is black.
+- [Tour after rotation](tour-rotated.png): title, progress and primary action remain centered; instruction rows remain readable.
+- [Tour, maximum text](tour-large-text.png): centered wrapping and unclipped top navigation; remaining content and the primary action are below the viewport in the scroll view. A manual full scroll-to-action interaction was not recorded.
+
+Get Started, Not Now, Continue and Back were exercised. Back returned from the tour with Reduce Motion enabled. The simulator was restored to closed portrait, Dark appearance, Text Size 3, Reduce Motion off, VoiceOver off and keyboard capture off before the final suite handoff. Full spoken VoiceOver, keyboard/pinch behavior, hardware touch/battery, and real Safari transfer eligibility are not established by these screenshots or synthetic checks.
+
+## Combined seven-feature validation
+
+This record is the final integration checkpoint for maintained content filters, tab recovery/navigation, saved pages/offline reading, downloads, Browser/Website Settings, camera settling and full-display setup. Earlier feature reports preserve the checks available at their own checkpoints; their statements that later regressions await integration are historical and are superseded by the final combined receipt recorded here.
+
+The first final-stack attempt passed Downloads47 and caught a Website Settings harness readiness race. WebKit already reported the requested `localhost` URL while its actual `isLoading` was true and the published model loading flag still described the previous document. The test now waits for WebKit to finish and the actual document to report the expected hostname and complete readiness. Its stale-scope and other-host preference assertions are unchanged. Focused Settings48 then passed; this is a test synchronization correction, with no production behavior change (`8467b81`).
+
+The final combined native run on source `9f07d1ae3773c650a5b3d2f391e5f484756228d1` passed with exit 0: **494 assertions across 11 batches**. Counts are Downloads47, Settings48, Setup37, Reddit29, TabStack21, Core93, Upgrades160, Camera42, persistent-cookie write2/read2 and Memory13. The [combined receipt](combined-native-receipts.txt) preserves those results; the [focused setup receipt](setup-window-receipt.txt) names the independent physical-window assertions. The latest repository/portable run passed 339 assertions, including the synthetic download gate regressions; pinned SwiftLint passed. Debug passed on the final integrated source. Product Release passed at `b394999`; subsequent changes are test readiness, fixture reliability and this evidence only. Latest-head hosted CI and final exact-commit signing/device installation remain pending and are tracked in the PRs. Hardware touch, motion quality and energy use, actual Safari transfer entitlement/installation behavior, and full spoken VoiceOver remain separate device-validation work. These results do not imply a merge, device installation, TestFlight submission or App Store approval.
+
+
+Feature-specific behavior, screenshots and remaining interaction limits remain in their reports:
+
+| Feature | Evidence |
+| --- | --- |
+| Maintained content filters | [Filter behavior, converter and native UI](../2026-11-12-content-blocking/README.md) |
+| Tab recovery and navigation | [Undo, Recently Closed and navigation](../2026-11-12-tab-recovery/README.md) |
+| Saved pages and offline reading | [Saved library and offline article](../2026-11-12-saved-pages/README.md) |
+| Downloads | [Transfers, retry and lifecycle](../2026-11-12-downloads/README.md) |
+| Browser and Website Settings | [Data removal, preferences and website scope](../2026-11-12-browser-settings/README.md) |
+| Camera avoidance and settling | [Long content, interruption and Reduce Motion](../2026-11-12-camera-settling/README.md) |
+| Full-display setup | Visible evidence and physical-window assertions above |

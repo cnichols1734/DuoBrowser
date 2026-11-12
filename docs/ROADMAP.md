@@ -1,9 +1,15 @@
 # Build plan
 
+## Final integrated feature validation — November 12, 2026
+
+- The final source `9f07d1ae3773c650a5b3d2f391e5f484756228d1` combines maintained filters, tab recovery, saved pages/offline reading, downloads, Browser/Website Settings, camera settling and full-display setup. All **494 native assertions across 11 batches passed**: Downloads47, Settings48, Setup37, Reddit29, TabStack21, Core93, Upgrades160, Camera42, cookie write2/read2 and Memory13. Debug, 339 portable checks and pinned strict SwiftLint passed. Product Release passed at `b394999`; later changes affect only test readiness, fixtures and evidence.
+- This integrated result supersedes earlier feature reports’ pending-native statements below; those reports retain their historical checkpoints and manual interaction limits. The final setup screenshots cover closed/open/partially folded poses, rotation and maximum text. A Website Settings harness race was fixed by waiting for the actual new-host document, preserving the stale-scope assertions.
+- Latest-head hosted CI, final exact-commit signing and device installation are still pending in the PRs. Hardware touch/energy, real Safari transfer and full spoken VoiceOver remain unverified; no merge or release is implied. [Combined receipts, screenshots and limits](reviews/2026-11-12-setup-centering/README.md).
+
 ## Full-display setup alignment — November 12, 2026
 
-- Centers all setup steps, headings, actions and progress on the full horizontal display bounds while retaining vertical safe areas and scrolling accessibility actions. Runtime reserved-region frames and margins provide local top-control clearance only when needed.
-- Twelve native geometry/layout assertions added (Setup36). Debug/Release builds, 328 portable checks and strict lint pass; coordinated runtime/UI validation remains pending. [Evidence](reviews/2026-11-12-setup-centering/README.md).
+- Centers all setup steps, headings, actions and progress on the full horizontal display bounds while retaining vertical safe areas and scrolling accessibility actions. Runtime reserved-region frames (including their system margins) provide local top-control clearance only when needed.
+- Thirteen native geometry/layout assertions added; all Setup37 pass, including independent UIKit window-coordinate checks for every step with left/right asymmetric safe areas. Debug/Release builds, 328 portable checks and strict lint pass. Closed/open/partially folded, rotated and maximum-text UI captures confirm the final single-host layout; the ultimate combined-stack run also passed (see the integration checkpoint above). [Evidence](reviews/2026-11-12-setup-centering/README.md).
 
 ## Camera avoidance and gradual settling — November 12, 2026
 
@@ -39,7 +45,7 @@
 - Added confirmed selective normal history/cookies/cache removal and per-WebKit-record website removal; private data remains separate and saved pages/downloaded files stay intact.
 - Integrated Debug/Release builds, 328 portable assertions, strict lint and repository checks passed. The preceding integrated native run passed 440 checks, including 40 Settings checks. Search, clear-data, selected-site removal and actual app appearance interactions passed simulator inspection. Website Settings is now a dedicated host-scoped Form; its host, toggle, protection detail and Done interactions passed simulator inspection. Its eight added native checks are queued with the ultimate camera follow-up validation. [Behavior, tests and integration notes](reviews/2026-11-12-browser-settings/README.md).
 
-Latest integrated evidence: source `5aaa842` builds and portable checks pass; review fixes and the dedicated Website Settings page still need the ultimate combined native rerun on the camera follow-up branch. No device installation, merge or release is implied.
+Earlier integrated checkpoint (superseded by the final validation above): source `5aaa842` builds and portable checks pass; review fixes and the dedicated Website Settings page still need the ultimate combined native rerun on the camera follow-up branch. No device installation, merge or release is implied.
 
 ## Onboarding redesign — November 11, 2026
 
