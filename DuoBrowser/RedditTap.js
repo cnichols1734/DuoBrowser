@@ -2,7 +2,8 @@
 (() => {
     'use strict';
     let pending = null;
-    document.addEventListener('click', event => {
+    // Install on window at document start, before page capture handlers can stop propagation.
+    window.addEventListener('click', event => {
         pending = null;
         if (!event.isTrusted || event.button !== 0) return;
         const anchor = event.composedPath().find(node => node instanceof HTMLAnchorElement);

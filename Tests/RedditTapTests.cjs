@@ -26,6 +26,16 @@ module.exports = async function(page, source) {
     await page.locator('a').click();
     await page.evaluate(() => document.querySelector('a').click());
     assert(!await consume(url), 'scripted click cannot reuse a preceding real gesture');
+    await page.evaluate(() => window.addEventListener('click', event => {
+        // A hostile page can intercept events before they reach document listeners.
+        if (!event.isTrusted) event.stopImmediatePropagation();
+        event.preventDefault();
+    }, true));
+    await page.locator('a').click();
+    assert(await consume(url), 'trusted click is recorded before page window capture handlers');
+    await page.locator('a').click();
+    await page.evaluate(() => document.querySelector('a').click());
+    assert(!await consume(url), 'window capture interruption cannot preserve a stale real-tap token');
     await page.locator('a').evaluate(a => a.download = 'download');
     await page.locator('a').click();
     assert(!await consume(url), 'download links are excluded');
