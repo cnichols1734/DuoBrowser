@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct BrowserToolbar: View {
+    @State private var showingRecentlyClosed = false
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
@@ -41,6 +42,7 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
         .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
         .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
@@ -73,6 +75,7 @@ struct BrowserToolbar: View {
                         .accessibilityHidden(p > 0.1)
                         .accessibilitySortPriority(5)
                         .accessibilityLabel("Back")
+                        .modifier(BackHistoryMenu(browser: browser))
                         .transition(.opacity.combined(with: .scale(scale: 0.88)))
                     }
 
@@ -89,6 +92,12 @@ struct BrowserToolbar: View {
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
+                            .simultaneousGesture(DragGesture(minimumDistance: 32).onEnded { value in
+                                guard !keepExpanded, abs(value.translation.width) > abs(value.translation.height) * 2 else { return }
+                                session.switchAdjacentTab(value.translation.width < 0 ? 1 : -1)
+                            })
+                            .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
+                            .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
                             .accessibilityFocused($addressFocused)
                             .accessibilitySortPriority(3)
                             .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
@@ -140,8 +149,7 @@ struct BrowserToolbar: View {
                         .accessibilitySortPriority(1)
                         .accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
                         .contextMenu {
-                            Button("New Tab", systemImage: "plus") { session.newTab() }
-                            Button("Close This Tab", systemImage: "xmark") { session.close(browser.id) }
+                            tabActions
                         }
                         .transition(.opacity.combined(with: .scale(scale: 0.88)))
                     }
@@ -186,6 +194,7 @@ struct BrowserToolbar: View {
                 Button { browser.webView.goBack() } label: {
                     Image(systemName: "chevron.backward").frame(width: 52, height: 52)
                 }.disabled(!browser.canGoBack).accessibilityLabel("Back")
+                    .modifier(BackHistoryMenu(browser: browser))
                 Spacer(minLength: 0)
                 pageMenu.frame(width: 52, height: 52)
                 Spacer(minLength: 0)
@@ -196,6 +205,9 @@ struct BrowserToolbar: View {
                 Button { endEditing(); session.showTabs() } label: {
                     Image(systemName: "square.on.square").frame(width: 52, height: 52)
                 }.accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
+                    .contextMenu { tabActions }
+                    .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
+                    .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
             }
             .font(.system(size: 23, weight: .medium))
             .glassEffect(.regular.interactive(), in: Capsule())
@@ -205,6 +217,18 @@ struct BrowserToolbar: View {
         .frame(maxWidth: 620)
         .frame(maxWidth: .infinity)
         .frame(height: toolbarHeight)
+    }
+
+    @ViewBuilder private var tabActions: some View {
+        Button("New Tab", systemImage: "plus") { session.newTab() }
+        Button("Previous Tab", systemImage: "chevron.left") { session.switchAdjacentTab(-1) }
+            .disabled(session.visibleTabs.first?.id == session.selectedID)
+        Button("Next Tab", systemImage: "chevron.right") { session.switchAdjacentTab(1) }
+            .disabled(session.visibleTabs.last?.id == session.selectedID)
+        if !session.privateMode {
+            Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
+        }
+        Button("Close This Tab", systemImage: "xmark") { session.close(browser.id) }
     }
 
     private var pageMenu: some View {

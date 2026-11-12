@@ -34,3 +34,32 @@ struct TabArchive: Codable {
         return TabArchive(tabs: sanitized, selectedID: valid.contains { $0.id == selectedID } ? selectedID : first.id)
     }
 }
+
+/// URL-only recovery. Page contents, credentials and private tabs never enter this record.
+struct ClosedTabRecord: Codable, Identifiable {
+    static let limit = 20
+    var id = UUID()
+    var address: String
+    var title: String
+    var scrollY: Double?
+    var workspaceID: UUID
+    var pinned: Bool
+    var closedAt = Date()
+
+    static func validated(_ records: [ClosedTabRecord]) -> [ClosedTabRecord] {
+        var seen = Set<UUID>()
+        return Array(records.filter { record in
+            guard seen.insert(record.id).inserted, record.address.utf8.count <= 16_384,
+                  let url = URLComponents(string: record.address),
+                  ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  let host = url.host, !host.isEmpty, url.user == nil, url.password == nil,
+                  url.url != nil else { return false }
+            return true
+        }.prefix(limit)).map { record in
+            var record = record
+            record.title = String(record.title.prefix(512))
+            if let y = record.scrollY, !y.isFinite || y < 0 || y > 10_000_000 { record.scrollY = nil }
+            return record
+        }
+    }
+}

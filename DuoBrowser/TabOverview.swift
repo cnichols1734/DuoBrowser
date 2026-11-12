@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import CoreTransferable
 
 struct TabOverview: View {
+    @State private var showingRecentlyClosed = false
     @ObservedObject var session: BrowserSession
     @ObservedObject private var wallpaper = BrowserWallpaperStore.shared
     @State private var search = ""
@@ -72,6 +73,7 @@ struct TabOverview: View {
                         tabItem(tab, list: false, close: close)
                     }
                 }
+                ClosedTabNotice(session: session)
                 footer
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
                     .padding(.horizontal, 16).padding(.top, 8)
@@ -92,6 +94,7 @@ struct TabOverview: View {
         .onChange(of: session.showingTabs) { _, showing in
             if showing { search = ""; searching = false; searchFocused = false }
         }
+        .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
         .sheet(isPresented: $appearance) {
             NavigationStack {
@@ -156,6 +159,7 @@ struct TabOverview: View {
                 Menu {
                     Button("Search Tabs", systemImage: "magnifyingglass") { searching = true; searchFocused = true }
                     if !session.privateMode {
+                        Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
                         Menu("Workspaces", systemImage: "square.stack") {
                             ForEach(session.workspaces) { workspace in
                                 Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }

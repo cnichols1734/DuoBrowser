@@ -12,6 +12,8 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarks: [LibraryEntry] = []
     @Published var bookmarkFolders: [BookmarkFolder] = []
     @Published var readingList: [LibraryEntry] = []
+    @Published private(set) var recentlyClosed: [ClosedTabRecord] = []
+    @Published var closedTabNotice: UUID?
     @Published var showingSetup = false
     @Published var adBlockingEnabled: Bool {
         didSet {
@@ -42,6 +44,8 @@ final class BrowserSession: ObservableObject {
     private var memoryObserver: AnyCancellable?
     private var filterRefreshObserver: AnyCancellable?
     private var compactTask: Task<Void, Never>?
+    private var retainedClosedTab: (recordID: UUID, tab: BrowserModel, index: Int)?
+    private var closedTabExpiry: Task<Void, Never>?
     private var lastNormalID: UUID?
     private var lastPrivateID: UUID?
 
@@ -79,6 +83,7 @@ final class BrowserSession: ObservableObject {
         bookmarks = saved?.bookmarks ?? []
         bookmarkFolders = saved?.bookmarkFolders ?? []
         readingList = saved?.readingList ?? []
+        recentlyClosed = saved?.recentlyClosed ?? []
         normalSites = saved?.sites ?? [:]
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
@@ -91,6 +96,7 @@ final class BrowserSession: ObservableObject {
         memoryObserver = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
+                    self?.releaseClosedTab()
                     self?.tabs.forEach { $0.clearSnapshot() }
                     self?.compactInactiveTabs(target: 2)
                 }
@@ -265,8 +271,23 @@ final class BrowserSession: ObservableObject {
 
     func close(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let order = visibleTabs.map(\.id)
+        let visibleIndex = order.firstIndex(of: id)
+        let adjacent = visibleIndex.flatMap { position in
+            position + 1 < order.count ? order[position + 1] : (position > 0 ? order[position - 1] : nil)
+        }
         let tab = tabs.remove(at: index)
-        tab.close()
+        if !tab.isPrivate, let url = tab.restorationURL {
+            let record = ClosedTabRecord(address: url.absoluteString, title: tab.title,
+                scrollY: tab.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? tab.pendingScrollY,
+                workspaceID: tab.workspaceID, pinned: tab.isPinned)
+            recentlyClosed = ClosedTabRecord.validated([record] + recentlyClosed)
+            closedTabNotice = record.id
+            if let view = tab.loadedWebView, !view.isLoading, !tab.hasWindowRelationships,
+               view.cameraCaptureState == .none, view.microphoneCaptureState == .none {
+                retainForUndo(tab, recordID: record.id, index: index)
+            } else { tab.close() }
+        } else { tab.close() }
         if !tabs.contains(where: \.isPrivate) {
             endPrivateSession()
         }
@@ -275,7 +296,8 @@ final class BrowserSession: ObservableObject {
             connect(replacement); tabs.append(replacement)
         }
         if selectedID == id {
-            let replacement = tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
+            let replacement = tabs.first(where: { $0.id == adjacent })
+                ?? tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
                 ?? tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
             selectedID = replacement.id
             privateMode = replacement.isPrivate
@@ -284,6 +306,74 @@ final class BrowserSession: ObservableObject {
         }
         rememberSelection()
         saveNow()
+    }
+
+    @discardableResult
+    func reopenClosedTab(_ id: UUID) -> Bool {
+        guard !privateMode, tabs.count < 200,
+              let record = recentlyClosed.first(where: { $0.id == id }),
+              let url = WebAddress.valid(URL(string: record.address)) else { return false }
+        let targetWorkspace = workspaces.contains { $0.id == record.workspaceID } ? record.workspaceID : Workspace.defaultID
+        if let retained = retainedClosedTab, retained.recordID == id {
+            closedTabExpiry?.cancel(); closedTabExpiry = nil; retainedClosedTab = nil
+            let tab = retained.tab
+            tab.workspaceID = targetWorkspace
+            connect(tab)
+            tab.loadedWebView?.setAllMediaPlaybackSuspended(false)
+            tabs.insert(tab, at: min(retained.index, tabs.count))
+            recentlyClosed.removeAll { $0.id == id }
+            if closedTabNotice == id { closedTabNotice = nil }
+            select(tab.id)
+            saveNow()
+            return true
+        }
+        let tab = makeTab(url: url, privateTab: false)
+        tab.restoreClosedTabTitle(record.title)
+        tab.pendingScrollY = record.scrollY
+        tab.workspaceID = targetWorkspace
+        tab.isPinned = record.pinned
+        workspaceID = targetWorkspace
+        recentlyClosed.removeAll { $0.id == id }
+        if closedTabNotice == id { closedTabNotice = nil }
+        tab.activate()
+        saveNow()
+        return true
+    }
+
+    private func retainForUndo(_ tab: BrowserModel, recordID: UUID, index: Int) {
+        releaseClosedTab()
+        tab.cancelReader()
+        tab.presentation.cancel()
+        tab.loadedWebView?.setAllMediaPlaybackSuspended(true)
+        tab.loadedWebView?.removeFromSuperview()
+        // A closed page cannot initiate new native UI or mutate the session while retained.
+        tab.onChange = nil; tab.onVisit = nil; tab.onOpenWindow = nil; tab.onOpenLink = nil
+        tab.onCreatePreview = nil; tab.onPromotePreview = nil; tab.onClose = nil; tab.onSnapshot = nil
+        retainedClosedTab = (recordID, tab, index)
+        closedTabExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.releaseClosedTab()
+        }
+    }
+
+    func releaseClosedTab() {
+        closedTabExpiry?.cancel(); closedTabExpiry = nil
+        retainedClosedTab?.tab.close(); retainedClosedTab = nil
+    }
+
+    func clearRecentlyClosed() {
+        releaseClosedTab()
+        recentlyClosed.removeAll()
+        closedTabNotice = nil
+        saveNow(replaceBackup: true)
+    }
+
+    func switchAdjacentTab(_ direction: Int) {
+        let candidates = visibleTabs
+        guard let index = candidates.firstIndex(where: { $0.id == selectedID }),
+              candidates.indices.contains(index + direction) else { return }
+        select(candidates[index + direction].id)
     }
 
     func closePrivateTabs() {
@@ -433,7 +523,13 @@ final class BrowserSession: ObservableObject {
     }
     func deleteHistory(ids: Set<UUID>? = nil) {
         WebsiteIconStore.shared.clear()
-        if let ids { history.removeAll { ids.contains($0.id) } } else { history.removeAll() }
+        if let ids {
+            let removed = Set(history.filter { ids.contains($0.id) }.map(\.address))
+            recentlyClosed.removeAll { removed.contains($0.address) }
+            history.removeAll { ids.contains($0.id) }
+        } else { history.removeAll(); recentlyClosed.removeAll() }
+        if !recentlyClosed.contains(where: { $0.id == closedTabNotice }) { closedTabNotice = nil }
+        if let retained = retainedClosedTab, !recentlyClosed.contains(where: { $0.id == retained.recordID }) { releaseClosedTab() }
         saveNow(replaceBackup: true)
     }
     func deleteBookmarks(ids: Set<UUID>) {
@@ -472,6 +568,7 @@ final class BrowserSession: ObservableObject {
     }
 
     func background() {
+        releaseClosedTab()
         tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot(); $0.cancelReader() } }
         saveNow()
     }
@@ -494,7 +591,7 @@ final class BrowserSession: ObservableObject {
                       scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
         }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
         history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces,
-        bookmarkFolders: bookmarkFolders, readingList: readingList)
+        bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
             return true

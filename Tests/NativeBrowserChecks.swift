@@ -692,6 +692,74 @@ private final class NativeCheckRunner {
                   "Private Reader preserves the ephemeral source profile")
         privateReader.close(); privateSource.close()
     }
+    func tabRecoveryChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabRecovery-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let defaults = UserDefaults(suiteName: "DuoBrowser.TabRecoveryChecks")!
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        let first = session.selected
+        try await load(first, "upgrades")
+        _ = try await js(first, "document.title = 'Recovery first'")
+        let middle = session.newTab()
+        try await load(middle, "upgrades")
+        let last = session.newTab()
+        try await load(last, "upgrades")
+        session.select(middle.id)
+        _ = try await js(middle, "document.title = 'Recovery middle'")
+        try await wait { middle.title == "Recovery middle" }
+        _ = try await js(middle, "window.scrollTo(0,150); document.querySelector('#kept').value='Undo draft'")
+        session.close(middle.id)
+        try check(session.selectedID == last.id, "closing selected middle tab selects its next visible neighbor")
+        let record = session.recentlyClosed[0]
+        try check(record.title == "Recovery middle" && record.address.contains("upgrades"), "closed tab keeps title and address")
+        try check(record.scrollY != nil, "closed tab captures reading position")
+        try check(store.load()?.recentlyClosed?.first?.id == record.id, "normal closed tab is durably saved")
+        try check(session.closedTabNotice == record.id, "normal close offers immediate Undo")
+        try check(session.reopenClosedTab(record.id), "Undo reopens a normal tab")
+        try check(!session.reopenClosedTab(record.id), "stale Undo cannot reopen a second copy")
+        try check(session.recentlyClosed.isEmpty && session.closedTabNotice == nil, "reopening consumes recovery entry and notice")
+        let reopened = session.selected
+        try check(reopened === middle, "immediate Undo restores the original live model")
+        try check(try await js(reopened, "document.querySelector('#kept').value") as? String == "Undo draft",
+                  "immediate Undo preserves unsent form input")
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch selects previous visible tab")
+        session.select(first.id)
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch stops at workspace edge")
+        session.close(last.id)
+        let normalRecords = session.recentlyClosed.map(\.id)
+        let privateTab = session.newTab(privateTab: true)
+        try await load(privateTab, "upgrades")
+        try check(!session.reopenClosedTab(normalRecords[0]), "normal recovery is unavailable while browsing privately")
+        session.close(privateTab.id)
+        try check(session.recentlyClosed.map(\.id) == normalRecords, "closing private tab never enters recovery")
+        try check(store.load()?.recentlyClosed?.map(\.id) == normalRecords, "archive never acquires private closure")
+        session.clearRecentlyClosed()
+        try check(store.load()?.recentlyClosed?.isEmpty == true, "clear removes persisted recovery")
+        session.createWorkspace("Recovery workspace")
+        let workspace = session.workspaceID
+        let workspaceTab = session.selected
+        try await load(workspaceTab, "upgrades")
+        session.togglePin(workspaceTab)
+        session.close(workspaceTab.id)
+        session.releaseClosedTab()
+        let workspaceRecord = session.recentlyClosed[0]
+        try check(session.reopenClosedTab(workspaceRecord.id) && session.workspaceID == workspace && session.selected.isPinned,
+                  "reopening restores workspace and pin")
+        session.close(session.selectedID)
+        let deletedWorkspaceRecord = session.recentlyClosed[0]
+        session.removeWorkspace(workspace)
+        try check(session.reopenClosedTab(deletedWorkspaceRecord.id) && session.workspaceID == Workspace.defaultID,
+                  "reopening from deleted workspace falls back to Personal")
+        session.select(reopened.id)
+        session.close(reopened.id)
+        session.deleteHistory()
+        try check(session.recentlyClosed.isEmpty && store.load()?.recentlyClosed?.isEmpty == true,
+                  "clearing history also removes closed-page recovery")
+    }
+
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
@@ -703,6 +771,7 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try await tabRecoveryChecks()
             let normal = session.selected
             try await load(normal, "upgrades")
             _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
@@ -906,12 +975,17 @@ private final class NativeCheckRunner {
                 <h2>A little room to explore.</h2><p>A synthetic page for checking tabs, gestures and smooth transitions.</p>
                 <p>Keep your place as you move between pages and open the display.</p><input value="Unsent test note">
                 <p style="height:700px">Scroll, return, and continue reading.</p></main></body></html>
-                """, baseURL: nil)
+                """, baseURL: URL(string: "https://fixture.example/\(index)"))
             try? await wait { !model.webView.isLoading && model.title == page.0 }
             model.captureSnapshot()
             try? await wait { model.snapshot != nil }
         }
         session.select(session.visibleTabs[0].id)
+        if ProcessInfo.processInfo.arguments.contains("--recovery-preview") {
+            session.close(session.selectedID)
+            host.present(UIHostingController(rootView: RecentlyClosedView(session: session)), animated: false)
+            return
+        }
         let controller = BrowserZoomController(session: session)
         host.addChild(controller)
         controller.view.frame = host.view.bounds

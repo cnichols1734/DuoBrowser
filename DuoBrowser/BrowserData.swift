@@ -71,6 +71,7 @@ struct BrowserArchive: Codable {
     var workspaces: [Workspace]? = nil
     var bookmarkFolders: [BookmarkFolder]? = nil
     var readingList: [LibraryEntry]? = nil
+    var recentlyClosed: [ClosedTabRecord]? = nil
 
     func validated() -> BrowserArchive? {
         guard version == 1, let session = session.validated() else { return nil }
@@ -95,6 +96,7 @@ struct BrowserArchive: Codable {
                     var e = entry; e.title = String(e.title.prefix(512)); return e
                 }
         }
+        result.recentlyClosed = ClosedTabRecord.validated(recentlyClosed ?? [])
         result.history = clean(history, limit: LibraryLimits.history)
         result.bookmarks = clean(bookmarks, limit: LibraryLimits.bookmarks)
         result.readingList = clean(readingList ?? [], limit: LibraryLimits.readingList)

@@ -63,6 +63,7 @@ struct ActiveBrowserView: View {
                         .allowsHitTesting(!showingSearch)
                 }
                 VStack(spacing: 8) {
+                    ClosedTabNotice(session: session)
                     if let error = browser.errorMessage {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(error).font(.callout)

@@ -93,6 +93,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var lastUsed = Date()
     private var pendingURL: URL?
     private var startsWithFixture = false
+    private var restoredTitle: String?
     private var pageLayout: PageLayoutAdapter!
     @Published var originalPageLayout = false {
         didSet { updatePageLayout(); if !applyingPreferences { saveSitePreference() } }
@@ -201,6 +202,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         })
     }
 
+    func restoreClosedTabTitle(_ value: String) {
+        guard !activated else { return }
+        restoredTitle = value.isEmpty ? nil : String(value.prefix(512))
+        title = restoredTitle ?? siteName
+    }
+
     /// Restored background tabs do not load until selected.
     func activate() {
         guard !activated else { return }
@@ -297,11 +304,13 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         isLoading = webView.isLoading
         progress = webView.estimatedProgress
         address = restorationURL?.absoluteString ?? ""
-        title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? siteName
+        if let actualTitle = webView.title, !actualTitle.isEmpty { restoredTitle = nil; title = actualTitle }
+        else { title = restoredTitle ?? siteName }
         if previousAddress != address || previousTitle != title { onChange?() }
     }
 
     func navigate(to input: String) {
+        restoredTitle = nil
         guard let url = WebAddress.resolve(input) else {
             errorMessage = "Enter a valid website address or search."
             return

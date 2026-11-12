@@ -1,5 +1,10 @@
 # Build plan
 
+## Tab recovery and navigation — November 12, 2026
+
+- Added normal-tab Undo and a 20-entry persisted Recently Closed list, preserving title, address, best-effort reading position, workspace and pin. Private tabs are excluded. History deletion also clears corresponding recovery records. Reopening loads the saved address, not form input or a full navigation session.
+- Closing selects an adjacent visible tab. Address-capsule swipes and accessible menu actions switch tabs without reloading; Back supports a bounded history menu with stale-item validation.
+- Debug/Release builds, 202 portable assertions, 186 browser assertions, SwiftLint and the full native suite passed. Native UI verified Close/Undo, accessible tab switching and Recently Closed across display sizes; gesture, keyboard/pinch and full accessibility/occlusion gaps remain. [Tab recovery evidence](reviews/2026-11-12-tab-recovery/README.md).
 ## Maintained content filters — November 12, 2026
 
 - Replaces the 19-service baseline with bundled EasyList/EasyPrivacy supported network and cosmetic rules, plus opt-in Cookie List filtering. Adds transactional automatic/manual updates, per-site draft-preserving switches, and offline filter credits. Filter data uses upstream CC licenses; independent app/converter code remains MIT. See [design, licensing and limits](MAINTAINED_FILTERS.md).
