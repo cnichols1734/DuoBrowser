@@ -1,5 +1,10 @@
 # Build plan
 
+## Full-display setup alignment — November 12, 2026
+
+- Centers all setup steps, headings, actions and progress on the full horizontal display bounds while retaining vertical safe areas and scrolling accessibility actions. Runtime reserved-region frames and margins provide local top-control clearance only when needed.
+- Twelve native geometry/layout assertions added (Setup36). Debug/Release builds, 328 portable checks and strict lint pass; coordinated runtime/UI validation remains pending. [Evidence](reviews/2026-11-12-setup-centering/README.md).
+
 ## Camera avoidance and gradual settling — November 12, 2026
 
 - Responds to the owner's long-paragraph camera overlap and abrupt-motion report. Side fitting now supports bounded longer paragraphs; mutation activity cannot indefinitely postpone fitting or repeatedly restart a glide. Motion uses a gentler horizontal transform, with one settled reflow, presentation-preserving interruption, unchanged reading anchors and static Reduce Motion avoidance.

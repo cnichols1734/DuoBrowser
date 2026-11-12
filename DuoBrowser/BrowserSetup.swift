@@ -6,9 +6,15 @@ struct BrowserSetup: View {
     @ObservedObject var model: BrowserSetupModel
     @State private var scene: UIWindowScene?
     @State private var showingTransferDetails = false
+    @State private var occlusions: [CGRect] = []
+    @State private var frames: [String: CGRect] = [:]
+    @State private var navigationClearance: CGFloat = 0
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AccessibilityFocusState private var headingFocused: Bool
+    #if DEBUG
+    var layoutDidChange: (([String: CGRect]) -> Void)?
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -26,6 +32,7 @@ struct BrowserSetup: View {
                     .frame(minHeight: geometry.size.height)
                 }
                 .scrollBounceBehavior(.basedOnSize)
+                .setupFrame("step.\(model.step.rawValue)")
                 .id(model.step)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -37,32 +44,61 @@ struct BrowserSetup: View {
             }
             .background(Color(uiColor: .systemBackground))
             .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .top, spacing: 0) { navigation }
-            .background { SetupSceneReader { scene = $0 }.frame(width: 0, height: 0) }
+            .safeAreaInset(edge: .top, spacing: 0) { navigation.padding(.top, navigationClearance) }
+            .ignoresSafeArea(.container, edges: .horizontal)
             .onChange(of: model.step) { _, _ in
                 showingTransferDetails = false
                 headingFocused = true
             }
             .interactiveDismissDisabled()
         }
+        .ignoresSafeArea(.container, edges: .horizontal)
+        .background {
+            SetupSceneReader { currentScene, regions in
+                scene = currentScene
+                if regions != occlusions { occlusions = regions; updateNavigationClearance(frames) }
+            }
+            .allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .setupFrame("canvas")
+        .coordinateSpace(name: "setup.canvas")
+        .onPreferenceChange(SetupFramesKey.self) { value in
+            frames = value
+            updateNavigationClearance(value)
+            #if DEBUG
+            layoutDidChange?(value)
+            #endif
+        }
+    }
+
+    private func updateNavigationClearance(_ measured: [String: CGRect]) {
+        let baseline = measured.filter { $0.key.hasPrefix("navigation.") }.values.map {
+            $0.offsetBy(dx: 0, dy: -navigationClearance)
+        }
+        let next = SetupLayout.clearance(below: occlusions, controls: baseline)
+        if abs(next - navigationClearance) > 0.5 { navigationClearance = next }
     }
 
     private var navigation: some View {
-        HStack {
-            Button { model.cancel(); advance(back: true) } label: {
-                Image(systemName: "chevron.left").font(.body.weight(.medium))
-                    .frame(width: 44, height: 44)
-            }
-            .accessibilityLabel("Back").accessibilityIdentifier("setup.back")
-            .opacity(model.step == .welcome ? 0 : 1)
-            .disabled(model.step == .welcome).accessibilityHidden(model.step == .welcome)
-            Spacer()
+        ZStack {
             Text("\(model.step.rawValue + 1) of \(BrowserSetupModel.Step.allCases.count)")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .accessibilityLabel("Step \(model.step.rawValue + 1) of \(BrowserSetupModel.Step.allCases.count)")
-            Spacer()
-            Button("Skip") { finish() }.frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("Skip Setup").accessibilityIdentifier("setup.skip")
+                .setupFrame("navigation.progress")
+            HStack {
+                Button { model.cancel(); advance(back: true) } label: {
+                    Image(systemName: "chevron.left").font(.body.weight(.medium))
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Back").accessibilityIdentifier("setup.back")
+                .opacity(model.step == .welcome ? 0 : 1)
+                .disabled(model.step == .welcome).accessibilityHidden(model.step == .welcome)
+                .setupFrame(model.step == .welcome ? "hidden.back" : "navigation.back")
+                Spacer()
+                Button("Skip") { finish() }.frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Skip Setup").accessibilityIdentifier("setup.skip")
+                    .setupFrame("navigation.skip")
+            }
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 24).padding(.top, 8)
@@ -74,7 +110,7 @@ struct BrowserSetup: View {
     }
 
     private var heading: some View {
-        VStack(alignment: compactHeading ? .leading : .center, spacing: compactHeading ? 12 : 16) {
+        VStack(alignment: .center, spacing: compactHeading ? 12 : 16) {
             if !dynamicTypeSize.isAccessibilitySize && !compactHeading {
                 Image(systemName: symbol)
                     .rotationEffect(.degrees(model.step == .welcome ? 90 : 0))
@@ -89,12 +125,13 @@ struct BrowserSetup: View {
                 .foregroundStyle(.primary)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityFocused($headingFocused)
+                .setupFrame("heading")
             Text(subtitle)
                 .font(.body).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .frame(maxWidth: .infinity, alignment: compactHeading ? .leading : .center)
-        .multilineTextAlignment(compactHeading ? .leading : .center)
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
     }
 
     private var symbol: String {
@@ -247,6 +284,7 @@ struct BrowserSetup: View {
             .buttonBorderShape(.roundedRectangle(radius: 16))
             .disabled(primaryDisabled)
             .accessibilityIdentifier("setup.continue")
+            .setupFrame("primary")
             if model.step == .transfer && model.transferEnabled && model.state != .saved && !session.privateMode && !model.busy {
                 Button(model.state == .review ? "Don’t Import" : "Not Now") { model.cancel(); advance() }
                     .frame(minHeight: 44)
@@ -323,15 +361,54 @@ struct BrowserSetup: View {
 }
 
 private struct SetupSceneReader: UIViewRepresentable {
-    var update: (UIWindowScene?) -> Void
+    var update: (UIWindowScene?, [CGRect]) -> Void
     func makeUIView(context: Context) -> SceneView { let view = SceneView(); view.update = update; return view }
-    func updateUIView(_ view: SceneView, context: Context) { view.update = update }
+    func updateUIView(_ view: SceneView, context: Context) { view.update = update; view.setNeedsLayout() }
     final class SceneView: UIView {
-        var update: ((UIWindowScene?) -> Void)?
+        var update: ((UIWindowScene?, [CGRect]) -> Void)?
+        private weak var lastScene: UIWindowScene?
+        private var lastRegions: [CGRect]?
         override func didMoveToWindow() {
             super.didMoveToWindow()
-            let scene = window?.windowScene
-            DispatchQueue.main.async { [weak self] in self?.update?(scene) }
+            setNeedsLayout()
         }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let scene = window?.windowScene
+            let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map { region in
+                region.frame.inset(by: UIEdgeInsets(top: -region.margins.top, left: -region.margins.left,
+                                                   bottom: -region.margins.bottom, right: -region.margins.right))
+            }
+            guard scene !== lastScene || regions != lastRegions else { return }
+            lastScene = scene; lastRegions = regions
+            DispatchQueue.main.async { [weak self] in self?.update?(scene, regions) }
+        }
+    }
+}
+
+enum SetupLayout {
+    static func clearance(below regions: [CGRect], controls: [CGRect]) -> CGFloat {
+        guard let top = controls.map(\.minY).min() else { return 0 }
+        var clearance: CGFloat = 0
+        for region in regions.filter({ !$0.isNull && !$0.isInfinite && !$0.isEmpty }).sorted(by: { $0.minY < $1.minY }) {
+            if controls.contains(where: { $0.offsetBy(dx: 0, dy: clearance).intersects(region) }) {
+                clearance = max(clearance, region.maxY + 8 - top)
+            }
+        }
+        return clearance
+    }
+}
+
+private struct SetupFramesKey: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) { value.merge(nextValue(), uniquingKeysWith: { _, latest in latest }) }
+}
+
+private extension View {
+    func setupFrame(_ name: String) -> some View {
+        background(GeometryReader { geometry in
+            Color.clear.preference(key: SetupFramesKey.self, value: [name: geometry.frame(in: .named("setup.canvas"))])
+        })
     }
 }

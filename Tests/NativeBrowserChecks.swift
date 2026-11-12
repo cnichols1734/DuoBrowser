@@ -1466,6 +1466,41 @@ final class NativeCheckRunner {
         try check(model.message == BrowserImportError.saveFailed.localizedDescription, "failed durable save supplies recovery instructions during review")
         model.cancel()
         try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
+        try await setupLayoutChecks(session: session, model: model)
+    }
+
+    private func setupLayoutChecks(session: BrowserSession, model: BrowserSetupModel) async throws {
+        let controls = [CGRect(x: 190, y: 8, width: 80, height: 44), CGRect(x: 402, y: 8, width: 44, height: 44)]
+        let camera = CGRect(x: 400, y: 0, width: 66, height: 80)
+        let clearance = SetupLayout.clearance(below: [camera], controls: controls)
+        try check(clearance == 80 && controls.allSatisfy { !$0.offsetBy(dx: 0, dy: clearance).intersects(camera) }, "setup moves only overlapping top controls below the measured camera region")
+        try check(SetupLayout.clearance(below: [CGRect(x: 0, y: 0, width: 40, height: 80)], controls: controls) == 0, "an unoccupied camera edge does not inset setup navigation")
+        let expanded = CGRect(x: 180, y: 90, width: 286, height: 40)
+        let stacked = SetupLayout.clearance(below: [expanded, camera], controls: controls)
+        try check(controls.allSatisfy { frame in [camera, expanded].allSatisfy { !frame.offsetBy(dx: 0, dy: stacked).intersects($0) } }, "setup clearance handles multiple measured obstructions without moving the horizontal center")
+        for safeInsets in [UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92), UIEdgeInsets(top: 12, left: 92, bottom: 18, right: 0)] {
+            var measured: [String: CGRect] = [:]
+            let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { measured = $0 }))
+            preview.additionalSafeAreaInsets = safeInsets
+            host.addChild(preview); preview.view.frame = host.view.bounds; host.view.addSubview(preview.view); preview.didMove(toParent: host)
+            defer { preview.willMove(toParent: nil); preview.view.removeFromSuperview(); preview.removeFromParent() }
+            for step in BrowserSetupModel.Step.allCases {
+                model.step = step
+                try await wait { measured["step.\(step.rawValue)"] != nil && measured["heading"] != nil && measured["primary"] != nil }
+                let width = preview.view.bounds.width
+                let centered = ["heading", "primary", "navigation.progress"].allSatisfy { abs((measured[$0]?.midX ?? -1) - width / 2) < 1 }
+                try check(abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered,
+                          "setup step \(step.rawValue) centers heading, action and progress on full bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right)")
+            }
+        }
+        var largeFrames: [String: CGRect] = [:]
+        model.step = .welcome
+        let large = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { largeFrames = $0 }).environment(\.dynamicTypeSize, .accessibility5))
+        large.additionalSafeAreaInsets = UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92)
+        host.addChild(large); large.view.frame = host.view.bounds; host.view.addSubview(large.view); large.didMove(toParent: host)
+        defer { large.willMove(toParent: nil); large.view.removeFromSuperview(); large.removeFromParent() }
+        try await wait { largeFrames["primary"] != nil && largeFrames["heading"] != nil }
+        try check(["heading", "primary", "navigation.progress"].allSatisfy { abs((largeFrames[$0]?.midX ?? -1) - large.view.bounds.midX) < 1 }, "accessibility setup keeps scrolling content and progress centered on the full display")
     }
 
     func setupPreview() throws {
