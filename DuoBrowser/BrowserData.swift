@@ -10,7 +10,7 @@ enum WebAddress {
         return url
     }
 
-    static func resolve(_ input: String) -> URL? {
+    static func resolve(_ input: String, engine: BrowserSearchEngine = .google) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= 8192 else { return nil }
         if text.contains("://") { return valid(URL(string: text)) }
@@ -20,11 +20,11 @@ enum WebAddress {
         if hostLike { return valid(URL(string: "https://" + text)) }
         // Explicit executable schemes are never interpreted as navigation.
         if ["javascript:", "data:", "file:", "about:", "blob:"].contains(where: { text.lowercased().hasPrefix($0) }) { return nil }
-        return searchURL(text)
+        return searchURL(text, engine: engine)
     }
 
-    static func searchURL(_ phrase: String) -> URL {
-        var search = URLComponents(string: "https://www.google.com/search")!
+    static func searchURL(_ phrase: String, engine: BrowserSearchEngine = .google) -> URL {
+        var search = URLComponents(string: engine.searchAddress)!
         search.queryItems = [URLQueryItem(name: "q", value: phrase)]
         // Search servers decode a literal plus as a space unless it is percent-escaped.
         search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
@@ -206,4 +206,32 @@ enum UnifiedSearch {
             return seen.insert($0.address).inserted
         }.prefix(30))
     }
+}
+
+
+enum BrowserSearchEngine: String, CaseIterable, Codable, Identifiable {
+    case google, duckDuckGo, bing, brave
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .google: return "Google"
+        case .duckDuckGo: return "DuckDuckGo"
+        case .bing: return "Bing"
+        case .brave: return "Brave Search"
+        }
+    }
+    var searchAddress: String {
+        switch self {
+        case .google: return "https://www.google.com/search"
+        case .duckDuckGo: return "https://duckduckgo.com/"
+        case .bing: return "https://www.bing.com/search"
+        case .brave: return "https://search.brave.com/search"
+        }
+    }
+}
+
+enum BrowserAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
 }

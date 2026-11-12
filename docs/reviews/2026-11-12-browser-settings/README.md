@@ -1,0 +1,17 @@
+# Browser Settings and website data
+
+Settings groups search, appearance, status-bar visibility, normal-profile privacy, ad blocking, link routing, guided setup and the privacy policy. The page menu puts Share, Save, Find, Reader and Website Protection first; app preferences live in Settings.
+
+Google remains the default search engine. DuckDuckGo, Bing and Brave Search are additional explicit choices. The same engine is used by typed searches and search suggestion actions. Online Search Suggestions uses the existing preference and remains Google-only: other engines retain local suggestions. Private tabs never request remote typing suggestions. Search queries retain literal plus signs, Unicode and reserved characters, while direct navigation remains unchanged.
+
+Clear Browsing Data starts with no categories selected. Users select History, Cookies & Site Data and/or Cached Files and confirm destructive removal. Website Data lists actual WKWebsiteDataRecord objects from the session's normal store; UUID row handles refer to those objects rather than deriving ownership by string matching. Removal follows WebKit domain grouping, including related subdomains. Old confirmation handles become invalid after refresh/removal. Loading/cancellation and errors have bounded busy states and retry feedback. Normal data controls are disabled in private mode; the private store is never queried or passed into this controller. Bookmarks, Reading List, downloaded files and open pages are preserved. Open websites may save data again; there is no automatic reload that would lose a form draft.
+
+WebKit's data-removal callback does not report storage errors. Completion means WebKit completed the requested operation; this UI cannot promise that another active page has not saved new data afterward. History archive failures are reported and retry rows are retained. If history clears but website removal fails, the UI reports the partial result. No domain inventories, contents or browsing data leave the app.
+
+## Verification
+
+Debug simulator compilation, the final Release build, 208 portable assertions, strict SwiftLint 0.65.1 and repository checks passed. Final Debug rebuild and native runtime checks remain pending after small deletion-error/UI refinements. Sixteen new portable search assertions cover each engine's host, symbol/Unicode round trip, plus escaping and unchanged direct navigation. Native tests compile for real WebKit cookies, CacheStorage and local storage, selected-site versus other-site and private-store preservation, live draft/bookmark/open-tab continuity, stale handles, cancelled late refresh, load/remove failures, preference propagation and invalid stored preference fallbacks. Native runtime and UI matrix checks are pending the coordinated simulator slot. Simulator evidence does not replace hardware touch, battery/performance or full spoken VoiceOver checks.
+
+## Stacked integration
+
+This branch starts from main. When stacking with the other reviewed features, keep the updated Save Page and Downloads actions. Keep the blocker branch's Filter Lists & Updates navigation inside Ad Blocking. Release retained Undo state before clearing any normal website data; clearing History must also clear Recently Closed with durable-save failure reporting. These hooks cannot be invoked in this standalone base until the tab feature is present.

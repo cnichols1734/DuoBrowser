@@ -98,6 +98,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private var suspendedInteractionState: Any?
     private var currentMethod = "GET"
     var hasWindowRelationships = false
+    var searchEngine = BrowserSearchEngine.google
     var lastUsed = Date()
     private var pendingURL: URL?
     private var startsWithFixture = false
@@ -318,7 +319,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     func navigate(to input: String) {
         restoredTitle = nil
-        guard let url = WebAddress.resolve(input) else {
+        guard let url = WebAddress.resolve(input, engine: searchEngine) else {
             errorMessage = "Enter a valid website address or search."
             return
         }

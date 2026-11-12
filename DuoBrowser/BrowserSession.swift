@@ -21,6 +21,16 @@ final class BrowserSession: ObservableObject {
             tabs.forEach { $0.setAdBlockingEnabled(adBlockingEnabled) }
         }
     }
+    @Published var searchEngine: BrowserSearchEngine {
+        didSet {
+            settingsStorage.set(searchEngine.rawValue, forKey: "browser.searchEngine")
+            tabs.forEach { $0.searchEngine = searchEngine }
+        }
+    }
+    @Published var appearance: BrowserAppearance {
+        didSet { settingsStorage.set(appearance.rawValue, forKey: "browser.appearance") }
+    }
+    let websiteData: WebsiteDataController
     let setup: BrowserSetupModel
     let normalDownloads: BrowserDownloads
     private var privateDownloads: BrowserDownloads?
@@ -61,6 +71,9 @@ final class BrowserSession: ObservableObject {
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
+        self.searchEngine = storage.string(forKey: "browser.searchEngine").flatMap(BrowserSearchEngine.init(rawValue:)) ?? .google
+        self.appearance = storage.string(forKey: "browser.appearance").flatMap(BrowserAppearance.init(rawValue:)) ?? .system
+        self.websiteData = WebsiteDataController(store: WebKitWebsiteDataAccess(store: dataStore))
         self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
         self.redditLinks = RedditLinkRouting(storage: storage)
         self.setup = BrowserSetupModel(storage: storage)
@@ -138,6 +151,7 @@ final class BrowserSession: ObservableObject {
             tab.downloads = privateDownloads!
         } else { tab.downloads = normalDownloads }
         tab.downloadsOwnedBySession = true
+        tab.searchEngine = searchEngine
         tab.redditLinks = redditLinks
         tab.setAdBlockingEnabled(adBlockingEnabled)
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
@@ -545,6 +559,16 @@ final class BrowserSession: ObservableObject {
         bookmarks = Array(bookmarks.prefix(LibraryLimits.bookmarks))
         saveNow()
     }
+    @discardableResult
+    func clearHistoryFromSettings() -> Bool {
+        guard !privateMode else { return false }
+        let prior = history
+        history.removeAll()
+        WebsiteIconStore.shared.clear()
+        guard saveNow(replaceBackup: true) else { history = prior; return false }
+        return true
+    }
+
     func deleteHistory(ids: Set<UUID>? = nil) {
         WebsiteIconStore.shared.clear()
         if let ids {

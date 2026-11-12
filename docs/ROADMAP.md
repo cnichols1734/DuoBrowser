@@ -17,6 +17,11 @@
 - Added native Save Page with editable titles, Favorites/folder/Read Later destinations and explicit private-save disclosure. Library now supports folder creation/rename/move, bookmark editing, read/unread filtering and offline copy management. Reader appearance, spacing and text size persist.
 - Offline saves reuse sanitized Reader extraction, capture bounded anonymous same-origin HTTPS raster images, and render from local snapshots with network-denying CSP in a separate ephemeral WebKit store. Storage is capped at 50 MB; unsupported images, videos and interactive content are not promised offline. Failed writes roll back saves; failed copy deletion reports an error and retains a retryable item.
 - Debug/Release builds, 210 portable assertions, 186 web assertions, strict SwiftLint, repository checks and full native suite passed before the final disk-deletion follow-up (three added native assertions await integration). Real Save/Library/folder/offline interactions, fold poses, rotation, dark appearance, maximum text size and Reduce Motion were exercised. Final accessibility metadata-stacking correction compiled in Release; a fresh integration screenshot, full spoken VoiceOver, pinch/live occlusion, physical-device and real HTTPS-image capture remain open. [Detailed evidence and precise follow-up status](reviews/2026-11-12-saved-pages/README.md).
+## Browser Settings and website data — November 12, 2026
+
+- Added grouped native Settings with search-engine choice (Google default), the existing online-suggestions preference, appearance, status bar, setup and privacy. Page options prioritizes page actions.
+- Added confirmed selective normal history/cookies/cache removal and per-WebKit-record website removal; private data remains separate and saved pages/downloaded files stay intact.
+- Debug/Release builds, 208 portable assertions, strict lint and repository checks passed; final Debug rebuild pending after small refinements. Native/UI verification pending the coordinated simulator slot. [Behavior, tests and integration notes](reviews/2026-11-12-browser-settings/README.md).
 
 ## Onboarding redesign — November 11, 2026
 

@@ -1575,6 +1575,109 @@ final class NativeCheckRunner {
         try check(manager.items.contains(where: { $0.id == second.id }), "removing one retained file leaves other downloads available")
     }
 
+    func settingsPreview() async {
+        let defaults = UserDefaults(suiteName: "DuoBrowser.SettingsPreview")!
+        let session = BrowserSession(storage: defaults,
+            archiveStore: BrowserArchiveStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("SettingsPreview-" + UUID().uuidString)),
+            dataStore: .nonPersistent())
+        let store = session.selected.webView.configuration.websiteDataStore
+        for domain in ["example.com", "research.example.org"] {
+            await store.httpCookieStore.setCookie(HTTPCookie(properties: [.domain: domain, .path: "/", .name: "preview", .value: "synthetic"])!)
+        }
+        let preview = UIHostingController(rootView: BrowserLinkSettings(session: session, routing: session.redditLinks, onSetup: {}))
+        host.present(preview, animated: false)
+    }
+
+    func settingsChecks() async throws {
+        let suite = "DuoBrowser.SettingsChecks." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let archive = BrowserArchiveStore(directory: directory)
+        let store = WKWebsiteDataStore(forIdentifier: UUID())
+        defaults.set("unknown-engine", forKey: "browser.searchEngine")
+        defaults.set("unknown-appearance", forKey: "browser.appearance")
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: store)
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try check(session.searchEngine == .google && session.appearance == .system, "settings preserve Google and system appearance defaults")
+        session.searchEngine = .duckDuckGo; session.appearance = .dark
+        try check(defaults.string(forKey: "browser.searchEngine") == "duckDuckGo" && defaults.string(forKey: "browser.appearance") == "dark", "search and appearance preferences persist")
+        try check(session.selected.searchEngine == .duckDuckGo, "search preference reaches existing tabs")
+        let sibling = session.newTab()
+        try check(sibling.searchEngine == .duckDuckGo, "search preference reaches new tabs")
+        session.switchMode(true)
+        let privateTab = session.selected
+        try check(privateTab.searchEngine == .duckDuckGo && !privateTab.webView.configuration.websiteDataStore.isPersistent, "private search uses preference with isolated ephemeral store")
+        try check(!session.clearHistoryFromSettings(), "normal history clear is rejected in private mode")
+        session.switchMode(false)
+        let normal = session.selected
+        try await load(normal, "upgrades")
+        _ = try await js(normal, "localStorage.setItem('settings-check','normal'); document.querySelector('#kept').value='Keep this draft'")
+        _ = try await normal.webView.callAsyncJavaScript("const c = await caches.open('settings-cache'); await c.put('/settings-cache-file', new Response('synthetic')); return true", arguments: [:], in: nil, contentWorld: .page)
+        let privateStore = privateTab.webView.configuration.websiteDataStore
+        for (domain, value, target) in [("first.example", "one", store), ("second.example", "two", store), ("first.example", "private", privateStore)] {
+            let cookie = HTTPCookie(properties: [.domain: domain, .path: "/", .name: "settings-check", .value: value, .expires: Date().addingTimeInterval(3600)])!
+            await target.httpCookieStore.setCookie(cookie)
+        }
+        session.addBookmark()
+        let bookmarks = session.bookmarks
+        try check(!session.history.isEmpty && !bookmarks.isEmpty, "synthetic history and bookmark exist before clear")
+        let historyBeforeClear = session.history.map(\.id)
+        let backup = directory.appendingPathComponent("session.backup.json")
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try check(!session.clearHistoryFromSettings() && session.history.map(\.id) == historyBeforeClear, "failed history clear preserves retry rows and reports failure")
+        try FileManager.default.removeItem(at: backup)
+        try check(session.clearHistoryFromSettings() && archive.load()?.history.isEmpty == true, "history clear reaches durable archive after retry")
+        try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
+        try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")
+        let data = session.websiteData
+        try await wait(timeout: 20) {
+            await data.reload()
+            return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
+        }
+        try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        let first = data.entries.first { $0.name == "first.example" }!
+        await data.reload()
+        try check(!(await data.removeEntry(first.id)), "stale row handle cannot delete refreshed website data")
+        try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "first.example" }, "stale confirmation leaves cookie intact")
+        let current = data.entries.first { $0.name == "first.example" }!
+        try check(await data.removeEntry(current.id), "selected WebKit record removes successfully")
+        let remaining = await store.httpCookieStore.allCookies()
+        try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
+        try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
+        try check(await data.clear(BrowsingDataSelection(cache: true)), "cached files can be cleared independently")
+        try check(!(await store.dataRecords(ofTypes: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
+        try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "second.example" }, "cache-only clear preserves cookies")
+        try check(try await js(normal, "localStorage.getItem('settings-check')") as? String == "normal", "cache-only clear preserves website local storage")
+        try check(await data.clear(BrowsingDataSelection(siteData: true)), "cookies and site data can be cleared independently")
+        try check((await store.httpCookieStore.allCookies()).isEmpty, "actual normal WebKit cookies removed")
+        try check((await store.dataRecords(ofTypes: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
+        try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
+        try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
+        let fake = SettingsDataFixture()
+        let controlled = WebsiteDataController(store: fake)
+        let loading = Task { await controlled.reload() }
+        try await wait { fake.pending != nil }
+        controlled.cancelRefresh()
+        fake.pending?.resume(returning: [current.record]); fake.pending = nil
+        await loading.value
+        try check(controlled.entries.isEmpty && !controlled.isBusy, "cancelled refresh cannot publish late website records")
+        fake.failReads = true
+        await controlled.reload()
+        try check(controlled.message?.contains("couldn’t be loaded") == true && !controlled.isBusy, "failed list load provides retry state")
+        fake.failReads = false; fake.immediate = [current.record]
+        await controlled.reload()
+        fake.failRemove = true
+        try check(!(await controlled.removeEntry(controlled.entries[0].id)) && !controlled.isBusy && !controlled.isRemoving, "failed removal releases busy state")
+        try check(controlled.message?.contains("couldn’t be removed") == true && controlled.entries.count == 1, "failed removal keeps list with retry explanation")
+        try check(fake.removals == 1, "cancelled refresh and stale handle never trigger deletion")
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+    }
+
     func run() async {
         if ProcessInfo.processInfo.arguments.contains("--saved-pages-preview") { savedPagesPreview(); return }
         if ProcessInfo.processInfo.arguments.contains("--download-checks") {
@@ -1583,6 +1686,18 @@ final class NativeCheckRunner {
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains("--settings-preview") {
+            try? await wait { self.host.view.window != nil }
+            await settingsPreview()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--settings-checks") {
+            do { try await settingsChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SettingsChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+
         if ProcessInfo.processInfo.arguments.contains("--reddit-preview") {
             let defaults = UserDefaults(suiteName: "DuoBrowser.RedditPreview")!
             defaults.removePersistentDomain(forName: "DuoBrowser.RedditPreview")
@@ -1850,6 +1965,23 @@ private final class SetupFixtureTransport: BrowserTransferTransport {
     }
     func items(token: UUID) -> AsyncThrowingStream<BEBrowserData, Error> {
         AsyncThrowingStream { continuation = $0 }
+    }
+}
+@MainActor
+private final class SettingsDataFixture: WebsiteDataAccess {
+    var pending: CheckedContinuation<[WKWebsiteDataRecord], Error>?
+    var failReads = false
+    var failRemove = false
+    var immediate: [WKWebsiteDataRecord]?
+    var removals = 0
+    func records() async throws -> [WKWebsiteDataRecord] {
+        if failReads { throw NSError(domain: "Synthetic list failure", code: 1) }
+        if let immediate { return immediate }
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func remove(types: Set<String>, records: [WKWebsiteDataRecord]?) async throws {
+        removals += 1
+        if failRemove { throw NSError(domain: "Synthetic removal failure", code: 1) }
     }
 }
 #endif

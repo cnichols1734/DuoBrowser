@@ -8,7 +8,7 @@ DuoBrowser is a native web browser. It has no app analytics, advertising SDKs, a
 
 Normal tabs, bookmarks, history, website settings and app preferences are stored in the app container. WebKit manages normal website cookies, local storage and caches. A wallpaper photo you explicitly choose is resized and saved locally; DuoBrowser does not request access to your entire photo library. App data may be included in operating-system backups.
 
-Delete history and bookmarks through **Page options → Bookmarks & History**. Clearing history does not remove cookies or caches. To remove all normal website data, delete DuoBrowser in iOS Settings. Remove wallpaper through **Tabs → Tab options → Tab Appearance**. Deleting the app removes its local container; separately exported files and operating-system backups are controlled through their respective apps/system settings.
+Delete history and bookmarks through **Page options → Library**. In **Settings → Clear Browsing Data**, select history, cookies and site data, or cached files, then confirm removal. **Settings → Website Data** removes an individual WebKit domain group, including related subdomains. Clearing history alone does not remove cookies or caches. Saved pages and downloaded files are preserved. Open websites can save new data after clearing. Private browsing uses a separate temporary store. Remove wallpaper through **Tabs → Tab options → Tab Appearance**. Deleting the app removes its local container; separately exported files and operating-system backups are controlled through their respective apps/system settings.
 
 ## Private browsing
 
@@ -16,7 +16,7 @@ Private tabs share a separate temporary WebKit data store. Their history, tab UR
 
 ## Requests to other services
 
-Websites you visit receive ordinary browsing requests and may collect information under their own policies. Searches go to Google. Plain keywords typed in normal tabs are sent to Google to retrieve search suggestions; website-address input, private-tab typing and unfinished keyboard composition are excluded from these typing suggestions. These requests include ordinary network information such as your IP address. Google may retain or associate requests according to its [Privacy Policy](https://policies.google.com/privacy).
+Websites you visit receive ordinary browsing requests and may collect information under their own policies. Searches go to the engine you choose in **Settings → Search Engine** (Google by default; DuckDuckGo, Bing and Brave Search are also available). With Google selected and **Online Search Suggestions** enabled, plain keywords typed in normal tabs are sent to Google to retrieve search suggestions; website-address input, private-tab typing and unfinished keyboard composition are excluded from these typing suggestions. These requests include ordinary network information such as your IP address. Google may retain or associate requests according to its [Privacy Policy](https://policies.google.com/privacy).
 
 Normal start-page shortcut icons are requested from a site's public home page and declared icon/CDN hosts, without the saved page's path, query or fragment, and without shared cookies or credentials. Icon requests reveal ordinary network information such as IP address to those hosts. The bounded image cache is memory-only. Private start pages do not load these shortcuts.
 
