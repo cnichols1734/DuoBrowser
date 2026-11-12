@@ -283,7 +283,7 @@ final class BrowserSession: ObservableObject {
                 workspaceID: tab.workspaceID, pinned: tab.isPinned)
             recentlyClosed = ClosedTabRecord.validated([record] + recentlyClosed)
             closedTabNotice = record.id
-            if let view = tab.loadedWebView, !view.isLoading, !tab.hasWindowRelationships,
+            if let view = tab.loadedWebView, !view.isLoading, !tab.hasWindowRelationships, !tab.hasRequestedWebsitePermission,
                view.cameraCaptureState == .none, view.microphoneCaptureState == .none {
                 retainForUndo(tab, recordID: record.id, index: index)
             } else { tab.close() }
@@ -317,6 +317,7 @@ final class BrowserSession: ObservableObject {
         if let retained = retainedClosedTab, retained.recordID == id {
             closedTabExpiry?.cancel(); closedTabExpiry = nil; retainedClosedTab = nil
             let tab = retained.tab
+            tab.isRetainedForUndo = false
             tab.workspaceID = targetWorkspace
             connect(tab)
             tab.loadedWebView?.setAllMediaPlaybackSuspended(false)
@@ -342,6 +343,7 @@ final class BrowserSession: ObservableObject {
 
     private func retainForUndo(_ tab: BrowserModel, recordID: UUID, index: Int) {
         releaseClosedTab()
+        tab.isRetainedForUndo = true
         tab.cancelReader()
         tab.presentation.cancel()
         tab.loadedWebView?.setAllMediaPlaybackSuspended(true)
@@ -362,11 +364,15 @@ final class BrowserSession: ObservableObject {
         retainedClosedTab?.tab.close(); retainedClosedTab = nil
     }
 
-    func clearRecentlyClosed() {
+    @discardableResult
+    func clearRecentlyClosed() -> Bool {
+        guard !privateMode else { return false }
         releaseClosedTab()
+        let prior = recentlyClosed
         recentlyClosed.removeAll()
         closedTabNotice = nil
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else { recentlyClosed = prior; return false }
+        return true
     }
 
     func switchAdjacentTab(_ direction: Int) {

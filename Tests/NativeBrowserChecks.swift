@@ -711,6 +711,11 @@ private final class NativeCheckRunner {
         _ = try await js(middle, "window.scrollTo(0,150); document.querySelector('#kept').value='Undo draft'")
         session.close(middle.id)
         try check(session.selectedID == last.id, "closing selected middle tab selects its next visible neighbor")
+        try check(middle.isRetainedForUndo && middle.presentation.presenter == nil, "retained Undo page has no native presenter")
+        try check(try await js(middle, "confirm('Closed synthetic tab')") as? Bool == false, "retained Undo page cannot present a JavaScript dialog")
+        _ = try await js(middle, "location.href='/form'")
+        try await Task.sleep(for: .milliseconds(150))
+        try check(middle.webView.url?.path == "/upgrades", "retained Undo page cannot navigate while closed")
         let record = session.recentlyClosed[0]
         try check(record.title == "Recovery middle" && record.address.contains("upgrades"), "closed tab keeps title and address")
         try check(record.scrollY != nil, "closed tab captures reading position")
@@ -736,7 +741,12 @@ private final class NativeCheckRunner {
         session.close(privateTab.id)
         try check(session.recentlyClosed.map(\.id) == normalRecords, "closing private tab never enters recovery")
         try check(store.load()?.recentlyClosed?.map(\.id) == normalRecords, "archive never acquires private closure")
-        session.clearRecentlyClosed()
+        let backup = directory.appendingPathComponent("session.backup.json")
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try check(!session.clearRecentlyClosed() && session.recentlyClosed.map(\.id) == normalRecords, "failed recovery clear reports failure and retains retry rows")
+        try FileManager.default.removeItem(at: backup)
+        try check(session.clearRecentlyClosed(), "recovery clear can retry after storage failure")
         try check(store.load()?.recentlyClosed?.isEmpty == true, "clear removes persisted recovery")
         session.createWorkspace("Recovery workspace")
         let workspace = session.workspaceID
@@ -754,7 +764,9 @@ private final class NativeCheckRunner {
         try check(session.reopenClosedTab(deletedWorkspaceRecord.id) && session.workspaceID == Workspace.defaultID,
                   "reopening from deleted workspace falls back to Personal")
         session.select(reopened.id)
+        reopened.hasRequestedWebsitePermission = true
         session.close(reopened.id)
+        try check(reopened.loadedWebView == nil, "pages with a prior website permission request never retain live Undo")
         session.deleteHistory()
         try check(session.recentlyClosed.isEmpty && store.load()?.recentlyClosed?.isEmpty == true,
                   "clearing history also removes closed-page recovery")

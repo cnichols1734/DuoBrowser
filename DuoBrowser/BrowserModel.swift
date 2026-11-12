@@ -10,6 +10,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var testRedditTapAuthorization: ((URL) -> Bool)?
     #endif
     static let redditTapWorld = WKContentWorld.world(name: "DuoBrowser.RedditTap")
+    var isRetainedForUndo = false
+    var hasRequestedWebsitePermission = false
     let id: UUID
     let chrome = BrowserChromeState()
     let viewport = BrowserViewportState()
@@ -476,6 +478,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        guard !isRetainedForUndo else { decisionHandler(.cancel, preferences); return }
         guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {
             decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: false, decisionHandler: decisionHandler)
             return

@@ -5,6 +5,7 @@ struct RecentlyClosedView: View {
     @ObservedObject var session: BrowserSession
     @Environment(\.dismiss) private var dismiss
     @State private var confirmClear = false
+    @State private var clearFailed = false
 
     var body: some View {
         NavigationStack {
@@ -43,8 +44,11 @@ struct RecentlyClosedView: View {
                     ToolbarItem(placement: .bottomBar) { Button("Clear Recently Closed", role: .destructive) { confirmClear = true } }
                 }
             }
+            .alert("Couldn’t clear recently closed tabs", isPresented: $clearFailed) {
+                Button("OK", role: .cancel) {}
+            } message: { Text("The change couldn’t be saved on this device. Try clearing again.") }
             .confirmationDialog("Clear recently closed tabs?", isPresented: $confirmClear) {
-                Button("Clear Recently Closed", role: .destructive) { session.clearRecentlyClosed() }
+                Button("Clear Recently Closed", role: .destructive) { clearFailed = !session.clearRecentlyClosed() }
             }
         }
     }

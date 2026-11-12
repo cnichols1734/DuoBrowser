@@ -2,6 +2,8 @@
 
 ## Tab recovery and navigation — November 12, 2026
 
+- Follow-up review: clearing recovery now reports durable-write failure and retains rows to retry. Retained Undo pages reject navigation and native permission prompts; no presenter is available for JavaScript dialogs. Added native failure/retry and retained-page assertions; focused runtime rerun is pending coordinated simulator access.
+
 - Added normal-tab Undo and a 20-entry persisted Recently Closed list, preserving title, address, best-effort reading position, workspace and pin. Private tabs are excluded. History deletion also clears corresponding recovery records. Reopening loads the saved address, not form input or a full navigation session.
 - Closing selects an adjacent visible tab. Address-capsule swipes and accessible menu actions switch tabs without reloading; Back supports a bounded history menu with stale-item validation.
 - Debug/Release builds, 202 portable assertions, 186 browser assertions, SwiftLint and the full native suite passed. Native UI verified Close/Undo, accessible tab switching and Recently Closed across display sizes; gesture, keyboard/pinch and full accessibility/occlusion gaps remain. [Tab recovery evidence](reviews/2026-11-12-tab-recovery/README.md).

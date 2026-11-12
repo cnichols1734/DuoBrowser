@@ -19,3 +19,7 @@ Manual native interactions on the isolated DuoBrowser-TabRecovery-QA simulator v
 CUA coordinate dragging reported `noWindowsAvailable`, while native accessibility actions worked. Actual horizontal swipe recognition and Back long-press selection are still unverified; native switch policy, stale identity checks and accessible equivalents are implemented. Keyboard/pinch interaction, a full spoken VoiceOver pass, Reduce Motion with the new notice, and live occlusion changes remain gaps for the new controls.
 
 Physical touch, full spoken VoiceOver, battery/endurance, and hardware folding remain unverified. URL-based recovery does not promise form-state or full session recovery.
+
+## Follow-up review
+
+Clear Recently Closed now checks the durable replacement result, preserves rows for retry after a failed write, and displays a failure alert. Pages that requested camera/microphone/location permission use URL recovery immediately, avoiding retention during an unresolved system permission prompt. A retained Undo page now rejects new navigation and permission prompts; detached pages already have no native presenter for JavaScript dialogs. Additional native assertions cover the missing presenter, canceled confirm dialog/navigation, storage failure and retry. Debug build, portable checks, SwiftLint and repository checks passed for this follow-up; focused native revalidation is pending the coordinated simulator slot.
