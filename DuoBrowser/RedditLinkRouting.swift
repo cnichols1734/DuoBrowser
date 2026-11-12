@@ -58,6 +58,7 @@ struct BrowserLinkSettings: View {
             Form {
                 Section {
                     Toggle("Block Ads & Trackers", isOn: $session.adBlockingEnabled)
+                    NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
                 } header: {
                     Text("Ad Blocking")
                 } footer: {

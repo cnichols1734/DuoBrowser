@@ -33,3 +33,7 @@ Apple operates TestFlight and may provide crash reports, device information and 
 ## Changes
 
 Changes will be published here with an updated effective date. The in-app Privacy Policy remains available from Page options.
+
+## Filter updates
+
+When automatic filter updates are enabled, DuoBrowser periodically downloads public EasyList, EasyPrivacy and optional Cookie List source data from easylist.to and secure.fanboy.co.nz. These servers receive ordinary network connection information, but no visited URLs, page content, browser cookies or browsing reports. The optional Cookie List is downloaded with the catalog even when its filtering is off. Filter Lists provides automatic-update controls and offline license credits. Public filter caches do not contain browsing data.

@@ -27,14 +27,15 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var documentGeneration = UUID()
     var readerRequest = UUID()
     @Published var blockAds = true {
-        didSet { if !applyingPreferences { saveSitePreference(); loadedWebView?.reload() } }
+        didSet { if !applyingPreferences { saveSitePreference(); setAdBlockingEnabled(adBlockingEnabled) } }
     }
     @Published var blockingStatus = "Preparing protection"
     private(set) var adBlockingEnabled = true
 
     func setAdBlockingEnabled(_ enabled: Bool) {
         adBlockingEnabled = enabled
-        guard loadedWebView != nil else { return }
+        guard let view = loadedWebView else { return }
+        if !enabled || !blockAds { applyBlocking([], to: view); return }
         Task { @MainActor [weak self] in
             let rules = await ContentBlocking.rules()
             guard let self, !self.closed, let view = self.loadedWebView else { return }
@@ -42,13 +43,15 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         }
     }
 
-    private func applyBlocking(_ rules: WKContentRuleList?, to view: WKWebView) {
-        if let rules {
-            view.configuration.userContentController.remove(rules)
-            if adBlockingEnabled && blockAds { view.configuration.userContentController.add(rules) }
-        }
+    private var attachedBlockingRules: [WKContentRuleList] = []
+    private var blockingObserver: AnyCancellable?
+    private func applyBlocking(_ rules: [WKContentRuleList], to view: WKWebView) {
+        let controller = view.configuration.userContentController
+        attachedBlockingRules.forEach(controller.remove)
+        attachedBlockingRules = adBlockingEnabled && blockAds ? rules : []
+        attachedBlockingRules.forEach(controller.add)
         blockingStatus = !adBlockingEnabled ? "Off in Settings" : !blockAds ? "Off for this site"
-            : rules == nil ? "Protection unavailable" : "Basic protection on"
+            : rules.isEmpty ? "Protection unavailable" : "Protection on"
     }
     private var policyGeneration = UUID()
     private var closed = false
@@ -151,6 +154,10 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         pendingURL = url
         startsWithFixture = fixture && url == nil
         super.init()
+        blockingObserver = NotificationCenter.default.publisher(for: ContentBlocking.changed).sink { [weak self] _ in
+            guard let self else { return }
+            self.setAdBlockingEnabled(self.adBlockingEnabled)
+        }
         title = siteName
         if let source = Bundle.main.url(forResource: "RedditTap", withExtension: "js")
             .flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) {
@@ -556,6 +563,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             preferences.preferredContentMode = desktopSite ? .desktop : .mobile
         }
         if navigationAction.targetFrame?.isMainFrame == true {
+            if !adBlockingEnabled || !blockAds {
+                policyGeneration = UUID()
+                applyBlocking([], to: webView)
+                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                return
+            }
             let generation = UUID()
             policyGeneration = generation
             Task { @MainActor [weak self] in

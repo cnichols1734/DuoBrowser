@@ -1,5 +1,11 @@
 # Build plan
 
+## Maintained content filters — November 12, 2026
+
+- Replaces the 19-service baseline with bundled EasyList/EasyPrivacy supported network and cosmetic rules, plus opt-in Cookie List filtering. Adds transactional automatic/manual updates, per-site draft-preserving switches, and offline filter credits. Filter data uses upstream CC licenses; independent app/converter code remains MIT. See [design, licensing and limits](MAINTAINED_FILTERS.md).
+- Debug simulator build, 221 portable assertions, 186 web assertions and strict SwiftLint passed. Full bundled source lists compiled through a separate native macOS WebKit probe. An initial web timing failure under heavy concurrent compiler load passed on rerun with no JavaScript changes.
+- iOS native integration and visual/pose evidence are pending in this draft; no real-site effectiveness percentage or hardware claim is made.
+
 ## Onboarding redesign — November 11, 2026
 
 - PR #17 review follow-up: retain the model’s status message during transfer review so a failed save displays its recovery instructions. Added a regression assertion for failed durable writes; the normal review notice remains concise. Removed optional category counts after review found that received bookmark totals could misrepresent the selected Favorites category; the saved summary reports actual results.

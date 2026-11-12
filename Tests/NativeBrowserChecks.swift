@@ -542,6 +542,51 @@ private final class NativeCheckRunner {
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
+    func maintainedFilterChecks(_ browser: BrowserModel) async throws {
+        try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
+        let source = """
+        [Adblock Plus 2.0]
+        ||localhost^$third-party,xmlhttprequest
+        @@||localhost:8765/probe?allow$xmlhttprequest
+        ||127.0.0.1:8765/frame-ad^$subdocument
+        ||127.0.0.1:8765/other-only^$other
+        ##.synthetic-ad
+        example.com#@#.synthetic-ad
+        """
+        let converted = try FilterListConverter.convert(source)
+        ContentBlocking.useTestRuleChunks(try converted.chunks(limit: 2).map { String(decoding: $0, as: UTF8.self) })
+        try await load(browser, "upgrades")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?blocked').then(()=>false).catch(()=>true)") as? Bool == true,
+                  "maintained converter blocks matching network request in WebKit")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?allow').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "maintained converter preserves network exceptions")
+        _ = try await js(browser, "var ad=document.createElement('div'); ad.className='synthetic-ad'; ad.textContent='Synthetic advertisement'; document.body.append(ad)")
+        try check(try await js(browser, "getComputedStyle(document.querySelector('.synthetic-ad')).display") as? String == "none",
+                  "maintained cosmetic filter hides an ad element")
+        _ = try await js(browser, "document.querySelector('#kept').value='Keep this site draft'")
+        browser.blockAds = false
+        try await wait { browser.blockingStatus == "Off for this site" }
+        try check(try await js(browser, "document.querySelector('#kept').value") as? String == "Keep this site draft",
+                  "site protection switch preserves live draft without reload")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?after-off').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "site protection switch removes prior compiled rules")
+        browser.blockAds = true
+        try await wait { browser.blockingStatus == "Protection on" }
+        // The frame rule must not prevent direct top-level navigation to the same URL.
+        try await load(browser, "frame-ad?direct")
+        try check(try await js(browser, "document.querySelector('#kept') != null") as? Bool == true,
+                  "subdocument filter preserves direct top-level navigation")
+        try await load(browser, "upgrades")
+        let frameAllowed = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!!f.contentDocument?.querySelector('#kept')); f.src='/frame-control?fresh'; document.body.append(f); })") as? Bool
+        try check(frameAllowed == true, "unmatched child document loads normally")
+        let frameBlocked = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!f.contentDocument?.querySelector('#kept')); f.src='/frame-ad?fresh'; document.body.append(f); })") as? Bool
+        try check(frameBlocked == true, "subdocument filter blocks matching iframe")
+        // Use first-party fetch so the broad third-party probe rule does not apply.
+        try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "other resource filter does not widen to fetch")
+        ContentBlocking.useTestRules(nil)
+    }
+
     func readerBlockingChecks(_ session: BrowserSession) async throws {
         let originalPreference = session.adBlockingEnabled
         let selectedID = session.selectedID
@@ -756,7 +801,8 @@ private final class NativeCheckRunner {
             try check(session.tabs.allSatisfy { $0.workspaceID == Workspace.defaultID }, "workspace removal keeps and relocates tabs")
             mount(normal)
             try await load(normal, "upgrades")
-            try check(normal.blockingStatus == "Basic protection on", "bundled content rules compile and attach before navigation")
+            try check(normal.blockingStatus == "Protection on", "bundled content rules compile and attach before navigation")
+            try await maintainedFilterChecks(normal)
             // Substitute only the ad host with a loopback host; all rule flags and production installation remain identical.
             let rulesURL = Bundle.main.url(forResource: "BlockingRules", withExtension: "json")!
             let json = try String(contentsOf: rulesURL, encoding: .utf8)
@@ -770,7 +816,7 @@ private final class NativeCheckRunner {
             try await wait { normal.blockingStatus == "Off for this site" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "site exception allows synthetic request after reload")
             normal.blockAds = true
-            try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
+            try await wait { normal.blockingStatus == "Protection on" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
             _ = try await js(normal, "document.querySelector('#kept').value='Keep blocker draft'")
             session.adBlockingEnabled = false
@@ -791,7 +837,7 @@ private final class NativeCheckRunner {
             try await load(globallyOffTab, "global-off-private")
             try check(globallyOffTab.blockingStatus == "Off in Settings", "new private tab honors global switch")
             session.adBlockingEnabled = true
-            try await wait { normal.blockingStatus == "Basic protection on" && globallyOffTab.blockingStatus == "Basic protection on" }
+            try await wait { normal.blockingStatus == "Protection on" && globallyOffTab.blockingStatus == "Protection on" }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-on').then(()=>false).catch(()=>true)") as? Bool == true, "global reenabling restores actual blocking in existing tabs")
             session.close(globallyOffTab.id)
             session.select(normal.id)
@@ -823,7 +869,7 @@ private final class NativeCheckRunner {
             try check(popup.webView.configuration.userContentController.userScripts.filter {
                 $0.source.hasPrefix("/* DuoBrowser Reddit tap */")
             }.count == 1, "popup inherits exactly one Reddit tap authorization script")
-            try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
+            try check(opener.blockAds && opener.blockingStatus == "Protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
             try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
             session.restoreBlocking(host: "localhost", isPrivate: false)
             try check(!session.blockingExceptions(isPrivate: false).contains("localhost"), "restoring protection removes the saved site exception")

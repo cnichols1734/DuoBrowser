@@ -40,6 +40,7 @@ final class BrowserSession: ObservableObject {
     private let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
+    private var filterRefreshObserver: AnyCancellable?
     private var compactTask: Task<Void, Never>?
     private var lastNormalID: UUID?
     private var lastPrivateID: UUID?
@@ -83,6 +84,7 @@ final class BrowserSession: ObservableObject {
         workspaceID = selected.workspaceID
         for tab in tabs { connect(tab) }
         selected.activate()
+        startFilterUpdates()
         lastNormalID = selectedID
         // Migrate only after a durable write succeeds; normal cookies remain in WebKit's existing store.
         if legacy != nil, saveNow() { storage.removeObject(forKey: "browser.tabs.v1") }
@@ -92,6 +94,18 @@ final class BrowserSession: ObservableObject {
                     self?.tabs.forEach { $0.clearSnapshot() }
                     self?.compactInactiveTabs(target: 2)
                 }
+            }
+    }
+
+    private func startFilterUpdates() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--browser-checks") { return }
+        #endif
+        if adBlockingEnabled { Task { await FilterCatalog.shared.refreshIfNeeded() } }
+        filterRefreshObserver = NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                guard let self, !self.privateMode, self.adBlockingEnabled else { return }
+                Task { await FilterCatalog.shared.refreshIfNeeded() }
             }
     }
 

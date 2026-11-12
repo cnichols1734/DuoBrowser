@@ -24,7 +24,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Start-page shortcuts show site icons with a letter fallback. Icons prefer high-resolution touch icons discovered from each site’s public home page, with `/favicon.ico` as a fallback (including secure CDN redirects). Saved browsing paths, cookies and credentials are excluded; bounded downloads and the icon cache stay in memory. Private start pages do not load these shortcuts.
 - Native floating link previews that can become tabs without reloading.
 - Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
-- Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
+- Maintained EasyList/EasyPrivacy ad and tracker filters, supported cosmetic ad hiding, optional cookie-notice filtering, automatic updates with a working fallback, and per-site exceptions. Filter credits and licenses are available in the app.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
 - Settings includes a global **Block Ads & Trackers** switch and a **Reddit** link preference. Tapped Reddit content links can open in an installed Apollo Reborn, with a remembered first choice, Ask Every Time, browser fallback, and confirmation in private tabs. Artemis is pending a verified deep-link contract. See [coverage and verification](docs/REDDIT_LINKS_AND_BLOCKING.md).
