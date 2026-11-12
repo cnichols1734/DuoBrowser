@@ -1609,6 +1609,26 @@ final class NativeCheckRunner {
         try check(model.errorMessage != nil, "a new document invalidates pending download interruptions")
     }
 
+    func releaseDownloadFixture(_ gate: String, attempt: Int = 1) async throws {
+        // Only the synthetic control request uses URLSession; authenticated file transfers stay in WebKit.
+        let controls = URLSession(configuration: .ephemeral)
+        defer { controls.invalidateAndCancel() }
+        // The unqualified loopback name uses the local ATS scope, without changing app transport policy.
+        var request = URLRequest(url: URL(string: "http://localhost:8765/download-release?gate=\(gate)&attempt=\(attempt)")!)
+        request.timeoutInterval = 10
+        let (data, _) = try await controls.data(for: request)
+        guard String(decoding: data, as: UTF8.self) == "released" else {
+            throw NSError(domain: "Synthetic download gate rejected release", code: 1)
+        }
+    }
+
+    func awaitDownloadProgress(_ item: BrowserDownload, stage: String) async throws {
+        do { try await wait { item.received > 0 && item.isDownloading } }
+        catch {
+            throw NSError(domain: "\(stage) timed out; received=\(item.received), expected=\(item.expected), state=\(item.state.rawValue), active=\(item.isDownloading)", code: 1)
+        }
+    }
+
     func downloadsChecks() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DownloadChecks-" + UUID().uuidString)
         let defaults = UserDefaults(suiteName: "DuoBrowser.DownloadChecks")!
@@ -1664,14 +1684,16 @@ final class NativeCheckRunner {
 
         let secondTab = session.newTab()
         try await load(secondTab, "")
-        _ = try await js(secondTab, "const a=document.createElement('a');a.href='/download-slow';a.download='';document.body.append(a);a.click()")
+        let secondGate = UUID().uuidString
+        _ = try await js(secondTab, "const a=document.createElement('a');a.href='/download-slow?gate=\(secondGate)&gate-attempts=1';a.download='';document.body.append(a);a.click()")
         try await wait { manager.items.count == 2 && manager.items[0].isDownloading }
         let second = manager.items[0]
-        try await wait { second.received > 0 && second.expected > second.received }
-        try check(second.received > 0, "native WebKit progress exposes actual transferred bytes")
+        try await awaitDownloadProgress(second, stage: "Source-close initial progress")
+        try check(second.received > 0 && second.expected > second.received, "native WebKit progress exposes actual transferred bytes")
         session.close(secondTab.id)
         mount(session.selected)
         try check(manager.activeCount == 1, "closing originating normal tab leaves the session transfer active")
+        try await releaseDownloadFixture(secondGate)
         do { try await wait(timeout: 30) { !second.isDownloading } }
         catch {
             results.append("TRANSFER: received=\(second.received), expected=\(second.expected), state=\(second.state.rawValue), fileBytes=\((try? second.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1)")
@@ -1689,11 +1711,12 @@ final class NativeCheckRunner {
                 }
             }
         }
-        await start("download-slow?cancel=1")
+        let canceledGate = UUID().uuidString, independentGate = UUID().uuidString
+        await start("download-slow?cancel=1&gate=\(canceledGate)")
         try await wait { manager.items[0].received > 0 || !manager.items[0].isDownloading }
         let canceled = manager.items[0]
         try check(canceled.isDownloading, "first cancel fixture remains active: \(canceled.state.rawValue), \(canceled.message ?? "no error")")
-        await start("download-slow?cancel=2")
+        await start("download-slow?cancel=2&gate=\(independentGate)&gate-attempts=1")
         try await wait { manager.activeCount == 2 || !canceled.isDownloading || !manager.items[0].isDownloading }
         let independent = manager.items[0]
         try check(manager.activeCount == 2, "two independent transfers overlap: \(manager.activeCount), \(independent.message ?? "no error")")
@@ -1701,6 +1724,9 @@ final class NativeCheckRunner {
         try check(!canceled.isDownloading && canceled.state == .canceled && canceled.canRetry, "individual cancel retains a safe GET retry")
         try check(manager.activeCount == 1 && independent.isDownloading, "cancel affects only its own transfer")
         manager.retry(canceled)
+        try await releaseDownloadFixture(canceledGate)
+        try await releaseDownloadFixture(canceledGate, attempt: 2)
+        try await releaseDownloadFixture(independentGate)
         try await wait(timeout: 30) { canceled.state == .completed && independent.state == .completed }
         try check(try String(contentsOf: canceled.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "GET retry uses the same WebKit cookie profile")
         try check(canceled.id != independent.id && canceled.file != independent.file, "identical filenames remain separate downloads")
@@ -1713,10 +1739,12 @@ final class NativeCheckRunner {
         try await wait(timeout: 30) { failed.state == .completed && !failed.isDownloading }
         try check(failed.file != nil, "retry completes after a synthetic interrupted response")
 
-        await start("download-chunked")
+        let unknownGate = UUID().uuidString
+        await start("download-chunked?gate=\(unknownGate)&gate-attempts=1")
         let unknownLength = manager.items[0]
-        try await wait { unknownLength.received > 0 && unknownLength.isDownloading }
+        try await awaitDownloadProgress(unknownLength, stage: "Unknown-length progress")
         try check(unknownLength.expected == 0, "unknown-length transfer still reports actual bytes without inventing a percentage")
+        try await releaseDownloadFixture(unknownGate)
         try await wait(timeout: 30) { unknownLength.state == .completed }
 
         await start("download-too-large")
@@ -1760,17 +1788,6 @@ final class NativeCheckRunner {
                 throw NSError(domain: "Retry-close source load timed out; afterProgress=\(afterProgress), loading=\(source.webView.isLoading), errorPresent=\(source.errorMessage != nil)", code: 1)
             }
             let gate = UUID().uuidString
-            // Only a synthetic control request uses URLSession; the authenticated file stays in WebKit.
-            let controls = URLSession(configuration: .ephemeral)
-            defer { controls.invalidateAndCancel() }
-            func release(_ attempt: Int) async throws {
-                var control = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-release?gate=\(gate)&attempt=\(attempt)")!)
-                control.timeoutInterval = 10
-                let (data, _) = try await controls.data(for: control)
-                guard String(decoding: data, as: UTF8.self) == "released" else {
-                    throw NSError(domain: "Synthetic download gate rejected release", code: 1)
-                }
-            }
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)&gate=\(gate)")!)
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 source.webView.startDownload(using: request) { download in
@@ -1778,24 +1795,18 @@ final class NativeCheckRunner {
                 }
             }
             let restarted = manager.items[0]
-            func awaitProgress(_ stage: String) async throws {
-                do { try await wait { restarted.received > 0 && restarted.isDownloading } }
-                catch {
-                    throw NSError(domain: "Retry-close \(stage) timed out; afterProgress=\(afterProgress), received=\(restarted.received), expected=\(restarted.expected), state=\(restarted.state.rawValue), active=\(restarted.isDownloading)", code: 1)
-                }
-            }
-            try await awaitProgress("initial progress")
+            try await awaitDownloadProgress(restarted, stage: "Retry-close initial progress (afterProgress=\(afterProgress))")
             manager.cancel(restarted)
-            try await release(1)
+            try await releaseDownloadFixture(gate)
             // Exercise the authenticated GET restart path deterministically, not an optional resume token.
             restarted.resumeData = nil
             manager.retry(restarted)
             try check(manager.hasWork(for: source.id), "GET retry owns its source while WebKit creates the transfer (afterProgress=\(afterProgress))")
-            if afterProgress { try await awaitProgress("retry progress") }
+            if afterProgress { try await awaitDownloadProgress(restarted, stage: "Retry-close retry progress") }
             session.close(source.id)
             session.releaseClosedTab() // Expire Undo now: this must work without its eight-second retention.
             mount(session.selected)
-            try await release(2)
+            try await releaseDownloadFixture(gate, attempt: 2)
             try await wait(timeout: 30) { !restarted.isDownloading }
             let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
             try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
@@ -1808,14 +1819,16 @@ final class NativeCheckRunner {
             let source = session.newTab()
             try await load(source, "")
             let originalURL = source.webView.url, originalDocument = source.documentGeneration
+            let gate = UUID().uuidString
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                source.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?stale-document=\(reload)")!)) { download in
+                source.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?stale-document=\(reload)&gate=\(gate)&gate-attempts=1")!)) { download in
                     manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
                 }
             }
             let staleDocument = manager.items[0]
-            try await wait { staleDocument.received > 0 && staleDocument.isDownloading }
+            try await awaitDownloadProgress(staleDocument, stage: "Replaced-document initial progress")
             manager.cancel(staleDocument)
+            try await releaseDownloadFixture(gate)
             if reload {
                 source.webView.reload()
                 try await wait { source.documentGeneration != originalDocument && !source.webView.isLoading }
@@ -1835,11 +1848,13 @@ final class NativeCheckRunner {
         try await rejectReplacedDocumentRetry(reload: true)
         try await rejectReplacedDocumentRetry(reload: false)
 
-        await start("download-slow?last-normal=1")
+        let lastGate = UUID().uuidString
+        await start("download-slow?last-normal=1&gate=\(lastGate)&gate-attempts=1")
         let lastNormal = manager.items[0]
-        try await wait { lastNormal.received > 0 }
+        try await awaitDownloadProgress(lastNormal, stage: "Last-normal-tab initial progress")
         session.close(retryTab.id)
         try check(session.selected.loadedWebView == nil, "last normal tab closes to native Start Page without a mounted webpage")
+        try await releaseDownloadFixture(lastGate)
         try await wait(timeout: 30) { !lastNormal.isDownloading }
         try check(lastNormal.state == .completed, "download finishes after last normal tab closes to native Start Page")
 
