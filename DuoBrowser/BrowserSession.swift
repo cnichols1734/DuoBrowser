@@ -565,10 +565,13 @@ final class BrowserSession: ObservableObject {
         if let retained = retainedClosedTab, !recentlyClosed.contains(where: { $0.id == retained.recordID }) { releaseClosedTab() }
         saveNow(replaceBackup: true)
     }
-    func deleteBookmarks(ids: Set<UUID>) {
-        WebsiteIconStore.shared.clear()
+    @discardableResult
+    func deleteBookmarks(ids: Set<UUID>) -> Bool {
+        let prior = bookmarks
         bookmarks.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else { bookmarks = prior; return false }
+        WebsiteIconStore.shared.clear()
+        return true
     }
     @discardableResult
     func deleteReadingList(ids: Set<UUID>) -> Bool {
@@ -590,7 +593,9 @@ final class BrowserSession: ObservableObject {
         return true
     }
 
-    func deleteBookmarkFolder(_ id: UUID) {
+    @discardableResult
+    func deleteBookmarkFolder(_ id: UUID) -> Bool {
+        let prior = (bookmarkFolders, bookmarks)
         var ids: Set<UUID> = [id]
         for _ in 0..<32 {
             let children = bookmarkFolders.filter { $0.parentID.map(ids.contains) ?? false }.map(\.id)
@@ -600,8 +605,9 @@ final class BrowserSession: ObservableObject {
         }
         bookmarkFolders.removeAll { ids.contains($0.id) }
         bookmarks.removeAll { $0.folderID.map(ids.contains) ?? false }
+        guard saveNow(replaceBackup: true) else { (bookmarkFolders, bookmarks) = prior; return false }
         WebsiteIconStore.shared.clear()
-        saveNow(replaceBackup: true)
+        return true
     }
 
     func applyImport(_ plan: BrowserImportPlan) throws {
