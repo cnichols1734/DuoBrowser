@@ -100,6 +100,32 @@ extension NativeCheckRunner {
         let orphaned = (try? FileManager.default.contentsOfDirectory(at: failed.offlineStore.directory, includingPropertiesForKeys: nil)) ?? []
         try check(orphaned.isEmpty, "Failed durable save removes its uncommitted offline file")
 
+        let deletionDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let deletionArchive = BrowserArchiveStore(directory: deletionDirectory)
+        let deletionSession = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.LibraryDeletionFailure")!,
+                                             archiveStore: deletionArchive, dataStore: .nonPersistent())
+        defer { deletionSession.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: deletionDirectory) }
+        let parent = BookmarkFolder(title: "Retained parent", parentID: nil)
+        let child = BookmarkFolder(title: "Retained child", parentID: parent.id)
+        try deletionSession.saveFolder(parent); try deletionSession.saveFolder(child)
+        let nested = LibraryEntry(address: "https://example.test/nested", title: "Nested bookmark", folderID: child.id)
+        let unrelated = LibraryEntry(address: "https://example.test/unrelated", title: "Unrelated bookmark")
+        try deletionSession.savePage(nested, reading: false); try deletionSession.savePage(unrelated, reading: false)
+        // Keep the valid primary intact, but make the backup write fail before any primary commit.
+        let blockedBackup = deletionDirectory.appendingPathComponent("session.backup.json")
+        try FileManager.default.removeItem(at: blockedBackup)
+        try FileManager.default.createDirectory(at: blockedBackup, withIntermediateDirectories: false)
+        try check(!deletionSession.deleteBookmarks(ids: [nested.id]) && deletionSession.bookmarks.contains { $0.id == nested.id } &&
+                  deletionArchive.load()?.bookmarks.contains { $0.id == nested.id } == true && deletionSession.selected.errorMessage != nil,
+                  "Failed bookmark deletion reports error and retains memory and durable records")
+        try check(!deletionSession.deleteBookmarkFolder(parent.id) && Set(deletionSession.bookmarkFolders.map(\.id)) == Set([parent.id, child.id]) &&
+                  deletionSession.bookmarks.contains { $0.id == nested.id } && deletionArchive.load()?.bookmarkFolders?.count == 2,
+                  "Failed folder deletion restores descendants and their bookmarks")
+        try FileManager.default.removeItem(at: blockedBackup)
+        try check(deletionSession.deleteBookmarkFolder(parent.id) && deletionSession.bookmarkFolders.isEmpty &&
+                  deletionSession.bookmarks.map(\.id) == [unrelated.id] && deletionArchive.load()?.bookmarks.map(\.id) == [unrelated.id],
+                  "Folder deletion retries successfully without removing unrelated bookmarks")
+
         let removalDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let removalStore = OfflineArticleStore(directory: removalDirectory.appendingPathComponent("OfflineArticles"),
                                               deleteFile: { _ in throw CocoaError(.fileWriteNoPermission) })

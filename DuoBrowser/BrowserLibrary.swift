@@ -111,7 +111,9 @@ private struct LibraryContents: View {
         .alert("Couldn’t Update Library", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }
         .confirmationDialog("Delete this folder and its saved pages?", isPresented: Binding(get: { deletingFolder != nil }, set: { if !$0 { deletingFolder = nil } })) {
             Button("Delete Folder", role: .destructive) {
-                if let folder = deletingFolder { session.deleteBookmarkFolder(folder.id) }
+                if let folder = deletingFolder, !session.deleteBookmarkFolder(folder.id) {
+                    error = session.selected.errorMessage ?? SavedPageError.saveFailed.localizedDescription
+                }
                 deletingFolder = nil
             }
         }
@@ -158,7 +160,9 @@ private struct LibraryContents: View {
             }
             .swipeActions {
                 Button("Delete", role: .destructive) {
-                    if section == 0 { session.deleteBookmarks(ids: [entry.id]) }
+                    if section == 0 {
+                        if !session.deleteBookmarks(ids: [entry.id]) { error = session.selected.errorMessage ?? SavedPageError.saveFailed.localizedDescription }
+                    }
                     else if section == 1 { session.deleteHistory(ids: [entry.id]) }
                     else if !session.deleteReadingList(ids: [entry.id]) { error = session.selected.errorMessage ?? SavedPageError.saveFailed.localizedDescription }
                 }
