@@ -2,15 +2,34 @@ import SwiftUI
 import UIKit
 import WebKit
 import Combine
+import BrowserKit
 
 struct BrowserView: View {
     @StateObject private var session = BrowserSession()
+    @State private var checkedInitialSetup = false
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         BrowserZoomPresenter(session: session)
             .ignoresSafeArea(.container)
-            .onOpenURL { session.openExternalURL($0) }
+            .onOpenURL {
+                session.setup.cancel()
+                session.showingSetup = false
+                session.openExternalURL($0)
+            }
+            .onAppear {
+                guard !checkedInitialSetup else { return }
+                checkedInitialSetup = true
+                if !session.setup.completed { session.showingSetup = true }
+            }
+            .onContinueUserActivity(BEBrowserDataImportManager.userActivityType) { activity in
+                if session.setup.receive(activity, isPrivate: session.privateMode) {
+                    session.showingTabs = false
+                    session.showingLibrary = false
+                    session.showingWorkspaces = false
+                    session.showingSetup = true
+                }
+            }
             .onChange(of: scenePhase) { _, phase in
                 if phase != .active { session.background() }
             }
@@ -227,7 +246,7 @@ private struct BrowserStartPage: View {
                         Text("Your private tabs and browsing history aren't saved.")
                             .foregroundStyle(.primary)
                     } else {
-                        section("Favorites", entries: Array(session.bookmarks.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
+                        section("Favorites", entries: Array(session.favorites.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
                         section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
                     }
 

@@ -10,6 +10,10 @@ swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.sw
 work/checks/data
 swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/AddressSuggestions.swift Tests/AddressSuggestionsTests.swift -o work/checks/suggestions
 work/checks/suggestions
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/BrowserImport.swift Tests/BrowserImportTests.swift -o work/checks/import
+work/checks/import
+swiftc -warnings-as-errors DuoBrowser/RedditLinks.swift Tests/RedditLinksTests.swift -o work/checks/reddit
+work/checks/reddit
 swiftc -frontend -parse DuoBrowser/*.swift Tests/NativeBrowserChecks.swift
 for source in DuoBrowser/*.js Tests/*.cjs; do node --check "$source"; done
 python3 scripts/repository-check.py

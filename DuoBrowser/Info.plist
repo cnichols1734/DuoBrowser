@@ -6,6 +6,11 @@
     <key>NSAppTransportSecurity</key><dict>
         <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
     </dict>
+    <key>LSApplicationQueriesSchemes</key><array><string>apollo</string></array>
+    <key>NSUserActivityTypes</key><array>
+        <string>BEBrowserDataExchangeImportActivity</string>
+    </array>
+    <key>DuoBrowserDirectTransferEnabled</key><string>$(DUOBROWSER_DIRECT_TRANSFER_ENABLED)</string>
     <key>CFBundleURLTypes</key><array><dict>
         <key>CFBundleURLName</key><string>$(PRODUCT_BUNDLE_IDENTIFIER).web</string>
         <key>CFBundleTypeRole</key><string>Viewer</string>

@@ -1,5 +1,13 @@
 # Build plan
 
+## Reddit app links and ad-blocking controls — November 11, 2026
+
+- Added native Apollo Reborn handoff for trusted Reddit content-link taps and supported Google wrappers, a remembered first choice, Ask Every Time, browser fallback, private-tab confirmation and Settings controls. A fixed isolated-world click gate prevents scripted clicks from launching apps; URLs are not persisted or logged. Artemis was researched but is not exposed until its deep-link contract and actual post/comment behavior can be verified.
+- Added the global Block Ads & Trackers switch over the existing 19-service rules. Preserves site exceptions and page drafts; existing tabs apply changes to new requests without automatic reload. New tabs, private tabs and Reader inherit the preference. This is built-in blocking, not support for installed Safari extensions.
+- Passed Debug/Release simulator builds (Xcode 27.2, iOS 27.2 SDK, deployment target unchanged at iOS 27.1), 192 portable assertions, 177 Playwright assertions, SwiftLint and repository checks. Full native suite passed: 23 setup, 25 Reddit, 18 tab-stack, 93 core, 63 upgrade/blocking/Reader, 34 settling, 2 cookie-write, 2 cookie-read and 13 memory checks.
+- Real simulator tap verified the production gesture gate and chooser, correct comment deep link, remembered selection and retained draft using a simulated OS launch. Settings controls were exercised in closed/open/partially folded poses and rotation. Actual Apollo installations/sideload variants, Artemis, hardware touch/energy, full spoken VoiceOver, large text and the remaining accessibility/occlusion matrix remain unverified. [Evidence and limitations](REDDIT_LINKS_AND_BLOCKING.md).
+- Parallel research confirmed public native WebKit extension-hosting APIs, but Safari transfer contains extension metadata rather than packages/settings/permissions. A tested compatible catalog and a permission-aware extension host need separate implementation before useful migration. [Extension feasibility and stages](SAFARI_EXTENSIONS.md). No extension runtime, merge, release or App Store approval is claimed.
+
 ## Completed setup — October 26, 2026
 
 - Local Git repository initialized on main.
@@ -254,3 +262,15 @@ Centered shortcut labels and installed/launched development build10 on the conne
 - Final native receipts: 24 tab/zoom, 93 core, 55 upgrade, 34 settling, 4 cookie persistence and 13 memory checks. Maximum-text closed/open controls and software-keyboard footer avoidance were exercised in the simulator. Physical accessibility, credentials/permission combinations, endurance and live occlusion/frame-pacing acceptance remain beta work.
 - Upload succeeded. **DuoBrowser Internal: Testing. DuoBrowser Public Beta: Waiting for Review.** This is an external TestFlight review submission, not Apple approval or an App Store release. Default-browser capability remains deferred and absent from signing.
 - See the [beta release record](reviews/2026-11-08-testflight/README.md) for provenance, disclosures and remaining limits. These results supersede the earlier pending-validation notes above.
+
+## Guided setup and direct Safari transfer — November 11, 2026
+
+Implemented optional Welcome → Transfer → Default Browser → Tour setup, local progress/category restoration, and Page options reentry. The public BrowserKit integration requests direct transfer only, stages data for review, and preserves bookmark folders, user-designated favorites, history dates, and Reading List entries. No file-export/import steps or credential transfer were added. Library now exposes imported folders and Reading List. Bounded imports deduplicate and reject unsafe/oversized input; private sessions, replay, cancellation, stale completions, and failed writes have explicit handling.
+
+Apple accepted the owner-authorized Default Web Browser entitlement request **Y9UACWK77A**. A signed provisioning attempt confirms access is still pending Apple assignment. The approved-browser build configuration is prepared; ordinary builds explain that transfer/default selection are unavailable and let setup continue. No new TestFlight build, merge, or release was performed. See [the transfer and Apple activation record](SAFARI_TRANSFER.md).
+
+Debug and Release simulator builds passed; 139 portable assertions (28 new import checks), 167 browser/DOM assertions, and strict SwiftLint passed. The complete native suite passed: 23 setup, 24 tabs/zoom, 93 core, 55 upgrades, 34 camera settling, 4 cookie persistence, and 13 memory checks. Device Hub interaction verified the walkthrough, category changes, completion, skip/reentry, and closed/partial/open/rotated continuity. Dark appearance and maximum accessibility text were checked; the initial oversized fixed footer was corrected to scroll with content at accessibility sizes. Real Safari transfer, signed-device default selection, hardware touch/performance, spoken VoiceOver and live system occlusion remain unverified pending entitlement approval and device testing.
+
+The final synthetic review UI was exercised with Favorites mapped and History deselected; it saved one bookmark, one favorite, zero history entries, and one Reading List item. [Verification and screenshot](reviews/2026-11-11-setup/README.md).
+
+- PR #15 review follow-up: preserve distinct same-named source folders with one-to-one destination matching; apply archive file protection within atomic writes so there is no throwing post-commit operation. Portable coverage now totals 148 assertions. Device-only protection-class checks added because the simulator omits that metadata. Initial hosted CI failed during simulator startup before native tests; require passing CI on the corrected head before merge.

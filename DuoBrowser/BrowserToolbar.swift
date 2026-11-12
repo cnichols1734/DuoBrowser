@@ -11,6 +11,7 @@ struct BrowserToolbar: View {
     let accessibilityExpanded: Bool
     @State private var showingProtection = false
     @State private var showingPrivacy = false
+    @State private var showingSettings = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -40,6 +41,7 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
         .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
@@ -221,8 +223,11 @@ struct BrowserToolbar: View {
             Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
             Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
                 .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
-            Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
-            Button("Website Protection", systemImage: browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
+            Button("Library", systemImage: "book") { session.showingLibrary = true }
+            Button("Set Up DuoBrowser", systemImage: "sparkles") {
+                session.setup.reopen(); session.showingSetup = true
+            }
+            Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
             Toggle(isOn: $session.showSystemStatus) {
                 Label("Time, Signal & Battery", systemImage: "info.circle")
             }
@@ -238,6 +243,7 @@ struct BrowserToolbar: View {
             if browser.activeDownloads > 0 {
                 Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
             }
+            Button("Settings", systemImage: "gearshape") { showingSettings = true }
             Button("Privacy Policy", systemImage: "hand.raised") { showingPrivacy = true }
             #if DEBUG
             Menu("Developer") {
@@ -260,7 +266,7 @@ private struct BrowserPrivacyView: View {
             List {
                 Section("Your browsing data") {
                     Text("DuoBrowser has no app analytics, advertising SDKs or tracking service. History, bookmarks, settings and normal tabs are stored in the app on your device and may be included in system backups.")
-                    Text("Delete history and bookmarks in Bookmarks & History. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
+                    Text("Delete history, bookmarks, folders, and Reading List items in Library. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
                 }
                 Section("Private browsing") {
                     Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Private mode does not hide your network traffic.")

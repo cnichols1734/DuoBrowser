@@ -12,6 +12,8 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 
 ## Features
 
+- Optional first-run walkthrough with setup reentry from Page options. Direct Safari transfer integration is prepared with category selection and review before saving; activation awaits Apple’s Default Web Browser approval. No file-export/import workflow. See [status and requirements](docs/SAFARI_TRANSFER.md).
+
 - Full-width browsing with camera-aware adjustments based on actual system geometry. Page options includes **Time, Signal & Battery**, a remembered on/off control.
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
@@ -25,6 +27,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
 - Local history, bookmarks, find on page and native sharing.
 - Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
+- Settings includes a global **Block Ads & Trackers** switch and a **Reddit** link preference. Tapped Reddit content links can open in an installed Apollo Reborn, with a remembered first choice, Ask Every Time, browser fallback, and confirmation in private tabs. Artemis is pending a verified deep-link contract. See [coverage and verification](docs/REDDIT_LINKS_AND_BLOCKING.md).
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 
 Layout fitting is local and deterministic. There are no AI calls or site-specific repair rules. Ambiguous layouts fall back without alteration; not every website can be repaired safely.

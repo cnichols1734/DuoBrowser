@@ -2,6 +2,7 @@
 import SwiftUI
 import WebKit
 import Darwin
+import BrowserKit
 
 /// Debug-only integration harness. Uses synthetic loopback pages and isolated stores, never real browsing data.
 struct NativeBrowserChecks: UIViewControllerRepresentable {
@@ -541,6 +542,48 @@ private final class NativeCheckRunner {
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
+    func readerBlockingChecks(_ session: BrowserSession) async throws {
+        let originalPreference = session.adBlockingEnabled
+        let selectedID = session.selectedID
+        defer {
+            session.adBlockingEnabled = originalPreference
+            session.select(selectedID)
+            mount(session.selected)
+        }
+        // Exercise Reader's production loadHTMLString path with real image requests. Unique
+        // URLs prevent a previous unblocked response from satisfying a later blocked load.
+        for isPrivate in [false, true] {
+            for enabled in [false, true] {
+                session.adBlockingEnabled = enabled
+                let source = session.newTab(privateTab: isPrivate)
+                defer { session.close(source.id) }
+                try await load(source, "reader-blocking-source")
+                let token = UUID().uuidString
+                let thirdParty = URL(string: "http://localhost:8765/reader-photo-one.png?reader=\(token)")!
+                let firstParty = URL(string: "http://127.0.0.1:8765/reader-photo-two.png?reader=\(token)")!
+                let article = ReaderArticle(title: "Reader blocking fixture",
+                    source: URL(string: "http://127.0.0.1:8765/reader-blocking-source")!,
+                    blocks: [
+                        .init(kind: "image", text: "Third-party probe", imageURL: thirdParty, width: 320, height: 180),
+                        .init(kind: "image", text: "First-party control", imageURL: firstParty, width: 320, height: 180)
+                    ])
+                let reader = ReaderRenderer(article: article, sourceBrowser: source)
+                defer { reader.close() }
+                mount(reader.browser)
+                reader.load()
+                try await wait(timeout: 30) {
+                    (try? await self.js(reader.browser, "document.readyState === 'complete' && document.images.length === 2 && Array.from(document.images).every(image => image.complete)")) as? Bool == true
+                }
+                let mode = isPrivate ? "private" : "normal"
+                let widths = try await js(reader.browser, "Array.from(document.images, image => image.naturalWidth)") as? [Int]
+                try check(widths == (enabled ? [0, 320] : [320, 320]),
+                          "\(mode) Reader \(enabled ? "blocks" : "allows") third-party image while preserving first-party image with global switch \(enabled ? "on" : "off")")
+                try check(reader.browser.isPrivate == isPrivate &&
+                          reader.browser.webView.configuration.websiteDataStore === source.webView.configuration.websiteDataStore,
+                          "\(mode) Reader image requests retain the source WebKit profile")
+            }
+        }
+    }
     func readerRenderingChecks(_ source: BrowserModel) async throws {
         try await load(source, "reader-article")
         _ = try await js(source, "document.querySelector('#kept').value='Reader preserved draft'")
@@ -607,7 +650,9 @@ private final class NativeCheckRunner {
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
-        let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+        let defaults = UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!
+        defaults.removeObject(forKey: "browser.adBlockingEnabled")
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
         defer {
             session.tabs.forEach { $0.close() }
             try? FileManager.default.removeItem(at: directory)
@@ -717,6 +762,7 @@ private final class NativeCheckRunner {
             let json = try String(contentsOf: rulesURL, encoding: .utf8)
             let fixtureRules = json.replacingOccurrences(of: "doubleclick\\\\.net", with: "localhost")
             ContentBlocking.useTestRules(fixtureRules)
+            try await readerBlockingChecks(session)
             try await load(normal, "upgrades")
             let blocked = try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool
             try check(blocked == true, "native blocker prevents third-party synthetic request")
@@ -726,6 +772,30 @@ private final class NativeCheckRunner {
             normal.blockAds = true
             try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
+            _ = try await js(normal, "document.querySelector('#kept').value='Keep blocker draft'")
+            session.adBlockingEnabled = false
+            try await wait { normal.blockingStatus == "Off in Settings" }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-off').then(()=>true).catch(()=>false)") as? Bool == true, "global switch disables blocking without reload")
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep blocker draft", "global switch preserves form draft")
+            try check(defaults.object(forKey: "browser.adBlockingEnabled") as? Bool == false, "global blocking preference persists")
+            try check(normal.blockAds, "global switch preserves per-site preference")
+            normal.openReader()
+            try await wait { normal.readerArticle != nil || normal.errorMessage != nil }
+            if let article = normal.readerArticle {
+                let reader = ReaderRenderer(article: article, sourceBrowser: normal)
+                try check(!reader.browser.adBlockingEnabled, "Reader inherits global blocking preference")
+                reader.browser.close()
+            } else { try check(false, "Reader must open for global blocking check") }
+            normal.cancelReader()
+            let globallyOffTab = session.newTab(privateTab: true)
+            try await load(globallyOffTab, "global-off-private")
+            try check(globallyOffTab.blockingStatus == "Off in Settings", "new private tab honors global switch")
+            session.adBlockingEnabled = true
+            try await wait { normal.blockingStatus == "Basic protection on" && globallyOffTab.blockingStatus == "Basic protection on" }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-on').then(()=>false).catch(()=>true)") as? Bool == true, "global reenabling restores actual blocking in existing tabs")
+            session.close(globallyOffTab.id)
+            session.select(normal.id)
+            mount(normal)
             normal.navigate(to: "http://localhost:8765/upgrades")
             try await wait {
                 guard normal.webView.url?.host == "localhost", !normal.webView.isLoading else { return false }
@@ -750,6 +820,9 @@ private final class NativeCheckRunner {
             let popup = session.selected
             mount(popup)
             try await wait { popup.webView.url?.host == "localhost" && !popup.webView.isLoading }
+            try check(popup.webView.configuration.userContentController.userScripts.filter {
+                $0.source.hasPrefix("/* DuoBrowser Reddit tap */")
+            }.count == 1, "popup inherits exactly one Reddit tap authorization script")
             try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
             try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
             session.restoreBlocking(host: "localhost", isPrivate: false)
@@ -938,7 +1011,307 @@ private final class NativeCheckRunner {
         try check(submitted == "www.google.com", "return accepts inline website completion")
     }
 
+    func setupChecks() async throws {
+        let suite = "DuoBrowser.SetupTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let transport = SetupFixtureTransport()
+        let model = BrowserSetupModel(storage: defaults, transferEnabled: true, transport: transport)
+        try check(!model.completed && model.step == .welcome, "new install begins with welcome")
+        model.next(); model.choices.history = false
+        let restored = BrowserSetupModel(storage: defaults)
+        try check(restored.step == .transfer && !restored.choices.history, "interrupted setup restores step and category choices")
+        let invalid = NSUserActivity(activityType: BEBrowserDataImportManager.userActivityType)
+        try check(!model.receive(invalid, isPrivate: false), "missing transfer token rejected")
+        let token = UUID()
+        let activity = NSUserActivity(activityType: BEBrowserDataImportManager.userActivityType)
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: token]
+        try check(!model.receive(activity, isPrivate: true), "private session rejects incoming transfer")
+        let disabled = BrowserSetupModel(storage: defaults, transferEnabled: false)
+        try check(!disabled.receive(activity, isPrivate: false), "unentitled build rejects incoming transfer")
+        try check(model.receive(activity, isPrivate: false), "valid system activity starts direct import")
+        try await wait { transport.continuation != nil }
+        transport.continuation?.yield(BEBrowserDataBookmark(isFolder: false, title: "Synthetic bookmark", identifier: "bookmark", url: URL(string: "https://example.com/import"), parentIdentifier: nil))
+        transport.continuation?.yield(BEBrowserDataReadingListItem(title: "Read", url: URL(string: "https://example.com/read")!, dateOfLastVisit: nil))
+        transport.continuation?.finish()
+        try await wait { model.state == .review }
+        try check(session.bookmarks.isEmpty && store.load()?.bookmarks.isEmpty != false, "received data does not save before review")
+        try check(model.batch?.readingList.count == 1, "undated Reading List item is retained")
+        try check(!model.receive(activity, isPrivate: false), "replayed token cannot replace review")
+        model.save(into: session)
+        try check(model.state == .saved && session.bookmarks.count == 1 && session.readingList.count == 1, "confirmed selection commits supported data")
+        try check(store.load()?.readingList?.count == 1, "confirmed transfer survives archive reload")
+        #if !targetEnvironment(simulator)
+        // The simulator omits NSFileProtectionKey; verify the class on a device.
+        guard session.saveNow() else { throw BrowserImportError.saveFailed }
+        for name in ["session.json", "session.backup.json"] {
+            let attributes = try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
+            try check(attributes[.protectionKey] as? String == FileProtectionType.completeUntilFirstUserAuthentication.rawValue,
+                "atomic archive write applies protection to \(name): \(String(describing: attributes[.protectionKey]))")
+        }
+        #endif
+        model.save(into: session)
+        try check(session.bookmarks.count == 1, "double save cannot duplicate data")
+        model.finish()
+        try check(BrowserSetupModel(storage: defaults).completed, "completed setup stays completed after relaunch")
+        model.reopen()
+        try check(model.step == .welcome, "setup can reopen from Page options")
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: UUID()]
+        transport.continuation = nil
+        try check(model.receive(activity, isPrivate: false), "new token begins a new transfer")
+        try await wait { transport.continuation != nil }
+        let stale = transport.continuation
+        model.cancel()
+        stale?.yield(BEBrowserDataBookmark(isFolder: false, title: "Late", identifier: "late", url: URL(string: "https://example.com/late"), parentIdentifier: nil))
+        stale?.finish()
+        try await Task.sleep(for: .milliseconds(100))
+        try check(model.state == .idle && model.batch == nil && session.bookmarks.count == 1, "canceled stream cannot repopulate review or save late items")
+        try check(!model.receive(activity, isPrivate: false), "late return after cancel rejected")
+        model.reopen()
+        activity.userInfo = [BEBrowserDataImportManager.importTokenUserInfoKey: UUID()]
+        transport.continuation = nil
+        try check(model.receive(activity, isPrivate: false), "a new import can retry after cancellation")
+        try await wait { transport.continuation != nil }
+        transport.continuation?.yield(BEBrowserDataBookmark(isFolder: false, title: "Partial", identifier: "partial", url: URL(string: "https://example.com/partial"), parentIdentifier: nil))
+        transport.continuation?.finish(throwing: CocoaError(.fileReadUnknown))
+        try await wait { model.state == .failed }
+        try check(model.batch == nil && session.bookmarks.count == 1, "failed streams discard partial data")
+        model.reopen()
+        if let scene = host.view.window?.windowScene {
+            model.request(scene: scene)
+            try await wait { transport.requestContinuation != nil }
+            model.cancel()
+            transport.requestContinuation?.resume(returning: true)
+            transport.requestContinuation = nil
+            try await Task.sleep(for: .milliseconds(100))
+            try check(model.state == .idle && model.message == nil, "stale request completion cannot overwrite cancellation")
+            model.request(scene: scene)
+            try await wait { transport.requestContinuation != nil }
+            transport.requestContinuation?.resume(returning: true)
+            transport.requestContinuation = nil
+            try await wait { model.state == .failed }
+            try check(model.batch == nil, "unexpected files response fails without opening a file picker")
+        } else { throw NSError(domain: "setup harness needs window scene", code: 1) }
+        var incoming = BrowserImportBatch()
+        try incoming.addPage(address: "https://example.com/history", title: "History", date: Date(), isHistory: true)
+        try model.reviewForTesting(incoming)
+        model.choices = ImportChoices(bookmarks: false, favorites: false, history: true, readingList: false)
+        // Make the destination unwritable without changing permissions on any real browsing files.
+        let blocked = directory.appendingPathComponent("not-a-directory")
+        try Data().write(to: blocked)
+        let failing = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: blocked), dataStore: .nonPersistent())
+        defer { failing.tabs.forEach { $0.close() } }
+        model.save(into: failing)
+        try check(model.state == .review && failing.history.isEmpty, "failed durable save preserves review and rolls back library")
+        model.cancel()
+        try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
+    }
+
+    func setupPreview() throws {
+        let defaults = UserDefaults(suiteName: "DuoBrowser.SetupPreview")!
+        let session = BrowserSession(storage: defaults,
+            archiveStore: BrowserArchiveStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("SetupPreview-" + UUID().uuidString)),
+            dataStore: .nonPersistent())
+        let model = BrowserSetupModel(storage: defaults, transferEnabled: true, transport: SetupFixtureTransport())
+        model.choices = ImportChoices()
+        var batch = BrowserImportBatch()
+        try batch.addBookmark(.init(identifier: "favorites", parent: nil, title: "Favorites", address: nil, isFolder: true))
+        try batch.addBookmark(.init(identifier: "book", parent: "favorites", title: "Synthetic Favorite", address: "https://example.com/favorite", isFolder: false))
+        try batch.addBookmark(.init(identifier: "folder", parent: nil, title: "Research", address: nil, isFolder: true))
+        try batch.addBookmark(.init(identifier: "ordinary", parent: "folder", title: "Synthetic Bookmark", address: "https://example.com/bookmark", isFolder: false))
+        try batch.addPage(address: "https://example.com/history", title: "Synthetic Visit", date: Date(timeIntervalSince1970: 1234), isHistory: true)
+        try batch.addPage(address: "https://example.com/read", title: "Synthetic Reading List", date: Date(timeIntervalSince1970: 1234), isHistory: false)
+        try model.reviewForTesting(batch)
+        model.step = .transfer
+        let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model))
+        host.present(preview, animated: false)
+    }
+
+    func redditChecks() async throws {
+        let name = "DuoBrowser.RedditChecks." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let routing = RedditLinkRouting(storage: defaults)
+        let url = URL(string: "https://www.reddit.com/r/swift/comments/abc123/title/def456/?context=3")!
+        var opened: [URL] = []
+        var outcome: Bool?
+        var choice: RedditLinkPreference? = .apollo
+        var prompts = 0
+        var current = true
+        routing.canOpen = { _ in true }
+        routing.open = { target, completion in opened.append(target); completion(true) }
+        let choose: ([RedditLinkPreference], String, @escaping (RedditLinkPreference?) -> Void) -> Void = { choices, _, finish in
+            prompts += 1
+            precondition(choices == [.apollo, .browser])
+            finish(choice)
+        }
+        func route(privateTab: Bool = false) {
+            outcome = nil
+            routing.route(url, isPrivate: privateTab, isCurrent: { current }, choose: choose) { outcome = $0 }
+        }
+        try check(routing.preference == .chooseOnce, "fresh install asks once")
+        route()
+        try check(prompts == 1 && outcome == true && opened.count == 1, "first choice opens Apollo and cancels web request")
+        try check(RedditLinkRouting(storage: defaults).preference == .apollo, "chosen app survives relaunch")
+        route()
+        try check(prompts == 1 && opened.count == 2, "remembered app skips subsequent prompt")
+        route(privateTab: true)
+        try check(prompts == 2 && opened.count == 3, "private tab still asks before handoff")
+        routing.preference = .chooseOnce
+        choice = .browser
+        route(privateTab: true)
+        try check(outcome == false && routing.preference == .chooseOnce, "private browser choice does not persist")
+        route()
+        try check(outcome == false && routing.preference == .browser, "browser choice is remembered")
+        let promptCount = prompts
+        route()
+        try check(prompts == promptCount && outcome == false, "browser preference never launches app")
+        routing.preference = .askEveryTime
+        choice = .apollo
+        route(); route()
+        try check(prompts == promptCount + 2 && routing.preference == .askEveryTime, "ask every time stays enabled")
+        choice = nil
+        route()
+        try check(outcome == true, "cancel keeps original page")
+        routing.canOpen = { _ in false }
+        route()
+        try check(outcome == false, "missing app falls back to original request")
+        routing.canOpen = { _ in true }
+        routing.preference = .apollo
+        routing.open = { _, finish in finish(false) }
+        route()
+        try check(outcome == false, "system launch failure falls back to original request")
+        var finishOpen: (@MainActor @Sendable (Bool) -> Void)?
+        routing.open = { _, finish in finishOpen = finish }
+        route()
+        current = false
+        finishOpen?(false)
+        try check(outcome == true, "late launch failure cannot navigate a stale tab")
+        current = true
+        routing.preference = .chooseOnce
+        var finishChoice: ((RedditLinkPreference?) -> Void)?
+        routing.route(url, isPrivate: false, isCurrent: { current }, choose: { _, _, finish in finishChoice = finish }) { outcome = $0 }
+        current = false
+        finishChoice?(.apollo)
+        try check(outcome == true && routing.preference == .chooseOnce, "stale choice neither opens nor saves")
+        try check(defaults.dictionaryRepresentation().values.allSatisfy { !(String(describing: $0).contains("abc123")) }, "preferences never store destination URLs")
+
+        let model = BrowserModel(dataStore: .nonPersistent())
+        defer { model.close() }
+        model.redditLinks = routing
+        // The native route test isolates gesture authorization; the trusted listener is tested separately below and in Playwright.
+        model.testRedditTapAuthorization = { _ in true }
+        routing.preference = .apollo
+        routing.open = { target, finish in opened.append(target); finish(true) }
+        try await load(model, "reddit-routing")
+        let page = model.webView.url
+        let initialCount = opened.count
+        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
+        try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
+        let position = try await js(model, "window.scrollY") as? Double
+        _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
+        try await wait { opened.count == initialCount + 1 }
+        try check(opened.last == RedditLinks.apolloURL(url), "real WebKit link action unwraps Google and opens exact comment")
+        try check(model.webView.url == page, "successful handoff preserves source URL")
+        try check(try await js(model, "document.querySelector('#kept').value") as? String == "Keep this draft", "handoff preserves form draft")
+        let afterHandoff = try await js(model, "window.scrollY") as? Double
+        try check(abs((afterHandoff ?? -1000) - (position ?? 1000)) < 2,
+                  "handoff preserves scroll position (\(position ?? -1) → \(afterHandoff ?? -1))")
+        _ = try await js(model, "a.target='_blank';a.click();true")
+        try await wait { opened.count == initialCount + 2 }
+        try check(model.webView.url == page, "new-window handoff leaves source intact without popup")
+        routing.preference = .chooseOnce
+        _ = try await js(model, "a.target='';a.click();true")
+        try await wait { self.host.presentedViewController is UIAlertController }
+        let alert = host.presentedViewController as! UIAlertController
+        try check(alert.actions.map(\.title) == ["Apollo Reborn", "DuoBrowser", "Cancel"], "native chooser presents installed app, browser and cancel")
+        model.presentation.cancel()
+        try await wait { self.host.presentedViewController == nil }
+        try check(model.webView.url == page && routing.preference == .chooseOnce, "dismissing chooser leaves page and preference unchanged")
+        let schemes = Bundle.main.object(forInfoDictionaryKey: "LSApplicationQueriesSchemes") as? [String]
+        try check(schemes == ["apollo"], "production bundle declares only the verified app query scheme")
+        _ = try await js(model, "a.addEventListener('click',e=>e.preventDefault());a.click();true")
+        let trusted = try await model.webView.callAsyncJavaScript("return globalThis.__duoRedditTap.consume(url);",
+            arguments: ["url": "https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3"],
+            in: nil, contentWorld: BrowserModel.redditTapWorld)
+        try check(trusted as? Bool == false, "programmatic click cannot mint trusted authorization (\(String(describing: trusted)))")
+        try check(try await js(model, "typeof globalThis.__duoRedditTap") as? String == "undefined", "page world cannot access isolated click authorization")
+        var consumedLinks: [URL] = []
+        model.testRedditTapAuthorization = { destination in
+            consumedLinks.append(destination)
+            return true
+        }
+        routing.preference = .apollo
+        let openedBeforeIneligibleLinks = opened.count
+        _ = try await js(model, "var frame=document.createElement('iframe');frame.name='routingFixture';frame.id='routingFixture';document.body.append(frame);true")
+        try await wait {
+            (try? await self.js(model, "document.querySelector('#routingFixture').contentDocument.readyState === 'complete'")) as? Bool == true
+        }
+        _ = try await js(model, "var frameLink=document.createElement('a');frameLink.href='http://127.0.0.1:8765/reddit-frame-target';frameLink.target='routingFixture';document.body.append(frameLink);frameLink.click();true")
+        try await wait {
+            (try? await self.js(model, "document.querySelector('#routingFixture').contentWindow.location.pathname === '/reddit-frame-target' && document.querySelector('#routingFixture').contentDocument.readyState === 'complete'")) as? Bool == true
+        }
+        try check(consumedLinks.map(\.path) == ["/reddit-frame-target"], "iframe-targeted link consumes authorization before eligibility checks")
+        try check(model.webView.url == page && opened.count == openedBeforeIneligibleLinks,
+                  "ineligible iframe link loads its original frame without app launch or main-page navigation")
+        _ = try await js(model, "var localLink=document.createElement('a');localLink.href='http://127.0.0.1:8765/reddit-main-target';document.body.append(localLink);localLink.click();true")
+        try await wait { model.webView.url?.path == "/reddit-main-target" && !model.webView.isLoading }
+        try check(consumedLinks.map(\.path) == ["/reddit-frame-target", "/reddit-main-target"],
+                  "non-Reddit main-frame link also consumes authorization")
+        let navigatedPath = try await js(model, "location.pathname") as? String
+        try check(opened.count == openedBeforeIneligibleLinks && navigatedPath == "/reddit-main-target",
+                  "non-Reddit link preserves original web navigation without app launch")
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--reddit-preview") {
+            let defaults = UserDefaults(suiteName: "DuoBrowser.RedditPreview")!
+            defaults.removePersistentDomain(forName: "DuoBrowser.RedditPreview")
+            let routing = RedditLinkRouting(storage: defaults)
+            routing.canOpen = { _ in true }
+            routing.open = { url, completion in
+                let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("RedditPreview.txt")
+                try? url.absoluteString.write(to: file, atomically: true, encoding: .utf8)
+                completion(true)
+            }
+            let model = BrowserModel(dataStore: .nonPersistent())
+            model.redditLinks = routing
+            mount(model)
+            model.webView.loadHTMLString("""
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>body{font:24px -apple-system;margin:100px 24px;background:white;color:black}a,input{display:block;margin:32px 0;padding:16px}</style>
+                <h1>Reddit link check</h1><input placeholder="Draft to preserve" value="Keep this draft">
+                <a href="https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3">Open Reddit comment</a>
+                <p>Only Apollo availability and the OS launch are simulated. This link needs a real tap.</p>
+                """, baseURL: URL(string: "https://fixture.invalid"))
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(30)) }
+            model.close()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--reddit-checks") {
+            do { try await redditChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("RedditChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--setup-preview") {
+            try? await wait { self.host.view.window != nil }
+            try? setupPreview()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--setup-checks") {
+            do { try await setupChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SetupChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--address-completion-checks") {
             do { try addressCompletionChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AddressCompletionChecks.txt")
@@ -1154,6 +1527,17 @@ private final class NativeCheckRunner {
         text.text = results.joined(separator: "\n")
         text.isEditable = false
         host.view.addSubview(text)
+    }
+}
+@MainActor
+private final class SetupFixtureTransport: BrowserTransferTransport {
+    var continuation: AsyncThrowingStream<BEBrowserData, Error>.Continuation?
+    var requestContinuation: CheckedContinuation<Bool, Error>?
+    func request(scene: UIWindowScene) async throws -> Bool {
+        try await withCheckedThrowingContinuation { requestContinuation = $0 }
+    }
+    func items(token: UUID) -> AsyncThrowingStream<BEBrowserData, Error> {
+        AsyncThrowingStream { continuation = $0 }
     }
 }
 #endif

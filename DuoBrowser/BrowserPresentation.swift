@@ -8,6 +8,7 @@ final class BrowserPresentation {
     private var pendingCancel: (() -> Void)?
     private weak var controller: UIViewController?
     private var linkPreview: BrowserLinkPreviewController?
+    private(set) var interactionID = UUID()
     init(browser: BrowserModel) { self.browser = browser }
 
     var presenter: UIViewController? {
@@ -18,6 +19,7 @@ final class BrowserPresentation {
     }
 
     func cancel() {
+        interactionID = UUID()
         cancelLinkPreview()
         let completion = pendingCancel
         let presented = controller
@@ -104,6 +106,27 @@ final class BrowserPresentation {
                 if !opened { self?.browser?.errorMessage = "No installed app could open this link." }
             }
         }
+    }
+
+    func chooseRedditApp(_ choices: [RedditLinkPreference], message: String,
+                         completion: @escaping (RedditLinkPreference?) -> Void) {
+        guard pendingCancel == nil, let presenter, !(presenter is UIAlertController) else { completion(nil); return }
+        let alert = UIAlertController(title: "Open Reddit links in…", message: message, preferredStyle: .alert)
+        var completed = false
+        let finish: (RedditLinkPreference?) -> Void = { [weak self] choice in
+            guard !completed else { return }
+            completed = true
+            self?.pendingCancel = nil
+            self?.controller = nil
+            completion(choice)
+        }
+        pendingCancel = { finish(nil) }
+        controller = alert
+        for choice in choices {
+            alert.addAction(UIAlertAction(title: choice.title, style: .default) { _ in finish(choice) })
+        }
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in finish(nil) })
+        presenter.present(alert, animated: true)
     }
 
     func share(_ url: URL) {

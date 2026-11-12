@@ -65,6 +65,23 @@ import Foundation
         check(UnifiedSearch.results("garden research", candidates: [tab, history]).map(\.id) == ["tab"], "all query terms match across title and workspace")
         check(UnifiedSearch.results("missing", candidates: [tab]).isEmpty, "no unrelated results")
         check(UnifiedSearch.results("", candidates: [tab]).first?.tabID == tab.tabID, "empty query provides recent tabs")
+        let failureFolder = folder.appendingPathComponent("write-failure")
+        let failureStore = BrowserArchiveStore(directory: failureFolder)
+        let primary = failureFolder.appendingPathComponent("session.json")
+        let backup = failureFolder.appendingPathComponent("session.backup.json")
+        var beforeImport = BrowserArchive(session: archive.session)
+        beforeImport.bookmarks = [LibraryEntry(address: "https://example.com/existing", title: "Existing")]
+        try failureStore.write(beforeImport)
+        var afterImport = beforeImport
+        afterImport.bookmarks.append(LibraryEntry(address: "https://example.com/imported", title: "Imported"))
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        do { try failureStore.write(afterImport); fatalError("backup failure must throw") } catch { checks += 1 }
+        check(failureStore.load()?.bookmarks.count == 1, "backup write failure leaves original primary intact")
+        try FileManager.default.removeItem(at: backup)
+        try FileManager.default.moveItem(at: primary, to: backup)
+        try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: false)
+        do { try failureStore.write(afterImport); fatalError("primary failure must throw") } catch { checks += 1 }
+        check(failureStore.load()?.bookmarks.count == 1, "failed primary commit recovers only pre-import data")
         print("\(checks) browser data checks passed")
     }
 }
