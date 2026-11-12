@@ -28,7 +28,11 @@ receipt = {
     'sources': {name: hashlib.sha256(data).hexdigest() for name, data in received.items()},
     'urls': sources,
 }
+receipt['upstreamSHA256'] = dict(receipt['sources'])
+receipt['transformation'] = 'Trailing whitespace removed from comment lines only; filter rules unchanged.'
 for name, data in received.items():
-    (root / (name + '.txt')).write_bytes(data)
+    normalized = ('\n'.join(line.rstrip() if line.startswith('!') else line for line in data.decode('utf-8').splitlines()) + '\n').encode('utf-8')
+    (root / (name + '.txt')).write_bytes(normalized)
+    receipt['sources'][name] = hashlib.sha256(normalized).hexdigest()
 (root / 'metadata.json').write_text(json.dumps(receipt, indent=2) + '\n')
 print('Updated three source lists. Review upstream licensing, run checks and native WebKit compilation, then submit a PR.')

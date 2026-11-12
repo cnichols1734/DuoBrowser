@@ -9,8 +9,9 @@ EasyList Cookie List: **The EasyList authors and Fanboy**. Its own header specif
 **Creative Commons Attribution 3.0 Unported**. Full text: `CC-BY-3.0.txt`.
 Source: https://secure.fanboy.co.nz/fanboy-cookiemonster.txt .
 
-The bundled `.txt` lists are unmodified downloaded snapshots. `metadata.json`
-records their SHA-256 digests and retrieval date (seconds since 2001-01-01 UTC).
+The bundled `.txt` lists retain their rules and headers; trailing whitespace is
+removed from comment lines only. `metadata.json` records upstream and bundled
+SHA-256 digests, this transformation, and retrieval date (seconds since 2001-01-01 UTC).
 DuoBrowser converts a supported subset into declarative WebKit JSON: unsupported
 syntax is omitted, domains/resource conditions are preserved or the entire rule
 is skipped, exceptions are ordered after blocking rules, and large lists are
