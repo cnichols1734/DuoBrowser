@@ -14,4 +14,4 @@ Debug simulator compilation, the final Release build, 208 portable assertions, s
 
 ## Stacked integration
 
-This branch starts from main. When stacking with the other reviewed features, keep the updated Save Page and Downloads actions. Keep the blocker branch's Filter Lists & Updates navigation inside Ad Blocking. Release retained Undo state before clearing any normal website data; clearing History must also clear Recently Closed with durable-save failure reporting. These hooks cannot be invoked in this standalone base until the tab feature is present.
+The tab, library and filter-list features are now integrated. Save Page and Filter Lists & Updates remain available. All nonempty normal website-data removals release retained live Undo through a central callback before asking WebKit to remove records. History and Recently Closed clear in one archive replacement; a failed write restores retryable records, but never restores the released model or Undo notice. Native assertions cover that failure boundary and verify that a stale website confirmation cannot release Undo. The Downloads action will be preserved when that feature is stacked.

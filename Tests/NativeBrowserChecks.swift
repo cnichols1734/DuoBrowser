@@ -1625,13 +1625,19 @@ final class NativeCheckRunner {
         session.addBookmark()
         let bookmarks = session.bookmarks
         try check(!session.history.isEmpty && !bookmarks.isEmpty, "synthetic history and bookmark exist before clear")
+        let recoveryTab = session.newTab()
+        try await load(recoveryTab, "upgrades")
+        session.close(recoveryTab.id)
+        let recoveryBeforeClear = session.recentlyClosed.map(\.id)
+        try check(recoveryTab.loadedWebView != nil && !recoveryBeforeClear.isEmpty, "history clear fixture has live Undo and recovery records")
         let historyBeforeClear = session.history.map(\.id)
         let backup = directory.appendingPathComponent("session.backup.json")
         try? FileManager.default.removeItem(at: backup)
         try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
         try check(!session.clearHistoryFromSettings() && session.history.map(\.id) == historyBeforeClear, "failed history clear preserves retry rows and reports failure")
+        try check(session.recentlyClosed.map(\.id) == recoveryBeforeClear && recoveryTab.loadedWebView == nil && session.closedTabNotice == nil, "failed history clear restores recovery records without resurrecting live Undo")
         try FileManager.default.removeItem(at: backup)
-        try check(session.clearHistoryFromSettings() && archive.load()?.history.isEmpty == true, "history clear reaches durable archive after retry")
+        try check(session.clearHistoryFromSettings() && archive.load()?.history.isEmpty == true && archive.load()?.recentlyClosed?.isEmpty == true, "history and recovery clear together in both archive generations after retry")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
         try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")
         let data = session.websiteData
@@ -1640,12 +1646,17 @@ final class NativeCheckRunner {
             return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
         }
         try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        let retainedForData = session.newTab()
+        try await load(retainedForData, "upgrades")
+        session.close(retainedForData.id)
         let first = data.entries.first { $0.name == "first.example" }!
         await data.reload()
         try check(!(await data.removeEntry(first.id)), "stale row handle cannot delete refreshed website data")
+        try check(retainedForData.loadedWebView != nil, "stale website confirmation does not release live Undo")
         try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "first.example" }, "stale confirmation leaves cookie intact")
         let current = data.entries.first { $0.name == "first.example" }!
         try check(await data.removeEntry(current.id), "selected WebKit record removes successfully")
+        try check(retainedForData.loadedWebView == nil, "normal website removal releases retained Undo before deleting data")
         let remaining = await store.httpCookieStore.allCookies()
         try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
@@ -1668,7 +1679,7 @@ final class NativeCheckRunner {
         try check(controlled.entries.isEmpty && !controlled.isBusy, "cancelled refresh cannot publish late website records")
         fake.failReads = true
         await controlled.reload()
-        try check(controlled.message?.contains("couldn’t be loaded") == true && !controlled.isBusy, "failed list load provides retry state")
+        try check(controlled.message?.contains("couldn’t be loaded") == true && !controlled.isBusy && !controlled.hasLoaded, "failed list load provides retry state")
         fake.failReads = false; fake.immediate = [current.record]
         await controlled.reload()
         fake.failRemove = true

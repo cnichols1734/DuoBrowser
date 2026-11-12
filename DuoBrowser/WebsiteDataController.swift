@@ -49,6 +49,7 @@ final class WebsiteDataController: ObservableObject {
     @Published private(set) var hasLoaded = false
     @Published private(set) var isRemoving = false
     @Published private(set) var message: String?
+    var onWillRemove: (() -> Void)?
     private let store: any WebsiteDataAccess
     private var generation = UUID()
     init(store: any WebsiteDataAccess) { self.store = store }
@@ -89,6 +90,7 @@ final class WebsiteDataController: ObservableObject {
 
     private func remove(types: Set<String>, records: [WKWebsiteDataRecord]?) async -> Bool {
         guard !types.isEmpty else { message = nil; return true }
+        onWillRemove?()
         let request = UUID(); generation = request
         isBusy = true; isRemoving = true; message = nil
         defer { isRemoving = false }

@@ -110,6 +110,7 @@ final class BrowserSession: ObservableObject {
         selected.activate()
         startFilterUpdates()
         lastNormalID = selectedID
+        websiteData.onWillRemove = { [weak self] in self?.releaseClosedTab() }
         // Migrate only after a durable write succeeds; normal cookies remain in WebKit's existing store.
         if legacy != nil, saveNow() { storage.removeObject(forKey: "browser.tabs.v1") }
         memoryObserver = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
@@ -562,10 +563,19 @@ final class BrowserSession: ObservableObject {
     @discardableResult
     func clearHistoryFromSettings() -> Bool {
         guard !privateMode else { return false }
-        let prior = history
+        let priorHistory = history
+        let priorRecovery = recentlyClosed
+        releaseClosedTab()
         history.removeAll()
+        recentlyClosed.removeAll()
+        closedTabNotice = nil
         WebsiteIconStore.shared.clear()
-        guard saveNow(replaceBackup: true) else { history = prior; return false }
+        guard saveNow(replaceBackup: true) else {
+            // Restore only retryable records. A released page and Undo notice must stay released.
+            history = priorHistory
+            recentlyClosed = priorRecovery
+            return false
+        }
         return true
     }
 
