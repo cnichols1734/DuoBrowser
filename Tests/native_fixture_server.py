@@ -86,6 +86,7 @@ class Handler(BaseHTTPRequestHandler):
                 attempt = gate.begin() if gate else None
                 attempt_number = gate.attempts if gate else 0
             final_attempt = 1 if query.get('gate-attempts', ['2'])[0] == '1' else 2
+            expired = False
             try:
                 for offset in range(0, len(payload), 8192):
                     self.wfile.write(payload[offset:offset+8192]); self.wfile.flush()
@@ -93,11 +94,14 @@ class Handler(BaseHTTPRequestHandler):
                         # Preserve an observable in-progress transfer until the harness cancels/releases it.
                         # Expiry interrupts the transfer rather than silently passing the test.
                         if attempt is None or not attempt.wait(60):
+                            expired = True
                             self.close_connection = True; return
                     if not gate_token: time.sleep(0.15)
             except (BrokenPipeError, ConnectionResetError): pass
             finally:
-                if gate and (attempt_number >= final_attempt or attempt is None or not attempt.is_set()):
+                # An early canceled first response still owns attempt 1. Its release must not
+                # recreate the registry entry and accidentally pre-release the retry's gate.
+                if gate and (attempt_number >= final_attempt or attempt is None or expired):
                     with DOWNLOAD_GATE_LOCK:
                         if DOWNLOAD_GATES.get(gate_token) is gate: DOWNLOAD_GATES.pop(gate_token)
             return
