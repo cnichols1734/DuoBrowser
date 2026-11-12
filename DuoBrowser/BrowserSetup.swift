@@ -223,23 +223,18 @@ struct BrowserSetup: View {
 
     private var transferChoices: some View {
         VStack(spacing: 0) {
-            transferChoice("Bookmarks", count: model.batch?.bookmarks.values.filter { !$0.isFolder }.count, selection: $model.choices.bookmarks)
+            transferChoice("Bookmarks", selection: $model.choices.bookmarks)
             Divider()
-            transferChoice("Favorites", count: nil, selection: $model.choices.favorites)
+            transferChoice("Favorites", selection: $model.choices.favorites)
             Divider()
-            transferChoice("History", count: model.batch?.history.count, selection: $model.choices.history)
+            transferChoice("History", selection: $model.choices.history)
             Divider()
-            transferChoice("Reading List", count: model.batch?.readingList.count, selection: $model.choices.readingList)
+            transferChoice("Reading List", selection: $model.choices.readingList)
         }
     }
 
-    private func transferChoice(_ title: String, count: Int?, selection: Binding<Bool>) -> some View {
-        Toggle(isOn: selection) {
-            HStack {
-                Text(title)
-                if let count { Text(count, format: .number).foregroundStyle(.secondary) }
-            }
-        }.padding(.vertical, 12)
+    private func transferChoice(_ title: String, selection: Binding<Bool>) -> some View {
+        Toggle(title, isOn: selection).padding(.vertical, 12)
     }
 
     private var actions: some View {
