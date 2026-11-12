@@ -548,8 +548,13 @@ final class NativeCheckRunner {
             }
 
 
-            model.originalPageLayout = true
             try await load(model, "settling")
+            // Navigation reapplies site preferences. Disable adaptation afterward so viewport
+            // mounting cannot begin a correction before the baseline and animation hook exist.
+            model.originalPageLayout = true
+            try await wait {
+                (try? await self.js(model, "![...document.getElementById('reading').attributes].some(a=>a.name.startsWith('data-duo-camera-'))")) as? Bool == true
+            }
             _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');document.getElementById('draft').value='Long article draft'")
             let longWidth = try await measure("width"), longTop = try await measure("top")
             try check((try await measure("height")) > 320, "native long article exceeds the previous camera cutoff")
