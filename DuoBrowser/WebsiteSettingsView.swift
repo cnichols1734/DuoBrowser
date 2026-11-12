@@ -47,8 +47,8 @@ struct WebsiteSettingsView: View {
                     Text(scope.host ?? "Website").font(.headline).textSelection(.enabled)
                     if scope.isPrivate { Label("Private Browsing", systemImage: "hand.raised").foregroundStyle(.secondary) }
                 } footer: {
-                    Text(scope.isPrivate ? "These settings apply only to this host in private browsing and disappear when all private tabs close."
-                         : "These settings are saved for this host. Other websites keep their own settings.")
+                    Text(scope.isPrivate ? "These settings apply only in private browsing and disappear when all private tabs close."
+                         : "These settings are saved for this website. Other websites keep their own settings.")
                 }
                 Section {
                     Toggle("Original Layout", isOn: binding(\.originalPageLayout))
@@ -61,11 +61,15 @@ struct WebsiteSettingsView: View {
                 } footer: { Text("Changing Desktop Website reloads the page. Unsaved website input may be lost.") }
                 Section {
                     Button { showingProtection = true } label: {
-                        LabeledContent("Website Protection") {
-                            Text(protectionStatus).foregroundStyle(.secondary)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Website Protection")
+                                Text(protectionStatus).font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            Spacer(minLength: 8)
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
-                    }.foregroundStyle(.primary)
+                    }.foregroundStyle(.primary).accessibilityElement(children: .combine)
                 }
             }
             .disabled(!scope.matches(browser))
