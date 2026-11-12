@@ -52,7 +52,6 @@ struct BrowserSetup: View {
             }
             .interactiveDismissDisabled()
         }
-        .ignoresSafeArea(.container, edges: .horizontal)
         .background {
             SetupSceneReader { currentScene, regions in
                 scene = currentScene
@@ -61,6 +60,9 @@ struct BrowserSetup: View {
             .allowsHitTesting(false).accessibilityHidden(true)
         }
         .setupFrame("canvas")
+        // Expand the geometry reader too, so camera regions outside the old safe
+        // rectangle are visible to it instead of shifting the entire setup column.
+        .ignoresSafeArea(.container, edges: .horizontal)
         .coordinateSpace(name: "setup.canvas")
         .onPreferenceChange(SetupFramesKey.self) { value in
             frames = value

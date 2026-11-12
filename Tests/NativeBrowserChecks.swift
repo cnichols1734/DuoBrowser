@@ -1500,7 +1500,7 @@ final class NativeCheckRunner {
                 let width = preview.view.bounds.width
                 let centered = ["heading", "primary", "navigation.progress"].allSatisfy { abs((measured[$0]?.midX ?? -1) - width / 2) < 1 }
                 try check(abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered,
-                          "setup step \(step.rawValue) centers heading, action and progress on full bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right)")
+                          "setup step \(step.rawValue) centers heading, action and progress on full bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right); width=\(width) frames=\(measured)")
             }
         }
         var largeFrames: [String: CGRect] = [:]
