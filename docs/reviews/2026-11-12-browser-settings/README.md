@@ -10,7 +10,30 @@ WebKit's data-removal callback does not report storage errors. Completion means 
 
 ## Verification
 
-The integrated Debug and Release builds, 293 portable assertions, strict SwiftLint 0.65.1 (52 files, no violations) and repository checks passed. Native runtime and UI verification remain pending. Confirmation copy describes sign-out only when cookies/site data is selected; final native build will include that small copy refinement. Sixteen new portable search assertions cover each engine's host, symbol/Unicode round trip, plus escaping and unchanged direct navigation. Native tests compile for real WebKit cookies, CacheStorage and local storage, selected-site versus other-site and private-store preservation, live draft/bookmark/open-tab continuity, stale handles, cancelled late refresh, load/remove failures, preference propagation and invalid stored preference fallbacks. Native runtime and UI matrix checks are pending the coordinated simulator slot. Simulator evidence does not replace hardware touch, battery/performance or full spoken VoiceOver checks.
+At source `5aaa842`, integrated Debug and Release simulator builds, 328 portable assertions, strict SwiftLint 0.65.1 and repository/whitespace checks passed. The native suite at the preceding integrated source `6fbd2d3` passed all 440 checks: Downloads 41, Settings 40, Setup 24, Reddit 29, TabStack 19, core 93, upgrades 143, settling 34, cookie write/read 2 each and memory 13. These results cover actual WebKit cookies/cache removal, private-store and selected-site isolation, cancellation/stale handles, history/recovery failure and retry, and preservation of live drafts, bookmarks, offline articles and downloaded file contents.
+
+Later review corrections and the dedicated Website Settings page compile in the current builds. The Settings batch now contains 48 assertions, including exact host/tab scope, private preference isolation and stale controls after actual host navigation. The final combined native rerun, including these new assertions and upstream tab/library/download review fixes, is assigned to the camera follow-up branch. Earlier passing receipts are not a claim that the new runtime checks have run. Expanded Settings/Downloads/Upgrade receipt budgets are 600 seconds for slow hosted simulators; functional assertion deadlines remain bounded.
+
+Manual native interaction verified Google defaults, alternative search selection, online-suggestion availability, initially empty clear categories, history-only versus cookies sign-out confirmation copy, cancellation preserving both synthetic website groups, selected-group removal preserving the other group, and completed category clearing. Actual production BrowserZoom presentation changed between app Light and app Dark while the system remained Dark. Closed/open/partial poses, rotation, maximum text size and Reduce Motion were inspected; the native form remains scrollable. This inspection found and fixed stale website-removal success text leaking into a new Clear Browsing Data screen. The final Website Settings sheet was then inspected in the exact rebuilt Debug app: host scope, Original Layout toggle, protection details and accessible Done dismissal worked. Inspection caught a wrapped trailing chevron; the final row uses a title/status stack and a separate trailing chevron. The scoped clear-feedback correction is source-reviewed; its last UI retest remains open.
+
+Simulator evidence does not replace hardware touch, battery/performance, pinch/live system-occlusion changes or a full spoken VoiceOver pass. No browsing data was used: all fixtures and website groups were synthetic.
+
+## Website Settings
+
+Website Settings now opens a dedicated native Form with the exact host, private-profile disclosure, Original Layout, Full-width Page, Desktop Website, current protection status and access to protection details. Done dismisses the page. Normal settings persist per host; private settings stay in the private store until its final tab closes. The captured scope rejects updates after a host/tab change. Desktop mode retains the existing page reload behavior and explains its effect on unsaved input. The page menu continues to expose Website Protection directly.
+
+## Captures
+
+- [Dedicated Website Settings page](website-settings-closed.png)
+- [Closed Settings](settings-closed.png)
+- [Open Settings at maximum text size](settings-open-large.png)
+- [Partial/rotated Dark Settings at maximum text size](settings-partial-dark-large.png)
+- [Actual production app Dark preference](production-theme-dark.png)
+- [History-only confirmation](history-confirmation.png)
+- [Remaining website group after selective removal](website-data.png)
+- [Category-clear completion](clear-data-complete.png)
+
+The Website Settings capture uses the final rebuilt sheet before a final copy-only change from “host” to “website”. Other Settings captures precede that addition. The simulator was returned to Text Size 3 and keyboard capture off; its synthetic preview remains in Dark appearance.
 
 ## Stacked integration
 
