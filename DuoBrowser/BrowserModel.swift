@@ -7,10 +7,13 @@ import WebKit
 final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigationDelegate, UIScrollViewDelegate {
     #if DEBUG
     var testNavigationObserver: ((String) -> Void)?
+    var testRedditTapAuthorization: ((URL) -> Bool)?
     #endif
+    static let redditTapWorld = WKContentWorld.world(name: "DuoBrowser.RedditTap")
     let id: UUID
     let chrome = BrowserChromeState()
     let viewport = BrowserViewportState()
+    var redditLinks: RedditLinkRouting?
     var onChange: (() -> Void)?
     var onSnapshot: (() -> Void)?
     var onOpenWindow: ((WKWebViewConfiguration) -> WKWebView?)?
@@ -27,6 +30,26 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         didSet { if !applyingPreferences { saveSitePreference(); loadedWebView?.reload() } }
     }
     @Published var blockingStatus = "Preparing protection"
+    private(set) var adBlockingEnabled = true
+
+    func setAdBlockingEnabled(_ enabled: Bool) {
+        adBlockingEnabled = enabled
+        guard loadedWebView != nil else { return }
+        Task { @MainActor [weak self] in
+            let rules = await ContentBlocking.rules()
+            guard let self, !self.closed, let view = self.loadedWebView else { return }
+            self.applyBlocking(rules, to: view)
+        }
+    }
+
+    private func applyBlocking(_ rules: WKContentRuleList?, to view: WKWebView) {
+        if let rules {
+            view.configuration.userContentController.remove(rules)
+            if adBlockingEnabled && blockAds { view.configuration.userContentController.add(rules) }
+        }
+        blockingStatus = !adBlockingEnabled ? "Off in Settings" : !blockAds ? "Off for this site"
+            : rules == nil ? "Protection unavailable" : "Basic protection on"
+    }
     private var policyGeneration = UUID()
     private var closed = false
     var onClose: (() -> Void)?
@@ -111,9 +134,11 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         // A new-window configuration belongs to WebKit; preserve its process/opener and content controller.
         if configuration == nil { config.websiteDataStore = dataStore }
         else {
-            // Keep each tab's adaptation preferences independent. This app installs no message handlers.
+            // Keep each tab's scripts/preferences independent. This app installs no message handlers.
             let controller = WKUserContentController()
-            config.userContentController.userScripts.filter { !$0.source.hasPrefix("/* DuoBrowser layout */") }
+            config.userContentController.userScripts.filter {
+                !$0.source.hasPrefix("/* DuoBrowser layout */") && !$0.source.hasPrefix("/* DuoBrowser Reddit tap */")
+            }
                 .forEach(controller.addUserScript)
             config.userContentController = controller
         }
@@ -127,6 +152,11 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         startsWithFixture = fixture && url == nil
         super.init()
         title = siteName
+        if let source = Bundle.main.url(forResource: "RedditTap", withExtension: "js")
+            .flatMap({ try? String(contentsOf: $0, encoding: .utf8) }) {
+            config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart,
+                                                                    forMainFrameOnly: true, in: Self.redditTapWorld))
+        }
     }
 
     private func configure(_ webView: WKWebView) {
@@ -269,6 +299,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             errorMessage = "Enter a valid website address or search."
             return
         }
+        presentation.cancel()
+        policyGeneration = UUID()
         errorMessage = nil
         startsWithFixture = false
         webView.stopLoading()
@@ -435,33 +467,34 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         let scheme = url.scheme?.lowercased() ?? ""
         if ["https", "http"].contains(scheme) {
             guard WebAddress.valid(url) != nil else { decisionHandler(.cancel, preferences); return }
-            if navigationAction.targetFrame?.isMainFrame == true {
-                currentMethod = navigationAction.request.httpMethod ?? "GET"
-                let site = preferenceForURL?(url) ?? SitePreference()
-                applyingPreferences = true
-                originalPageLayout = site.originalLayout
-                desktopSite = site.desktop
-                fullWidthLayout = site.fullWidth ?? true
-                blockAds = site.blockAds ?? true
-                applyingPreferences = false
-                preferences.preferredContentMode = desktopSite ? .desktop : .mobile
+            if navigationAction.targetFrame?.isMainFrame != false { policyGeneration = UUID() }
+            let generation = policyGeneration
+            let interaction = presentation.interactionID
+            let isCurrent: @MainActor @Sendable () -> Bool = { [weak self] in
+                guard let self else { return false }
+                return !self.closed && self.policyGeneration == generation && self.presentation.interactionID == interaction
             }
-            if navigationAction.targetFrame?.isMainFrame == true {
-                let generation = UUID()
-                policyGeneration = generation
-                Task { @MainActor [weak self] in
-                    let rules = await ContentBlocking.rules()
-                    guard let self, !self.closed, self.policyGeneration == generation else {
-                        decisionHandler(.cancel, preferences); return
+            if let redditLinks, RedditLinks.destination(url) != nil,
+               webView.window != nil,
+               RedditLinks.eligible(isLink: navigationAction.navigationType == .linkActivated,
+                                    sourceIsMainFrame: navigationAction.sourceFrame.isMainFrame,
+                                    targetIsMainFrame: navigationAction.targetFrame?.isMainFrame,
+                                    method: navigationAction.request.httpMethod, download: navigationAction.shouldPerformDownload) {
+                authorizeRedditTap(url) { [weak self] trusted in
+                    guard let self, isCurrent() else { decisionHandler(.cancel, preferences); return }
+                    guard trusted else {
+                        self.allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
+                        return
                     }
-                    if let rules {
-                        webView.configuration.userContentController.remove(rules)
-                        if self.blockAds { webView.configuration.userContentController.add(rules) }
+                    redditLinks.route(url, isPrivate: self.isPrivate, isCurrent: isCurrent,
+                                      choose: self.presentation.chooseRedditApp) { [weak self] cancel in
+                        guard let self, !cancel, isCurrent() else { decisionHandler(.cancel, preferences); return }
+                        self.allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
                     }
-                    self.blockingStatus = !self.blockAds ? "Off for this site" : rules == nil ? "Protection unavailable" : "Basic protection on"
-                    decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
                 }
-            } else { decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences) }
+            } else {
+                allowWebNavigation(webView, action: navigationAction, preferences: preferences, decisionHandler: decisionHandler)
+            }
         } else if scheme == "about" && ["about:blank", "about:srcdoc"].contains(
             String(url.absoluteString.split(separator: "#", maxSplits: 1).first ?? "").lowercased()) {
             decisionHandler(.allow, preferences)
@@ -482,6 +515,46 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             }
             // A background frame or automatic app redirect must not replace the page with an error.
         }
+    }
+
+    private func authorizeRedditTap(_ url: URL, completion: @escaping (Bool) -> Void) {
+        #if DEBUG
+        if let testRedditTapAuthorization { completion(testRedditTapAuthorization(url)); return }
+        #endif
+        guard let view = loadedWebView else { completion(false); return }
+        view.callAsyncJavaScript("return globalThis.__duoRedditTap?.consume(url) === true;",
+                                 arguments: ["url": url.absoluteString], in: nil, in: Self.redditTapWorld) { result in
+            completion((try? result.get()) as? Bool == true)
+        }
+    }
+
+    private func allowWebNavigation(_ webView: WKWebView, action navigationAction: WKNavigationAction,
+                                    preferences: WKWebpagePreferences,
+                                    decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        guard let url = navigationAction.request.url else { decisionHandler(.cancel, preferences); return }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            currentMethod = navigationAction.request.httpMethod ?? "GET"
+            let site = preferenceForURL?(url) ?? SitePreference()
+            applyingPreferences = true
+            originalPageLayout = site.originalLayout
+            desktopSite = site.desktop
+            fullWidthLayout = site.fullWidth ?? true
+            blockAds = site.blockAds ?? true
+            applyingPreferences = false
+            preferences.preferredContentMode = desktopSite ? .desktop : .mobile
+        }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            let generation = UUID()
+            policyGeneration = generation
+            Task { @MainActor [weak self] in
+                let rules = await ContentBlocking.rules()
+                guard let self, !self.closed, self.policyGeneration == generation else {
+                    decisionHandler(.cancel, preferences); return
+                }
+                self.applyBlocking(rules, to: webView)
+                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+            }
+        } else { decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,

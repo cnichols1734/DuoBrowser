@@ -92,6 +92,7 @@ else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
 run_receipt SetupChecks.txt 23 --setup-checks
+run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks
 run_receipt NativeBrowserChecks.txt 93
 run_receipt UpgradeChecks.txt 55 --upgrade-checks

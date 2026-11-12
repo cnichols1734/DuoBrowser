@@ -62,8 +62,10 @@ struct BrowserProtectionView: View {
     @ObservedObject var browser: BrowserModel
     @Environment(\.dismiss) private var dismiss
     private var host: String? { browser.restorationURL?.host }
+    private var protected: Bool { session.adBlockingEnabled && browser.blockAds }
     private var unavailable: Bool { browser.blockingStatus == "Protection unavailable" }
     private var title: String {
+        if !session.adBlockingEnabled { return "Off in Settings" }
         guard host != nil else { return "Ready to protect" }
         if !browser.blockAds { return "Off for this website" }
         if unavailable { return "Protection unavailable" }
@@ -75,9 +77,9 @@ struct BrowserProtectionView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 28) {
                     HStack(alignment: .top, spacing: 16) {
-                        Image(systemName: unavailable ? "exclamationmark.shield" : browser.blockAds ? "checkmark.shield.fill" : "shield.slash")
+                        Image(systemName: unavailable ? "exclamationmark.shield" : protected ? "checkmark.shield.fill" : "shield.slash")
                             .font(.system(size: 36, weight: .light))
-                            .foregroundStyle(unavailable ? Color.orange : browser.blockAds ? Color.green : Color.secondary)
+                            .foregroundStyle(unavailable ? Color.orange : protected ? Color.green : Color.secondary)
                             .frame(width: 52, height: 52)
                         VStack(alignment: .leading, spacing: 6) {
                             Text(title).font(.title2.weight(.bold))
@@ -85,9 +87,14 @@ struct BrowserProtectionView: View {
                                 .font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled)
                         }
                     }
+                    if !session.adBlockingEnabled {
+                        Text("Ad blocking is turned off for all tabs. Enable Block Ads & Trackers in Settings to use website protection.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
                     if host != nil {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Block ads & trackers", isOn: $browser.blockAds)
+                            Toggle("Block ads & trackers on this site", isOn: $browser.blockAds)
+                                .disabled(!session.adBlockingEnabled)
                                 .font(.body.weight(.semibold))
                             Text("Changes reload this page. Turn protection off if a website isn't working correctly.")
                                 .font(.subheadline).foregroundStyle(.secondary)
@@ -109,7 +116,7 @@ struct BrowserProtectionView: View {
                         }
                         let exceptions = session.blockingExceptions(isPrivate: browser.isPrivate)
                         if exceptions.isEmpty {
-                            Text("No exceptions. Protection is enabled by default on websites.")
+                            Text("No website exceptions. When ad blocking is on, protection applies by default.")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         } else {
                             ForEach(exceptions, id: \.self) { exception in

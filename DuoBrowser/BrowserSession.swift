@@ -13,7 +13,14 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarkFolders: [BookmarkFolder] = []
     @Published var readingList: [LibraryEntry] = []
     @Published var showingSetup = false
+    @Published var adBlockingEnabled: Bool {
+        didSet {
+            settingsStorage.set(adBlockingEnabled, forKey: "browser.adBlockingEnabled")
+            tabs.forEach { $0.setAdBlockingEnabled(adBlockingEnabled) }
+        }
+    }
     let setup: BrowserSetupModel
+    let redditLinks: RedditLinkRouting
     var favorites: [LibraryEntry] { bookmarks.filter { $0.isFavorite != false } }
     @Published var showingLibrary = false
     @Published var showRegions = false
@@ -46,6 +53,8 @@ final class BrowserSession: ObservableObject {
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
         self.settingsStorage = storage
+        self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
+        self.redditLinks = RedditLinkRouting(storage: storage)
         self.setup = BrowserSetupModel(storage: storage)
         self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
@@ -95,6 +104,8 @@ final class BrowserSession: ObservableObject {
     }
 
     private func connect(_ tab: BrowserModel) {
+        tab.redditLinks = redditLinks
+        tab.setAdBlockingEnabled(adBlockingEnabled)
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab, !tab.isPrivate else { return }

@@ -608,7 +608,9 @@ private final class NativeCheckRunner {
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
-        let session = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!, archiveStore: store, dataStore: .nonPersistent())
+        let defaults = UserDefaults(suiteName: "DuoBrowser.UpgradeChecks")!
+        defaults.removeObject(forKey: "browser.adBlockingEnabled")
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
         defer {
             session.tabs.forEach { $0.close() }
             try? FileManager.default.removeItem(at: directory)
@@ -727,6 +729,30 @@ private final class NativeCheckRunner {
             normal.blockAds = true
             try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
+            _ = try await js(normal, "document.querySelector('#kept').value='Keep blocker draft'")
+            session.adBlockingEnabled = false
+            try await wait { normal.blockingStatus == "Off in Settings" }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-off').then(()=>true).catch(()=>false)") as? Bool == true, "global switch disables blocking without reload")
+            try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep blocker draft", "global switch preserves form draft")
+            try check(defaults.object(forKey: "browser.adBlockingEnabled") as? Bool == false, "global blocking preference persists")
+            try check(normal.blockAds, "global switch preserves per-site preference")
+            normal.openReader()
+            try await wait { normal.readerArticle != nil || normal.errorMessage != nil }
+            if let article = normal.readerArticle {
+                let reader = ReaderRenderer(article: article, sourceBrowser: normal)
+                try check(!reader.browser.adBlockingEnabled, "Reader inherits global blocking preference")
+                reader.browser.close()
+            } else { try check(false, "Reader must open for global blocking check") }
+            normal.cancelReader()
+            let globallyOffTab = session.newTab(privateTab: true)
+            try await load(globallyOffTab, "global-off-private")
+            try check(globallyOffTab.blockingStatus == "Off in Settings", "new private tab honors global switch")
+            session.adBlockingEnabled = true
+            try await wait { normal.blockingStatus == "Basic protection on" && globallyOffTab.blockingStatus == "Basic protection on" }
+            try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-on').then(()=>false).catch(()=>true)") as? Bool == true, "global reenabling restores actual blocking in existing tabs")
+            session.close(globallyOffTab.id)
+            session.select(normal.id)
+            mount(normal)
             normal.navigate(to: "http://localhost:8765/upgrades")
             try await wait {
                 guard normal.webView.url?.host == "localhost", !normal.webView.isLoading else { return false }
@@ -751,6 +777,9 @@ private final class NativeCheckRunner {
             let popup = session.selected
             mount(popup)
             try await wait { popup.webView.url?.host == "localhost" && !popup.webView.isLoading }
+            try check(popup.webView.configuration.userContentController.userScripts.filter {
+                $0.source.hasPrefix("/* DuoBrowser Reddit tap */")
+            }.count == 1, "popup inherits exactly one Reddit tap authorization script")
             try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
             try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
             session.restoreBlocking(host: "localhost", isPrivate: false)
@@ -1062,7 +1091,148 @@ private final class NativeCheckRunner {
         host.present(preview, animated: false)
     }
 
+    func redditChecks() async throws {
+        let name = "DuoBrowser.RedditChecks." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        defer { defaults.removePersistentDomain(forName: name) }
+        let routing = RedditLinkRouting(storage: defaults)
+        let url = URL(string: "https://www.reddit.com/r/swift/comments/abc123/title/def456/?context=3")!
+        var opened: [URL] = []
+        var outcome: Bool?
+        var choice: RedditLinkPreference? = .apollo
+        var prompts = 0
+        var current = true
+        routing.canOpen = { _ in true }
+        routing.open = { target, completion in opened.append(target); completion(true) }
+        let choose: ([RedditLinkPreference], String, @escaping (RedditLinkPreference?) -> Void) -> Void = { choices, _, finish in
+            prompts += 1
+            precondition(choices == [.apollo, .browser])
+            finish(choice)
+        }
+        func route(privateTab: Bool = false) {
+            outcome = nil
+            routing.route(url, isPrivate: privateTab, isCurrent: { current }, choose: choose) { outcome = $0 }
+        }
+        try check(routing.preference == .chooseOnce, "fresh install asks once")
+        route()
+        try check(prompts == 1 && outcome == true && opened.count == 1, "first choice opens Apollo and cancels web request")
+        try check(RedditLinkRouting(storage: defaults).preference == .apollo, "chosen app survives relaunch")
+        route()
+        try check(prompts == 1 && opened.count == 2, "remembered app skips subsequent prompt")
+        route(privateTab: true)
+        try check(prompts == 2 && opened.count == 3, "private tab still asks before handoff")
+        routing.preference = .chooseOnce
+        choice = .browser
+        route(privateTab: true)
+        try check(outcome == false && routing.preference == .chooseOnce, "private browser choice does not persist")
+        route()
+        try check(outcome == false && routing.preference == .browser, "browser choice is remembered")
+        let promptCount = prompts
+        route()
+        try check(prompts == promptCount && outcome == false, "browser preference never launches app")
+        routing.preference = .askEveryTime
+        choice = .apollo
+        route(); route()
+        try check(prompts == promptCount + 2 && routing.preference == .askEveryTime, "ask every time stays enabled")
+        choice = nil
+        route()
+        try check(outcome == true, "cancel keeps original page")
+        routing.canOpen = { _ in false }
+        route()
+        try check(outcome == false, "missing app falls back to original request")
+        routing.canOpen = { _ in true }
+        routing.preference = .apollo
+        routing.open = { _, finish in finish(false) }
+        route()
+        try check(outcome == false, "system launch failure falls back to original request")
+        var finishOpen: (@MainActor @Sendable (Bool) -> Void)?
+        routing.open = { _, finish in finishOpen = finish }
+        route()
+        current = false
+        finishOpen?(false)
+        try check(outcome == true, "late launch failure cannot navigate a stale tab")
+        current = true
+        routing.preference = .chooseOnce
+        var finishChoice: ((RedditLinkPreference?) -> Void)?
+        routing.route(url, isPrivate: false, isCurrent: { current }, choose: { _, _, finish in finishChoice = finish }) { outcome = $0 }
+        current = false
+        finishChoice?(.apollo)
+        try check(outcome == true && routing.preference == .chooseOnce, "stale choice neither opens nor saves")
+        try check(defaults.dictionaryRepresentation().values.allSatisfy { !(String(describing: $0).contains("abc123")) }, "preferences never store destination URLs")
+
+        let model = BrowserModel(dataStore: .nonPersistent())
+        defer { model.close() }
+        model.redditLinks = routing
+        // The native route test isolates gesture authorization; the trusted listener is tested separately below and in Playwright.
+        model.testRedditTapAuthorization = { _ in true }
+        routing.preference = .apollo
+        routing.open = { target, finish in opened.append(target); finish(true) }
+        try await load(model, "reddit-routing")
+        let page = model.webView.url
+        let initialCount = opened.count
+        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
+        try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
+        let position = try await js(model, "window.scrollY") as? Double
+        _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
+        try await wait { opened.count == initialCount + 1 }
+        try check(opened.last == RedditLinks.apolloURL(url), "real WebKit link action unwraps Google and opens exact comment")
+        try check(model.webView.url == page, "successful handoff preserves source URL")
+        try check(try await js(model, "document.querySelector('#kept').value") as? String == "Keep this draft", "handoff preserves form draft")
+        let afterHandoff = try await js(model, "window.scrollY") as? Double
+        try check(abs((afterHandoff ?? -1000) - (position ?? 1000)) < 2,
+                  "handoff preserves scroll position (\(position ?? -1) → \(afterHandoff ?? -1))")
+        _ = try await js(model, "a.target='_blank';a.click();true")
+        try await wait { opened.count == initialCount + 2 }
+        try check(model.webView.url == page, "new-window handoff leaves source intact without popup")
+        routing.preference = .chooseOnce
+        _ = try await js(model, "a.target='';a.click();true")
+        try await wait { self.host.presentedViewController is UIAlertController }
+        let alert = host.presentedViewController as! UIAlertController
+        try check(alert.actions.map(\.title) == ["Apollo Reborn", "DuoBrowser", "Cancel"], "native chooser presents installed app, browser and cancel")
+        model.presentation.cancel()
+        try await wait { self.host.presentedViewController == nil }
+        try check(model.webView.url == page && routing.preference == .chooseOnce, "dismissing chooser leaves page and preference unchanged")
+        let schemes = Bundle.main.object(forInfoDictionaryKey: "LSApplicationQueriesSchemes") as? [String]
+        try check(schemes == ["apollo"], "production bundle declares only the verified app query scheme")
+        _ = try await js(model, "a.addEventListener('click',e=>e.preventDefault());a.click();true")
+        let trusted = try await model.webView.callAsyncJavaScript("return globalThis.__duoRedditTap.consume(url);",
+            arguments: ["url": "https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3"],
+            in: nil, contentWorld: BrowserModel.redditTapWorld)
+        try check(trusted as? Bool == false, "programmatic click cannot mint trusted authorization (\(String(describing: trusted)))")
+        try check(try await js(model, "typeof globalThis.__duoRedditTap") as? String == "undefined", "page world cannot access isolated click authorization")
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--reddit-preview") {
+            let defaults = UserDefaults(suiteName: "DuoBrowser.RedditPreview")!
+            defaults.removePersistentDomain(forName: "DuoBrowser.RedditPreview")
+            let routing = RedditLinkRouting(storage: defaults)
+            routing.canOpen = { _ in true }
+            routing.open = { url, completion in
+                let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("RedditPreview.txt")
+                try? url.absoluteString.write(to: file, atomically: true, encoding: .utf8)
+                completion(true)
+            }
+            let model = BrowserModel(dataStore: .nonPersistent())
+            model.redditLinks = routing
+            mount(model)
+            model.webView.loadHTMLString("""
+                <meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>body{font:24px -apple-system;margin:100px 24px;background:white;color:black}a,input{display:block;margin:32px 0;padding:16px}</style>
+                <h1>Reddit link check</h1><input placeholder="Draft to preserve" value="Keep this draft">
+                <a href="https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3">Open Reddit comment</a>
+                <p>Only Apollo availability and the OS launch are simulated. This link needs a real tap.</p>
+                """, baseURL: URL(string: "https://fixture.invalid"))
+            while !Task.isCancelled { try? await Task.sleep(for: .seconds(30)) }
+            model.close()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--reddit-checks") {
+            do { try await redditChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("RedditChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--setup-preview") {
             try? await wait { self.host.view.window != nil }
             try? setupPreview()

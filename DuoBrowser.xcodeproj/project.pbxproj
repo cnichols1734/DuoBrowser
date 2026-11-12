@@ -5,6 +5,12 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"DB5100000000000000000005" = { isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = RedditTap.js; sourceTree = "<group>"; };
+"DB5200000000000000000005" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000005"; };
+"DB5100000000000000000004" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedditLinkRouting.swift; sourceTree = "<group>"; };
+"DB5200000000000000000004" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000004"; };
+"DB5100000000000000000003" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedditLinks.swift; sourceTree = "<group>"; };
+"DB5200000000000000000003" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000003"; };
 "DB5100000000000000000000" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserImport.swift; sourceTree = "<group>"; };
 "DB5200000000000000000000" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000000"; };
 "DB5100000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserSetupModel.swift; sourceTree = "<group>"; };
@@ -179,6 +185,9 @@
 				"DB5100000000000000000000",
 "DB5100000000000000000001",
 "DB5100000000000000000002",
+"DB5100000000000000000005",
+"DB5100000000000000000004",
+"DB5100000000000000000003",
 "80E262EA78178C607CB98FD6",
 				"B7F643DAAB884B9ACBDD9281",
 				"D4047B891DE2FE8B64BC4CE2",
@@ -237,6 +246,8 @@
 				"DB5200000000000000000000",
 "DB5200000000000000000001",
 "DB5200000000000000000002",
+"DB5200000000000000000004",
+"DB5200000000000000000003",
 "06B4A2B885D6259AD4F62EDE",
 				"633D407FA64D304DEE8BABB4",
 				"8706D5B2472C6173E7D3BED0",
@@ -271,6 +282,7 @@
 "B81E92E7689834E497F90266",
 "44E52D88A0625FA4F17E812A",
 "45FCBC8F3FD19E2AE17C5405",
+"DB5200000000000000000005",
 			);
 			"runOnlyForDeploymentPostprocessing" = 0;
 		};
