@@ -85,6 +85,7 @@ class Handler(BaseHTTPRequestHandler):
             with DOWNLOAD_GATE_LOCK:
                 attempt = gate.begin() if gate else None
                 attempt_number = gate.attempts if gate else 0
+            final_attempt = 1 if query.get('gate-attempts', ['2'])[0] == '1' else 2
             try:
                 for offset in range(0, len(payload), 8192):
                     self.wfile.write(payload[offset:offset+8192]); self.wfile.flush()
@@ -96,7 +97,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not gate_token: time.sleep(0.15)
             except (BrokenPipeError, ConnectionResetError): pass
             finally:
-                if gate and (attempt_number == 2 or attempt is None or not attempt.is_set()):
+                if gate and (attempt_number >= final_attempt or attempt is None or not attempt.is_set()):
                     with DOWNLOAD_GATE_LOCK:
                         if DOWNLOAD_GATES.get(gate_token) is gate: DOWNLOAD_GATES.pop(gate_token)
             return
