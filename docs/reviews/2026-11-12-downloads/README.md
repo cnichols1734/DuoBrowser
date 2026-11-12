@@ -36,3 +36,10 @@ Manual testing also found two policy issues: displayable server attachments prev
 ## Remaining device checks
 
 Physical touch/energy/endurance, iOS suspension/background behavior, signed-device Files providers, full spoken VoiceOver and arbitrary authenticated sites remain unverified. There is no claim of universal resume support, Safari parity or App Store approval.
+
+
+## Final source review follow-up
+
+Combined-stack review found that GET retry attached its replacement download without the originating tab ID. Closing that tab could therefore stop its web view; pending retries had the same gap. The fix retains the pending web view and owner until WebKit returns a download, carries ownership into the active transfer, and clears retry context when the source closes. Resume-token transfers remain owned by the dedicated session web view. Generation checks still discard canceled/removed/private-session callbacks before consuming pending state.
+
+Four new native assertions exercise authenticated GET restart followed by immediate source closure and closure after progress begins. Both explicitly expire Undo so its eight-second retention cannot hide lifecycle failure. The suite now requires 41 download checks; the combined validation run owns execution. Portable checks and strict lint were rerun for this follow-up.

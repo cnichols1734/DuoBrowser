@@ -1621,6 +1621,34 @@ final class NativeCheckRunner {
         try check(!manager.items.contains(where: { $0.id == stale.id }), "removed retry cannot reappear after its asynchronous callback")
         try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
 
+        func retryThenCloseSource(afterProgress: Bool) async throws {
+            let source = session.newTab()
+            try await load(source, "")
+            let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)")!)
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                source.webView.startDownload(using: request) { download in
+                    manager.add(download, owner: source.id, source: source.webView); continuation.resume()
+                }
+            }
+            let restarted = manager.items[0]
+            try await wait { restarted.received > 0 && restarted.isDownloading }
+            manager.cancel(restarted)
+            // Exercise the authenticated GET restart path deterministically, not an optional resume token.
+            restarted.resumeData = nil
+            manager.retry(restarted)
+            try check(manager.hasWork(for: source.id), "GET retry owns its source while WebKit creates the transfer (afterProgress=\(afterProgress))")
+            if afterProgress { try await wait { restarted.received > 0 && restarted.isDownloading } }
+            session.close(source.id)
+            session.releaseClosedTab() // Expire Undo now: this must work without its eight-second retention.
+            mount(session.selected)
+            try await wait(timeout: 30) { !restarted.isDownloading }
+            let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
+            try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
+                      "authenticated GET retry completes after source closure (afterProgress=\(afterProgress))")
+        }
+        try await retryThenCloseSource(afterProgress: false)
+        try await retryThenCloseSource(afterProgress: true)
+
         await start("download-slow?last-normal=1")
         let lastNormal = manager.items[0]
         try await wait { lastNormal.received > 0 }

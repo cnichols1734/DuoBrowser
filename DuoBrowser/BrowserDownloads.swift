@@ -18,6 +18,7 @@ final class BrowserDownload: ObservableObject, Identifiable {
     var resumeData: Data?
     weak var retrySource: WKWebView?
     var retryPage: URL?
+    var retryOwner: UUID?
     var hasRetryContext: Bool { retrySource != nil && retrySource?.url == retryPage }
     var generation = UUID()
     init(_ record: DownloadRecord) {
@@ -48,7 +49,11 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         var observations: [NSKeyValueObservation] = []
     }
     private var active: [ObjectIdentifier: Transfer] = [:]
-    private var pendingRetries = Set<UUID>()
+    private struct PendingRetry {
+        let source: WKWebView
+        let owner: UUID?
+    }
+    private var pendingRetries: [UUID: PendingRetry] = [:]
     private var invalidated = false
 
     init(isPrivate: Bool, dataStore: WKWebsiteDataStore, directory: URL,
@@ -72,14 +77,19 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     static func safeFilename(_ input: String) -> String { DownloadRecord.safeFilename(input) }
     var activeCount: Int { active.count + pendingRetries.count }
     var hasWork: Bool { activeCount > 0 }
-    func hasWork(for owner: UUID) -> Bool { active.values.contains { $0.owner == owner } }
+    func hasWork(for owner: UUID) -> Bool {
+        active.values.contains { $0.owner == owner } || pendingRetries.values.contains { $0.owner == owner }
+    }
     var completedCount: Int { items.filter { $0.state == .completed }.count }
     func sourceClosed(_ owner: UUID) {
-        for transfer in active.values where transfer.owner == owner {
-            transfer.item.retrySource = nil
-            transfer.source?.navigationDelegate = closedPagePolicy
-            transfer.source?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
-        }
+        // Also clear stopped jobs whose weak source may still be retained by another transfer.
+        for item in items where item.retryOwner == owner { item.retrySource = nil }
+        for transfer in active.values where transfer.owner == owner { closeSource(transfer.source) }
+        for retry in pendingRetries.values where retry.owner == owner { closeSource(retry.source) }
+    }
+    private func closeSource(_ source: WKWebView?) {
+        source?.navigationDelegate = closedPagePolicy
+        source?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
     }
 
 
@@ -102,11 +112,14 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         persist()
     }
 
-    private func attach(_ download: WKDownload, to item: BrowserDownload, owner: UUID?, source: WKWebView? = nil) {
+    private func attach(_ download: WKDownload, to item: BrowserDownload, owner: UUID?, source: WKWebView? = nil,
+                        captureRetryContext: Bool = true) {
         item.isDownloading = true; item.canRetry = false; item.message = nil
         if let request = download.originalRequest, request.httpMethod == nil || request.httpMethod == "GET",
            WebAddress.valid(request.url) != nil, request.httpBody == nil, request.httpBodyStream == nil { item.request = request }
-        if let source = source ?? download.webView, source !== retryView { item.retrySource = source; item.retryPage = source.url }
+        if captureRetryContext, let source = source ?? download.webView, source !== retryView {
+            item.retrySource = source; item.retryPage = source.url; item.retryOwner = owner
+        }
         let key = ObjectIdentifier(download), generation = item.generation
         active[key] = Transfer(item: item, download: download, source: source ?? download.webView, owner: owner)
         download.delegate = self
@@ -200,7 +213,7 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
     @discardableResult
     func cancel(_ item: BrowserDownload) -> Bool {
-        item.generation = UUID(); pendingRetries.remove(item.id)
+        item.generation = UUID(); pendingRetries.removeValue(forKey: item.id)
         if let entry = active.first(where: { $0.value.item.id == item.id }) {
             active.removeValue(forKey: entry.key)
             entry.value.download.delegate = nil
@@ -226,29 +239,34 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
             return
         }
         let view: WKWebView
+        let owner: UUID?
         if item.resumeData != nil {
+            // Native resume belongs to the manager's dedicated web view, not the former tab.
+            owner = nil
             let config = WKWebViewConfiguration(); config.websiteDataStore = dataStore
             if retryView == nil { retryView = WKWebView(frame: .zero, configuration: config) }
             guard let retryView else { return }; view = retryView
-        } else if item.hasRetryContext, let source = item.retrySource { view = source }
+        } else if item.hasRetryContext, let source = item.retrySource { view = source; owner = item.retryOwner }
         else {
             item.canRetry = false; item.message = "Open the original website to download this file again."; return
         }
         let token = UUID(); item.generation = token
         let resume = item.resumeData; item.resumeData = nil
         item.isDownloading = true; item.canRetry = false; item.message = nil
-        pendingRetries.insert(item.id); objectWillChange.send()
+        // Keep the original view alive and owned while WebKit asynchronously creates the download.
+        pendingRetries[item.id] = PendingRetry(source: view, owner: owner); objectWillChange.send()
         let completion: @MainActor @Sendable (WKDownload) -> Void = { [weak self, weak item] download in
             guard let self, let item, !self.invalidated, item.generation == token,
-                  self.pendingRetries.remove(item.id) != nil, self.items.contains(where: { $0 === item }) else {
+                  self.items.contains(where: { $0 === item }),
+                  let pending = self.pendingRetries.removeValue(forKey: item.id) else {
                 download.cancel { _ in }; return
             }
-            self.attach(download, to: item, owner: nil)
+            self.attach(download, to: item, owner: pending.owner, source: pending.source, captureRetryContext: false)
         }
         if let resume { view.resumeDownload(fromResumeData: resume, completionHandler: completion) }
         else if let request = item.request {
             guard discardFile(item) else {
-                pendingRetries.remove(item.id); item.isDownloading = false; item.state = .failed
+                pendingRetries.removeValue(forKey: item.id); item.isDownloading = false; item.state = .failed
                 objectWillChange.send(); persist(); return
             }
             view.startDownload(using: request, completionHandler: completion)
@@ -257,7 +275,7 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     }
 
     func remove(_ item: BrowserDownload) {
-        if item.isDownloading || pendingRetries.contains(item.id) { cancel(item) }
+        if item.isDownloading || pendingRetries[item.id] != nil { cancel(item) }
         let removed = discardFile(item)
         guard removed else { persist(); return }
         item.generation = UUID()
