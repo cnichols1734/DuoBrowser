@@ -543,6 +543,8 @@ private final class NativeCheckRunner {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
     func maintainedFilterChecks(_ browser: BrowserModel) async throws {
+        try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
+                  "bundled maintained sources compile on the deployed iOS runtime without fallback")
         try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
         let source = """
         [Adblock Plus 2.0]
