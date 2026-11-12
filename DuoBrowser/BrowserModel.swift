@@ -626,7 +626,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                 for _ in 0..<4 {
                     let blockingGeneration = self.blockingGeneration
                     let rules = await self.currentBlockingRules()
-                    guard !self.closed, self.loadedWebView === webView, self.policyGeneration == generation else {
+                    guard !self.closed, !self.isRetainedForUndo, self.loadedWebView === webView, self.policyGeneration == generation else {
                         decisionHandler(.cancel, preferences); return
                     }
                     guard self.blockingGeneration == blockingGeneration else { continue }
