@@ -2021,7 +2021,12 @@ final class NativeCheckRunner {
         try check(privateTab.preferenceForURL?(address).originalLayout == true && normal.preferenceForURL?(address).fullWidth == false, "private site changes stay in the private preference store")
         mount(normal)
         normal.navigate(to: "http://localhost:8765/upgrades")
-        try await wait { !normal.isLoading && normal.loadedWebView?.url?.host == "localhost" }
+        // WebKit exposes the requested URL before policy/site preferences finish; the
+        // published loading flag can still describe the previous document at that point.
+        try await wait(timeout: 60) {
+            guard !normal.webView.isLoading else { return false }
+            return (try? await self.js(normal, "location.hostname === 'localhost' && document.readyState === 'complete'")) as? Bool == true
+        }
         try check(!scope.matches(normal) && !scope.set(true, for: \.originalPageLayout, on: normal) && !normal.originalPageLayout,
                   "navigation to another host invalidates the open settings scope without changing that host")
         try await load(normal, "upgrades")
