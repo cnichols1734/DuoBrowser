@@ -1623,6 +1623,13 @@ final class NativeCheckRunner {
             await target.httpCookieStore.setCookie(cookie)
         }
         session.addBookmark()
+        let savedArticle = OfflineArticle(title: "Preserved article", address: "https://example.com/saved",
+            blocks: [.init(kind: "paragraph", text: "Synthetic offline reading", jpeg: nil)])
+        try session.savePage(LibraryEntry(address: savedArticle.address, title: savedArticle.title), reading: true, offline: savedArticle)
+        let offlineID = session.readingList[0].offlineID!
+        _ = try await js(normal, "const a=document.createElement('a');a.href='/download';a.download='';document.body.append(a);a.click();true")
+        try await wait(timeout: 30) { session.normalDownloads.completedCount == 1 }
+        let downloadedFile = session.normalDownloads.items[0].file!
         let bookmarks = session.bookmarks
         try check(!session.history.isEmpty && !bookmarks.isEmpty, "synthetic history and bookmark exist before clear")
         let recoveryTab = session.newTab()
@@ -1674,6 +1681,8 @@ final class NativeCheckRunner {
         try check((await store.dataRecords(ofTypes: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
+        try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")
+        try check(try String(contentsOf: downloadedFile, encoding: .utf8) == "Synthetic browser download.\n" && session.normalDownloads.completedCount == 1, "clearing history cookies and cache preserves completed download and file contents")
         let fake = SettingsDataFixture()
         let controlled = WebsiteDataController(store: fake)
         let loading = Task { await controlled.reload() }
