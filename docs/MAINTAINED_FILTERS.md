@@ -16,11 +16,15 @@ UTF-8/header validation and minimum converted-list sizes. All three candidate
 lists must compile and the source snapshot must save atomically before any
 active list is replaced. Failed updates keep working rules. The bundled lists
 work offline; a clearly described 19-service fallback remains available if the
-maintained sources cannot compile. Compilation caches are content-addressed;
+maintained sources cannot compile. The small baseline also lets browsing start
+while full protection prepares on first use; the UI reports preparation and
+automatically promotes existing tabs without reloading. Compilation caches are content-addressed;
 obsolete app-owned compiled lists are removed after a successful installation.
 A bounded source-fingerprint and converter-version manifest reuses complete
 compiled variants on later launches. Missing or corrupt cache entries rebuild;
 initial conversion/compilation remains required once per uncached filter set.
+Automatic refresh rechecks normal foreground eligibility after preparation and
+before networking. Stale preparation callbacks cannot override newer protection settings.
 
 Updates apply to new requests in existing tabs, previews and Reader without
 reloading the page. Per-site switches now also preserve drafts. Visual hiding
