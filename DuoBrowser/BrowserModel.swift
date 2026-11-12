@@ -355,6 +355,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         expectsDownloadPolicyInterruption = false
         presentation.cancel()
         documentGeneration = UUID()
+        downloads.sourceDocumentChanged(id)
         cancelReader()
         dialogCount = 0
         errorMessage = nil
@@ -651,11 +652,11 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        downloads.add(download, owner: id, source: webView)
+        downloads.add(download, owner: id, source: webView, browser: self)
         if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        downloads.add(download, owner: id, source: webView)
+        downloads.add(download, owner: id, source: webView, browser: self)
         if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
 

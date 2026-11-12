@@ -1553,7 +1553,7 @@ final class NativeCheckRunner {
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/" + path)!)
             await withCheckedContinuation { continuation in
                 retryTab.webView.startDownload(using: request) { download in
-                    manager.add(download, owner: retryTab.id); continuation.resume()
+                    manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
                 }
             }
         }
@@ -1595,7 +1595,7 @@ final class NativeCheckRunner {
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             retryTab.webView.startDownload(using: URLRequest(url: URL(string: "https://127.0.0.1:8443/download")!)) { download in
-                manager.add(download, owner: retryTab.id); continuation.resume()
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
             }
         }
         let untrusted = manager.items[0]
@@ -1606,7 +1606,7 @@ final class NativeCheckRunner {
         post.httpMethod = "POST"; post.httpBody = Data("synthetic=download".utf8)
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             retryTab.webView.startDownload(using: post) { download in
-                manager.add(download, owner: retryTab.id); continuation.resume()
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
             }
         }
         let postResult = manager.items[0]
@@ -1627,7 +1627,7 @@ final class NativeCheckRunner {
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)")!)
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 source.webView.startDownload(using: request) { download in
-                    manager.add(download, owner: source.id, source: source.webView); continuation.resume()
+                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
                 }
             }
             let restarted = manager.items[0]
@@ -1648,6 +1648,37 @@ final class NativeCheckRunner {
         }
         try await retryThenCloseSource(afterProgress: false)
         try await retryThenCloseSource(afterProgress: true)
+
+        func rejectReplacedDocumentRetry(reload: Bool) async throws {
+            let source = session.newTab()
+            try await load(source, "")
+            let originalURL = source.webView.url, originalDocument = source.documentGeneration
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                source.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?stale-document=\(reload)")!)) { download in
+                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
+                }
+            }
+            let staleDocument = manager.items[0]
+            try await wait { staleDocument.received > 0 && staleDocument.isDownloading }
+            manager.cancel(staleDocument)
+            if reload {
+                source.webView.reload()
+                try await wait { source.documentGeneration != originalDocument && !source.webView.isLoading }
+            } else {
+                try await load(source, "next")
+                try await load(source, "")
+            }
+            // Force the no-token GET path even if WebKit supplied an optional cancellation token.
+            staleDocument.resumeData = nil; staleDocument.canRetry = true
+            let activeBefore = manager.activeCount
+            manager.retry(staleDocument)
+            try check(source.webView.url == originalURL && source.documentGeneration != originalDocument &&
+                      !staleDocument.isDownloading && !staleDocument.canRetry && manager.activeCount == activeBefore,
+                      "GET retry rejects a replacement document at the same URL (reload=\(reload))")
+            manager.remove(staleDocument); session.close(source.id); session.releaseClosedTab(); mount(session.selected)
+        }
+        try await rejectReplacedDocumentRetry(reload: true)
+        try await rejectReplacedDocumentRetry(reload: false)
 
         await start("download-slow?last-normal=1")
         let lastNormal = manager.items[0]

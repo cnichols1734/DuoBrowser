@@ -143,7 +143,9 @@ struct DownloadStore {
 
     func remove(_ id: UUID) throws {
         let folder = directory.appendingPathComponent(id.uuidString)
-        if FileManager.default.fileExists(atPath: folder.path) { try removeFile(folder) }
+        // fileExists follows symlinks; a dangling UUID link still needs to be unlinked.
+        let isLink = (try? FileManager.default.destinationOfSymbolicLink(atPath: folder.path)) != nil
+        if isLink || FileManager.default.fileExists(atPath: folder.path) { try removeFile(folder) }
     }
     func erase() throws {
         if FileManager.default.fileExists(atPath: directory.path) { try removeFile(directory) }

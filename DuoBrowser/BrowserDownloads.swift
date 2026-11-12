@@ -19,7 +19,12 @@ final class BrowserDownload: ObservableObject, Identifiable {
     weak var retrySource: WKWebView?
     var retryPage: URL?
     var retryOwner: UUID?
-    var hasRetryContext: Bool { retrySource != nil && retrySource?.url == retryPage }
+    weak var retryBrowser: BrowserModel?
+    var retryDocument: UUID?
+    var hasRetryContext: Bool {
+        guard let browser = retryBrowser, let source = retrySource, let retryDocument else { return false }
+        return browser.documentGeneration == retryDocument && browser.loadedWebView === source && source.url == retryPage
+    }
     var generation = UUID()
     init(_ record: DownloadRecord) {
         id = record.id; date = record.date; name = record.name; state = record.state; received = record.bytes
@@ -87,13 +92,22 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         for transfer in active.values where transfer.owner == owner { closeSource(transfer.source) }
         for retry in pendingRetries.values where retry.owner == owner { closeSource(retry.source) }
     }
+    func sourceDocumentChanged(_ owner: UUID) {
+        for item in items where item.retryOwner == owner {
+            item.retrySource = nil; item.retryBrowser = nil; item.retryDocument = nil
+            if !item.isDownloading {
+                item.canRetry = item.resumeData != nil
+                if !item.canRetry && item.request != nil { item.message = "Open the original website to download this file again." }
+            }
+        }
+    }
     private func closeSource(_ source: WKWebView?) {
         source?.navigationDelegate = closedPagePolicy
         source?.setAllMediaPlaybackSuspended(true, completionHandler: nil)
     }
 
 
-    func add(_ download: WKDownload, owner: UUID? = nil, source: WKWebView? = nil) {
+    func add(_ download: WKDownload, owner: UUID? = nil, source: WKWebView? = nil, browser: BrowserModel? = nil) {
         guard !invalidated, activeCount < 10, items.count < DownloadStore.itemLimit else {
             download.cancel { _ in }
             errorMessage = "Remove a download or wait for a transfer to finish before starting another."
@@ -108,17 +122,18 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         item.message = nil
         items.insert(item, at: 0)
         hasUnseenDownloads = true
-        attach(download, to: item, owner: owner, source: source)
+        attach(download, to: item, owner: owner, source: source, browser: browser)
         persist()
     }
 
     private func attach(_ download: WKDownload, to item: BrowserDownload, owner: UUID?, source: WKWebView? = nil,
-                        captureRetryContext: Bool = true) {
+                        captureRetryContext: Bool = true, browser: BrowserModel? = nil) {
         item.isDownloading = true; item.canRetry = false; item.message = nil
         if let request = download.originalRequest, request.httpMethod == nil || request.httpMethod == "GET",
            WebAddress.valid(request.url) != nil, request.httpBody == nil, request.httpBodyStream == nil { item.request = request }
         if captureRetryContext, let source = source ?? download.webView, source !== retryView {
             item.retrySource = source; item.retryPage = source.url; item.retryOwner = owner
+            item.retryBrowser = browser; item.retryDocument = browser?.documentGeneration
         }
         let key = ObjectIdentifier(download), generation = item.generation
         active[key] = Transfer(item: item, download: download, source: source ?? download.webView, owner: owner)

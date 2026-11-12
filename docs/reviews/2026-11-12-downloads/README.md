@@ -43,3 +43,11 @@ Physical touch/energy/endurance, iOS suspension/background behavior, signed-devi
 Combined-stack review found that GET retry attached its replacement download without the originating tab ID. Closing that tab could therefore stop its web view; pending retries had the same gap. The fix retains the pending web view and owner until WebKit returns a download, carries ownership into the active transfer, and clears retry context when the source closes. Resume-token transfers remain owned by the dedicated session web view. Generation checks still discard canceled/removed/private-session callbacks before consuming pending state.
 
 Four new native assertions exercise authenticated GET restart followed by immediate source closure and closure after progress begins. Both explicitly expire Undo so its eight-second retention cannot hide lifecycle failure. The suite now requires 41 download checks; the combined validation run owns execution. Portable checks and strict lint were rerun for this follow-up.
+
+
+## Copilot review follow-up
+
+- GET restart now binds the weak originating BrowserModel and its document generation as well as the web view and URL. A new provisional document proactively clears old GET eligibility; reload and away/back cannot recover it merely by returning to the same address. Opaque WebKit resume remains available independently when supplied. Two native regressions perform a real reload and away/back navigation, force the no-token GET path and verify that it starts no work. The combined suite now requires 43 Downloads assertions; execution belongs to final combined validation.
+- Removal checks the UUID directory entry itself for a symbolic link before the existence check that follows links. Four added portable checks cover a dangling link's quota block, actual unlink/recovery removal, restored admission and preserving a live link's external target. All 32 download-store assertions pass, alongside strict lint and source parsing.
+
+Reviewed threads: [document-generation binding](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087538), [dangling-link removal](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087587).
