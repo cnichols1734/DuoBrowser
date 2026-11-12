@@ -543,10 +543,12 @@ private final class NativeCheckRunner {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
     func maintainedFilterChecks(_ browser: BrowserModel) async throws {
+        try check(await FilterCatalog.shared.awaitMaintainedForTesting(), "maintained protection becomes ready within the bounded preparation window")
         try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
                   "bundled maintained sources compile on the deployed iOS runtime without fallback")
         try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
         for (name, passed) in await FilterCatalog.shared.compiledCacheChecksForTesting() { try check(passed, name) }
+        try await initialProtectionChecks()
         let source = """
         [Adblock Plus 2.0]
         ||localhost^$third-party,xmlhttprequest
@@ -590,6 +592,66 @@ private final class NativeCheckRunner {
         try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
                   "other resource filter does not widen to fetch")
         ContentBlocking.useTestRules(nil)
+        try await staleBlockingChecks(browser)
+    }
+
+    func initialProtectionChecks() async throws {
+        let catalog = FilterCatalog.startupTestCatalog()
+        var refreshAllowed = true, networkAttempts = 0
+        catalog.testDownloadSources = { networkAttempts += 1; throw CocoaError(.fileReadUnknown) }
+        let pendingRefresh = Task { await catalog.update(isAllowed: { refreshAllowed }) }
+        let browser = BrowserModel(dataStore: .nonPersistent())
+        browser.testBlockingRules = { await catalog.rules() }
+        defer { catalog.testHoldInitialPreparation = false; browser.close() }
+        try await load(browser, "upgrades")
+        try await wait { catalog.updating }
+        try check(catalog.preparing && catalog.usingFallback && browser.webView.url?.path == "/upgrades",
+                  "first navigation proceeds under bundled protection while maintained preparation is held")
+        _ = try await js(browser, "document.querySelector('#kept').value='Keep initial draft'")
+        let page = browser.webView.url
+        refreshAllowed = false
+        catalog.testHoldInitialPreparation = false
+        try check(await catalog.awaitMaintainedForTesting(), "background preparation promotes baseline to maintained protection")
+        await pendingRefresh.value
+        try check(networkAttempts == 0 && !catalog.updating, "refresh permission is rechecked after preparation before any source network request")
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        let draft = try await js(browser, "document.querySelector('#kept').value") as? String
+        try check(browser.webView.url == page && draft == "Keep initial draft", "automatic maintained promotion preserves the current page and draft")
+    }
+
+    func staleBlockingChecks(_ browser: BrowserModel) async throws {
+        let store = WKContentRuleListStore.default()!
+        let old = try await store.compileContentRuleList(forIdentifier: "DuoBrowser.Synthetic.StaleOld",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":"/stale-old"},"action":{"type":"block"}}]"#)!
+        let current = try await store.compileContentRuleList(forIdentifier: "DuoBrowser.Synthetic.StaleCurrent",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":"/stale-current"},"action":{"type":"block"}}]"#)!
+        var delayed: CheckedContinuation<[WKContentRuleList], Never>?
+        var calls = 0
+        browser.testBlockingRules = {
+            calls += 1
+            if calls == 1 { return await withCheckedContinuation { delayed = $0 } }
+            return [current]
+        }
+        defer { delayed?.resume(returning: []); browser.testBlockingRules = nil; browser.setAdBlockingEnabled(true) }
+        browser.setAdBlockingEnabled(true)
+        try await wait { delayed != nil }
+        browser.setAdBlockingEnabled(true)
+        try await wait {
+            (try? await self.asyncJS(browser, "return await fetch('/stale-current').then(()=>false).catch(()=>true)")) as? Bool == true
+        }
+        delayed?.resume(returning: [old]); delayed = nil
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        try check(try await asyncJS(browser, "return await fetch('/stale-current').then(()=>false).catch(()=>true) && await fetch('/stale-old').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "late older filter completion cannot replace the newest protection")
+        calls = 0
+        browser.setAdBlockingEnabled(true)
+        try await wait { delayed != nil }
+        browser.setAdBlockingEnabled(false)
+        delayed?.resume(returning: [old]); delayed = nil
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        let disabledAllows = try await asyncJS(browser, "return await fetch('/stale-old').then(()=>true).catch(()=>false)") as? Bool
+        try check(browser.blockingStatus == "Off in Settings" && disabledAllows == true,
+                  "late filter completion cannot reenable protection after explicit disable")
     }
 
     func readerBlockingChecks(_ session: BrowserSession) async throws {
@@ -887,7 +949,7 @@ private final class NativeCheckRunner {
             try check(session.tabs.allSatisfy { $0.workspaceID == Workspace.defaultID }, "workspace removal keeps and relocates tabs")
             mount(normal)
             try await load(normal, "upgrades")
-            try check(normal.blockingStatus == "Protection on", "bundled content rules compile and attach before navigation")
+            try check(["Preparing full protection", "Protection on"].contains(normal.blockingStatus), "bundled initial protection attaches before navigation")
             try await maintainedFilterChecks(normal)
             // Substitute only the ad host with a loopback host; all rule flags and production installation remain identical.
             let rulesURL = Bundle.main.url(forResource: "BlockingRules", withExtension: "json")!

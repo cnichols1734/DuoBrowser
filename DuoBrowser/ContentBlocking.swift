@@ -99,6 +99,14 @@ final class FilterCatalog: ObservableObject {
     private let cacheURL: URL
     private var active: [String: [WKContentRuleList]] = [:]
     private var loading: Task<Void, Never>?
+    private var baselineLoading: Task<Void, Never>?
+    #if DEBUG
+    var testHoldInitialPreparation = false
+    var testDownloadSources: (@MainActor () async throws -> Snapshot)?
+    static func startupTestCatalog() -> FilterCatalog {
+        let catalog = FilterCatalog(); catalog.testHoldInitialPreparation = true; return catalog
+    }
+    #endif
     private var attemptedAt: Date?
     private var snapshot: Snapshot?
     private init() {
@@ -111,15 +119,40 @@ final class FilterCatalog: ObservableObject {
     nonisolated static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
     func rules() async -> [WKContentRuleList] {
+        if loading == nil {
+            preparing = true
+            loading = Task { await self.loadInitial() }
+        }
         if active.isEmpty {
-            if loading == nil { loading = Task { await self.loadInitial() } }
-            await loading?.value
+            if baselineLoading == nil { baselineLoading = Task { await self.prepareBaseline() } }
+            // First navigation waits only for the small bundled baseline. Maintained conversion
+            // continues independently, then updates existing pages without reloading them.
+            await baselineLoading?.value
         }
         return active[hideCookieNotices ? "withCookies" : "standard"] ?? []
     }
+    private func prepareBaseline() async {
+        guard let url = Bundle.main.url(forResource: "BlockingRules", withExtension: "json"),
+              let json = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let store = WKContentRuleListStore.default()!
+        let identifier = "DuoBrowser.Fallback.v1"
+        let cached = try? await store.contentRuleList(forIdentifier: identifier)
+        let rule: WKContentRuleList?
+        if let cached { rule = cached }
+        else { rule = try? await store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: json) }
+        guard active.isEmpty, let rule else { return }
+        active = ["standard": [rule], "withCookies": [rule]]
+        usingFallback = true
+        message = preparing ? "Basic protection is active while full protection is prepared." : "Basic fallback is active. Update filters to restore full protection."
+        NotificationCenter.default.post(name: ContentBlocking.changed, object: nil)
+    }
     private func loadInitial() async {
-        preparing = true
-        defer { preparing = false }
+        #if DEBUG
+        while testHoldInitialPreparation {
+            if Task.isCancelled { return }
+            try? await Task.sleep(for: .milliseconds(25))
+        }
+        #endif
         if let size = try? cacheURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 16_000_000,
            let data = try? Data(contentsOf: cacheURL), let saved = try? JSONDecoder().decode(Snapshot.self, from: data),
            Self.valid(saved), await install(saved) { return }
@@ -133,14 +166,12 @@ final class FilterCatalog: ObservableObject {
             .flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(BundleDate.self, from: $0) }?.date ?? Date(timeIntervalSince1970: 0)
         let bundled = Snapshot(date: date, sources: sources)
         if Self.valid(bundled), await install(bundled) { return }
-        // Preserve a bounded last-resort baseline if the maintained bundle cannot compile.
-        if let url = Bundle.main.url(forResource: "BlockingRules", withExtension: "json"),
-           let json = try? String(contentsOf: url, encoding: .utf8),
-           let rule = try? await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "DuoBrowser.Fallback.v1", encodedContentRuleList: json) {
-            active = ["standard": [rule], "withCookies": [rule]]
-            usingFallback = true
-            message = "Basic fallback is active. Update filters to restore full protection."
-        } else { message = "Protection couldn’t start. Try updating filters." }
+        await baselineLoading?.value
+        if active.isEmpty { await prepareBaseline() }
+        preparing = false
+        message = active.isEmpty ? "Protection couldn’t start. Try updating filters."
+            : "Basic fallback is active. Update filters to restore full protection."
+        NotificationCenter.default.post(name: ContentBlocking.changed, object: nil)
     }
     private struct BundleDate: Decodable { let date: Date }
     nonisolated static func valid(_ snapshot: Snapshot) -> Bool {
@@ -149,6 +180,14 @@ final class FilterCatalog: ObservableObject {
         snapshot.date.timeIntervalSince1970.isFinite && snapshot.date <= Date().addingTimeInterval(86_400)
     }
     #if DEBUG
+    func awaitMaintainedForTesting() async -> Bool {
+        _ = await rules()
+        let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        while preparing, clock.now < deadline, !Task.isCancelled {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return !preparing && !usingFallback && !active.isEmpty
+    }
     func rejectInvalidUpdateForTesting() async -> Bool {
         let before = active.values.flatMap { $0.map(\.identifier) }.sorted()
         let invalid = Snapshot(date: Date(), sources: Self.definitions.map { Source(id: $0.id, text: "<html>Unavailable</html>") })
@@ -293,7 +332,7 @@ final class FilterCatalog: ObservableObject {
                 var values = URLResourceValues(); values.isExcludedFromBackup = true
                 try? directory.setResourceValues(values)
             }
-            usingFallback = false
+            usingFallback = false; preparing = false
             active = compiled.lists; snapshot = next; updatedAt = next.date
             ruleCount = compiled.manifest.variants["withCookies"]!.count
             skippedCount = compiled.manifest.variants["withCookies"]!.skipped
@@ -317,20 +356,31 @@ final class FilterCatalog: ObservableObject {
             try? await store.removeContentRuleList(forIdentifier: identifier)
         }
     }
-    func refreshIfNeeded() async {
-        guard automaticUpdates else { return }
+    func refreshIfNeeded(isAllowed: @MainActor () -> Bool) async {
+        guard automaticUpdates, isAllowed() else { return }
         _ = await rules()
-        guard updatedAt.map({ Date().timeIntervalSince($0) >= 4 * 86_400 }) ?? true,
+        await loading?.value
+        guard automaticUpdates, isAllowed(), updatedAt.map({ Date().timeIntervalSince($0) >= 4 * 86_400 }) ?? true,
               attemptedAt.map({ Date().timeIntervalSince($0) >= 3_600 }) ?? true else { return }
-        await update()
+        await update(isAllowed: { self.automaticUpdates && isAllowed() })
     }
-    func update() async {
-        guard !updating else { return }
-        updating = true; attemptedAt = Date(); message = nil
+    func update(isAllowed: @MainActor () -> Bool = { true }) async {
+        guard !updating, isAllowed() else { return }
+        updating = true; message = nil
         defer { updating = false }
         _ = await rules()
+        await loading?.value
+        // Preparation can outlive the normal foreground session that requested an automatic refresh.
+        guard isAllowed() else { return }
+        attemptedAt = Date()
         do {
-            let next = try await Task.detached(priority: .utility) { try await Self.downloadSources() }.value
+            let next: Snapshot
+            #if DEBUG
+            if let testDownloadSources { next = try await testDownloadSources() }
+            else { next = try await Task.detached(priority: .utility) { try await Self.downloadSources() }.value }
+            #else
+            next = try await Task.detached(priority: .utility) { try await Self.downloadSources() }.value
+            #endif
             guard Self.valid(next), await install(next, persist: true) else { throw FilterListConverter.Failure.invalidList }
             message = "Filters are up to date. Reload a page when you’re ready to apply visual changes."
         } catch {
