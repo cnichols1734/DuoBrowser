@@ -1496,11 +1496,23 @@ final class NativeCheckRunner {
             defer { preview.willMove(toParent: nil); preview.view.removeFromSuperview(); preview.removeFromParent() }
             for step in BrowserSetupModel.Step.allCases {
                 model.step = step
-                try await wait { measured["step.\(step.rawValue)"] != nil && measured["heading"] != nil && measured["primary"] != nil }
+                try await wait {
+                    measured["step.\(step.rawValue)"] != nil && measured["window.step.\(step.rawValue)"] != nil &&
+                    ["heading", "primary", "canvas", "navigation.progress", "navigation.skip"].allSatisfy { measured["window." + $0] != nil }
+                }
                 let width = preview.view.bounds.width
-                let centered = ["heading", "primary", "navigation.progress"].allSatisfy { abs((measured[$0]?.midX ?? -1) - width / 2) < 1 }
-                try check(abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered,
-                          "setup step \(step.rawValue) centers heading, action and progress on full bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right); width=\(width) frames=\(measured)")
+                let windowBounds = preview.view.convert(preview.view.bounds, to: preview.view.window)
+                let centered = ["heading", "primary", "navigation.progress"].allSatisfy { key in
+                    abs((measured[key]?.midX ?? -1) - (measured["canvas"]?.midX ?? -2)) < 1 &&
+                    abs((measured["window." + key]?.midX ?? -1) - windowBounds.midX) < 1
+                }
+                let correct = abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered &&
+                    abs(measured["canvas"]?.minX ?? -1) < 1 &&
+                    abs((measured["window.canvas"]?.midX ?? -1) - windowBounds.midX) < 1 &&
+                    (measured["window.primary"]?.maxY ?? .infinity) <= windowBounds.maxY - preview.view.safeAreaInsets.bottom + 1 &&
+                    (measured["window.navigation.skip"]?.minY ?? -.infinity) >= windowBounds.minY + preview.view.safeAreaInsets.top - 1
+                try check(correct, "setup step \(step.rawValue) centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right)" +
+                          (correct ? "" : "; window=\(windowBounds) frames=\(measured)"))
             }
         }
         var largeFrames: [String: CGRect] = [:]
@@ -1509,8 +1521,9 @@ final class NativeCheckRunner {
         large.additionalSafeAreaInsets = UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92)
         host.addChild(large); large.view.frame = host.view.bounds; host.view.addSubview(large.view); large.didMove(toParent: host)
         defer { large.willMove(toParent: nil); large.view.removeFromSuperview(); large.removeFromParent() }
-        try await wait { largeFrames["primary"] != nil && largeFrames["heading"] != nil }
-        try check(["heading", "primary", "navigation.progress"].allSatisfy { abs((largeFrames[$0]?.midX ?? -1) - large.view.bounds.midX) < 1 }, "accessibility setup keeps scrolling content and progress centered on the full display")
+        try await wait { largeFrames["window.primary"] != nil && largeFrames["window.heading"] != nil && largeFrames["window.navigation.progress"] != nil }
+        let largeBounds = large.view.convert(large.view.bounds, to: large.view.window)
+        try check(["heading", "primary", "navigation.progress"].allSatisfy { abs((largeFrames["window." + $0]?.midX ?? -1) - largeBounds.midX) < 1 }, "accessibility setup keeps UIKit-rendered scrolling content and progress centered on the full display")
     }
 
     func setupPreview() throws {

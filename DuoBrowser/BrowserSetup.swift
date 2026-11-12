@@ -13,45 +13,42 @@ struct BrowserSetup: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AccessibilityFocusState private var headingFocused: Bool
     #if DEBUG
+    @State private var windowFrames: [String: CGRect] = [:]
     var layoutDidChange: (([String: CGRect]) -> Void)?
     #endif
 
     var body: some View {
-        NavigationStack {
-            GeometryReader { geometry in
-                ScrollView {
-                    VStack(spacing: compactHeading ? 20 : 32) {
-                        heading
-                        content
-                        if dynamicTypeSize.isAccessibilitySize { actions }
-                    }
-                    .frame(maxWidth: 440)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: .infinity)
-                    .frame(minHeight: geometry.size.height)
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: compactHeading ? 20 : 32) {
+                    heading
+                    content
+                    if dynamicTypeSize.isAccessibilitySize { actions }
                 }
-                .scrollBounceBehavior(.basedOnSize)
-                .setupFrame("step.\(model.step.rawValue)")
-                .id(model.step)
+                .frame(maxWidth: 440)
+                .padding(.horizontal, 32)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity)
+                .frame(minHeight: geometry.size.height)
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if !dynamicTypeSize.isAccessibilitySize {
-                    actions.padding(.top, 16).padding(.bottom, 12)
-                        .frame(maxWidth: .infinity)
-                        .background(Color(uiColor: .systemBackground))
-                }
-            }
-            .background(Color(uiColor: .systemBackground))
-            .toolbar(.hidden, for: .navigationBar)
-            .safeAreaInset(edge: .top, spacing: 0) { navigation.padding(.top, navigationClearance) }
-            .ignoresSafeArea(.container, edges: .horizontal)
-            .onChange(of: model.step) { _, _ in
-                showingTransferDetails = false
-                headingFocused = true
-            }
-            .interactiveDismissDisabled()
+            .scrollBounceBehavior(.basedOnSize)
+            .setupFrame("step.\(model.step.rawValue)", windowFrame: recordWindowFrame)
+            .id(model.step)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !dynamicTypeSize.isAccessibilitySize {
+                actions.padding(.top, 16).padding(.bottom, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(uiColor: .systemBackground))
+            }
+        }
+        .background(Color(uiColor: .systemBackground))
+        .safeAreaInset(edge: .top, spacing: 0) { navigation.padding(.top, navigationClearance) }
+        .onChange(of: model.step) { _, _ in
+            showingTransferDetails = false
+            headingFocused = true
+        }
+        .interactiveDismissDisabled()
         .background {
             SetupSceneReader { currentScene, regions in
                 scene = currentScene
@@ -59,18 +56,27 @@ struct BrowserSetup: View {
             }
             .allowsHitTesting(false).accessibilityHidden(true)
         }
-        .setupFrame("canvas")
+        .setupFrame("canvas", windowFrame: recordWindowFrame)
+        .coordinateSpace(name: "setup.canvas")
         // Expand the geometry reader too, so camera regions outside the old safe
         // rectangle are visible to it instead of shifting the entire setup column.
         .ignoresSafeArea(.container, edges: .horizontal)
-        .coordinateSpace(name: "setup.canvas")
         .onPreferenceChange(SetupFramesKey.self) { value in
             frames = value
             updateNavigationClearance(value)
             #if DEBUG
-            layoutDidChange?(value)
+            layoutDidChange?(value.merging(windowFrames, uniquingKeysWith: { _, latest in latest }))
             #endif
         }
+    }
+
+    private func recordWindowFrame(_ name: String, _ frame: CGRect) {
+        #if DEBUG
+        let key = "window." + name
+        guard windowFrames[key] != frame else { return }
+        windowFrames[key] = frame
+        layoutDidChange?(frames.merging(windowFrames, uniquingKeysWith: { _, latest in latest }))
+        #endif
     }
 
     private func updateNavigationClearance(_ measured: [String: CGRect]) {
@@ -86,7 +92,7 @@ struct BrowserSetup: View {
             Text("\(model.step.rawValue + 1) of \(BrowserSetupModel.Step.allCases.count)")
                 .font(.subheadline).foregroundStyle(.secondary)
                 .accessibilityLabel("Step \(model.step.rawValue + 1) of \(BrowserSetupModel.Step.allCases.count)")
-                .setupFrame("navigation.progress")
+                .setupFrame("navigation.progress", windowFrame: recordWindowFrame)
             HStack {
                 Button { model.cancel(); advance(back: true) } label: {
                     Image(systemName: "chevron.left").font(.body.weight(.medium))
@@ -95,11 +101,11 @@ struct BrowserSetup: View {
                 .accessibilityLabel("Back").accessibilityIdentifier("setup.back")
                 .opacity(model.step == .welcome ? 0 : 1)
                 .disabled(model.step == .welcome).accessibilityHidden(model.step == .welcome)
-                .setupFrame(model.step == .welcome ? "hidden.back" : "navigation.back")
+                .setupFrame(model.step == .welcome ? "hidden.back" : "navigation.back", windowFrame: recordWindowFrame)
                 Spacer()
                 Button("Skip") { finish() }.frame(minWidth: 44, minHeight: 44)
                     .accessibilityLabel("Skip Setup").accessibilityIdentifier("setup.skip")
-                    .setupFrame("navigation.skip")
+                    .setupFrame("navigation.skip", windowFrame: recordWindowFrame)
             }
         }
         .buttonStyle(.plain)
@@ -127,7 +133,7 @@ struct BrowserSetup: View {
                 .foregroundStyle(.primary)
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityFocused($headingFocused)
-                .setupFrame("heading")
+                .setupFrame("heading", windowFrame: recordWindowFrame)
             Text(subtitle)
                 .font(.body).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -286,7 +292,7 @@ struct BrowserSetup: View {
             .buttonBorderShape(.roundedRectangle(radius: 16))
             .disabled(primaryDisabled)
             .accessibilityIdentifier("setup.continue")
-            .setupFrame("primary")
+            .setupFrame("primary", windowFrame: recordWindowFrame)
             if model.step == .transfer && model.transferEnabled && model.state != .saved && !session.privateMode && !model.busy {
                 Button(model.state == .review ? "Don’t Import" : "Not Now") { model.cancel(); advance() }
                     .frame(minHeight: 44)
@@ -408,9 +414,40 @@ private struct SetupFramesKey: PreferenceKey {
 }
 
 private extension View {
-    func setupFrame(_ name: String) -> some View {
-        background(GeometryReader { geometry in
-            Color.clear.preference(key: SetupFramesKey.self, value: [name: geometry.frame(in: .named("setup.canvas"))])
-        })
+    func setupFrame(_ name: String, windowFrame: @escaping (String, CGRect) -> Void) -> some View {
+        background {
+            GeometryReader { geometry in
+                Color.clear.preference(key: SetupFramesKey.self, value: [name: geometry.frame(in: .named("setup.canvas"))])
+            }
+            #if DEBUG
+            SetupWindowFrameProbe(name: name, update: windowFrame).allowsHitTesting(false).accessibilityHidden(true)
+            #endif
+        }
     }
 }
+
+#if DEBUG
+private struct SetupWindowFrameProbe: UIViewRepresentable {
+    let name: String
+    let update: (String, CGRect) -> Void
+    func makeUIView(context: Context) -> ProbeView { ProbeView() }
+    func updateUIView(_ view: ProbeView, context: Context) {
+        view.name = name; view.update = update; view.setNeedsLayout()
+    }
+    final class ProbeView: UIView {
+        var name = "" { didSet { if name != oldValue { last = nil } } }
+        var update: ((String, CGRect) -> Void)?
+        private var last: CGRect?
+        override func didMoveToWindow() { super.didMoveToWindow(); last = nil; setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let window else { return }
+            let frame = convert(bounds, to: window)
+            guard frame != last else { return }
+            last = frame
+            let key = name
+            DispatchQueue.main.async { [weak self] in self?.update?(key, frame) }
+        }
+    }
+}
+#endif
