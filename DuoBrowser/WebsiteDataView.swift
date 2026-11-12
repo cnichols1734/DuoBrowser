@@ -33,7 +33,7 @@ struct ClearBrowsingDataView: View {
         .interactiveDismissDisabled(model.isRemoving)
         .confirmationDialog("Clear the selected normal browsing data?", isPresented: $confirm) {
             Button("Clear Selected Data", role: .destructive) { clearConfirmed() }
-        } message: { Text("This cannot be undone. Cookies and site data may sign you out of websites.") }
+        } message: { Text(selection.siteData ? "This cannot be undone. Cookies and site data may sign you out of websites." : "This cannot be undone.") }
     }
 
     private func clearConfirmed() {
@@ -42,7 +42,7 @@ struct ClearBrowsingDataView: View {
         Task { @MainActor in
             guard !session.privateMode, !model.isBusy else { return }
             if requested.history && !session.clearHistoryFromSettings() {
-                result = "Browsing history couldn’t be saved as cleared. Try again."
+                result = "Browsing history couldn’t be cleared. Try again."
                 return
             }
             if await model.clear(requested) { result = "Selected data cleared." }

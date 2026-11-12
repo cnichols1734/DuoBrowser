@@ -21,7 +21,7 @@
 
 - Added grouped native Settings with search-engine choice (Google default), the existing online-suggestions preference, appearance, status bar, setup and privacy. Page options prioritizes page actions.
 - Added confirmed selective normal history/cookies/cache removal and per-WebKit-record website removal; private data remains separate and saved pages/downloaded files stay intact.
-- Debug/Release builds, 208 portable assertions, strict lint and repository checks passed; final Debug rebuild pending after small refinements. Native/UI verification pending the coordinated simulator slot. [Behavior, tests and integration notes](reviews/2026-11-12-browser-settings/README.md).
+- Integrated Debug/Release builds, 293 portable assertions, strict lint and repository checks passed. Native/UI verification pending the coordinated simulator slot. [Behavior, tests and integration notes](reviews/2026-11-12-browser-settings/README.md).
 
 ## Onboarding redesign — November 11, 2026
 
