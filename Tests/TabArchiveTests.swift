@@ -43,6 +43,22 @@ struct TabArchiveTests {
         expect(cleaned.scrollY == nil && cleaned.title.count == 512, "Closed metadata is bounded")
         let closedMany = (0..<30).map { _ in ClosedTabRecord(address: closed.address, title: "Page", scrollY: nil, workspaceID: UUID(), pinned: false) }
         expect(ClosedTabRecord.validated(closedMany).count == 20, "Recovery history is bounded to 20")
+        let prefix = "https://example.com/#"
+        var boundary = closed; boundary.address = prefix + String(repeating: "x", count: 8192 - prefix.count)
+        expect(ClosedTabRecord.validated([boundary]).count == 1, "Reopenable 8192-character URL remains recoverable")
+        boundary.address += "x"
+        expect(ClosedTabRecord.validated([boundary]).isEmpty, "Overlong URL never offers unusable recovery")
+        boundary.address = prefix + String(repeating: "é", count: 1500)
+        expect(ClosedTabRecord.validated([boundary]).isEmpty, "URL limit uses the same encoded address as reopening")
+        expect(closed.noticeRemaining(at: closed.closedAt, persistent: false) == 8, "Ordinary notice starts with eight seconds")
+        expect(recovered.noticeRemaining(at: closed.closedAt.addingTimeInterval(4), persistent: false) == 4,
+               "Recreated notice keeps only time remaining from original close")
+        expect(closed.noticeRemaining(at: closed.closedAt.addingTimeInterval(60), persistent: false) == 0,
+               "Returning from Private cannot revive an expired notice")
+        expect(closed.noticeRemaining(at: closed.closedAt.addingTimeInterval(60), persistent: true) == nil,
+               "VoiceOver and accessibility text retain explicit dismissal")
+        expect(closed.noticeRemaining(at: closed.closedAt.addingTimeInterval(-60), persistent: false) == 8,
+               "Clock rollback never schedules an unbounded notice")
         print("Passed \(checks) tab-archive checks.")
     }
 }

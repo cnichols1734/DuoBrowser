@@ -2,6 +2,8 @@
 
 ## Tab recovery and navigation — November 12, 2026
 
+- Copilot follow-up: Undo measures its rendered height and spacing for WebKit's obscured-content reservation, including accessibility text and camera-aware control lifting. Ordinary notice expiry uses the original close timestamp; VoiceOver/accessibility sizes still keep explicit dismissal. Closed records and close capture share reopening's 8192-character URL contract. Eight portable URL/time regressions pass; three new native measured-height/footer/removal checks await the coordinated runtime run.
+
 - Follow-up review: clearing recovery now reports durable-write failure and retains rows to retry. Retained Undo pages reject navigation and native permission prompts; no presenter is available for JavaScript dialogs. Added native failure/retry and retained-page assertions; focused runtime rerun is pending coordinated simulator access.
 
 - Added normal-tab Undo and a 20-entry persisted Recently Closed list, preserving title, address, best-effort reading position, workspace and pin. Private tabs are excluded. History deletion also clears corresponding recovery records. Reopening loads the saved address, not form input or a full navigation session.

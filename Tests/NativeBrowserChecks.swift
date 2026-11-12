@@ -759,6 +759,44 @@ private final class NativeCheckRunner {
                   "Private Reader preserves the ephemeral source profile")
         privateReader.close(); privateSource.close()
     }
+    func closedNoticeGeometryChecks(_ session: BrowserSession) async throws {
+        let browser = session.selected
+        _ = try await js(browser, "const footer=document.createElement('footer');footer.id='notice-footer';footer.style.cssText='position:fixed;bottom:0;height:30px';footer.textContent='Synthetic fixed action';document.body.append(footer)")
+        host.view.subviews.forEach { $0.removeFromSuperview() }
+        let viewport = ViewportView(browser: browser)
+        viewport.frame = host.view.bounds
+        host.view.addSubview(viewport)
+        viewport.layoutIfNeeded()
+        let baseline = browser.webView.obscuredContentInsets.bottom
+        var measured: CGFloat = 0
+        let notice = UIHostingController(rootView: VStack {
+            Spacer()
+            ClosedTabNotice(session: session) { height in
+                measured = height
+                viewport.additionalBottomObstruction = height > 0 ? height + 8 : 0
+                viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            }
+        }.environment(\.dynamicTypeSize, .accessibility5))
+        host.addChild(notice); notice.view.frame = host.view.bounds
+        notice.view.backgroundColor = .clear
+        host.view.addSubview(notice.view); notice.didMove(toParent: host)
+        defer {
+            notice.willMove(toParent: nil); notice.view.removeFromSuperview(); notice.removeFromParent()
+            viewport.removeFromSuperview(); mount(browser)
+        }
+        try await wait { measured > 52 }
+        try check(abs(browser.webView.obscuredContentInsets.bottom - baseline - measured - 8) < 1,
+                  "measured accessibility Undo notice and spacing reserve additional WebKit content space")
+        try await wait {
+            guard let footer = try? await self.js(browser, "document.getElementById('notice-footer').getBoundingClientRect().bottom") as? Double else { return false }
+            return footer <= browser.webView.bounds.height - browser.webView.obscuredContentInsets.bottom + 1
+        }
+        try check(true, "fixed page footer stays above the expanded Undo notice")
+        session.closedTabNotice = nil
+        try await wait { measured == 0 && abs(browser.webView.obscuredContentInsets.bottom - baseline) < 1 }
+        try check(true, "dismissing Undo removes its measured reservation")
+        _ = try await js(browser, "document.getElementById('notice-footer').remove()")
+    }
     func tabRecoveryChecks() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabRecovery-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
@@ -788,6 +826,7 @@ private final class NativeCheckRunner {
         try check(record.scrollY != nil, "closed tab captures reading position")
         try check(store.load()?.recentlyClosed?.first?.id == record.id, "normal closed tab is durably saved")
         try check(session.closedTabNotice == record.id, "normal close offers immediate Undo")
+        try await closedNoticeGeometryChecks(session)
         try check(session.reopenClosedTab(record.id), "Undo reopens a normal tab")
         try check(!session.reopenClosedTab(record.id), "stale Undo cannot reopen a second copy")
         try check(session.recentlyClosed.isEmpty && session.closedTabNotice == nil, "reopening consumes recovery entry and notice")
