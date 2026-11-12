@@ -99,7 +99,7 @@ else:
 PY
 }
 run_receipt DownloadChecks.txt 43 --download-checks
-run_receipt SettingsChecks.txt 40 --settings-checks
+run_receipt SettingsChecks.txt 48 --settings-checks
 run_receipt SetupChecks.txt 23 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks
