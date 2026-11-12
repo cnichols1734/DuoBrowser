@@ -60,6 +60,8 @@ struct LibraryEntry: Codable, Identifiable {
     var date = Date()
     var folderID: UUID? = nil
     var isFavorite: Bool? = nil
+    var isRead: Bool? = nil
+    var offlineID: UUID? = nil
 }
 
 struct BrowserArchive: Codable {

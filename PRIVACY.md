@@ -20,6 +20,8 @@ Websites you visit receive ordinary browsing requests and may collect informatio
 
 Normal start-page shortcut icons are requested from a site's public home page and declared icon/CDN hosts, without the saved page's path, query or fragment, and without shared cookies or credentials. Icon requests reveal ordinary network information such as IP address to those hosts. The bounded image cache is memory-only. Private start pages do not load these shortcuts.
 
+Offline articles are saved only when you turn on **Save Article Offline** and choose Save. They contain readable text and optional bounded copies of same-origin HTTPS images, fetched without cookies or credentials. Reading a saved article makes no website requests. Saved pages—including explicit saves from private tabs—remain in Library until deleted; remove an offline copy from the Reading List item menu or delete the entry. They may be included in operating-system backups.
+
 ## Permissions and files
 
 Websites may request camera, microphone or location access through system prompts. You control permissions in iOS Settings and website prompts. Files/photos selected for website upload go to the destination you choose. Downloads are temporarily held for export to Files; exported files are managed by you. DuoBrowser does not sell personal information or use it for targeted advertising.

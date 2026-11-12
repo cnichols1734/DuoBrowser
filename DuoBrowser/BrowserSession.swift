@@ -39,6 +39,7 @@ final class BrowserSession: ObservableObject {
     private let privacyCurtain = PrivacyCurtain()
     private let settingsStorage: UserDefaults
     private let normalStore: WKWebsiteDataStore
+    let offlineStore: OfflineArticleStore
     private let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
@@ -56,7 +57,7 @@ final class BrowserSession: ObservableObject {
     var workspaceName: String { workspaces.first { $0.id == workspaceID }?.name ?? "Personal" }
     var selected: BrowserModel { tabs.first { $0.id == selectedID } ?? tabs[0] }
 
-    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
+    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
         self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
         self.redditLinks = RedditLinkRouting(storage: storage)
@@ -64,6 +65,7 @@ final class BrowserSession: ObservableObject {
         self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
         self.archiveStore = archiveStore
+        self.offlineStore = offlineStore ?? OfflineArticleStore(directory: archiveStore.directory.appendingPathComponent("OfflineArticles", isDirectory: true))
         BrowserDownloads.cleanPreviousSession()
         let saved = archiveStore.load()
         let legacy = storage.data(forKey: "browser.tabs.v1").flatMap {
@@ -543,9 +545,24 @@ final class BrowserSession: ObservableObject {
         bookmarks.removeAll { ids.contains($0.id) }
         saveNow(replaceBackup: true)
     }
-    func deleteReadingList(ids: Set<UUID>) {
+    @discardableResult
+    func deleteReadingList(ids: Set<UUID>) -> Bool {
+        let old = readingList
         readingList.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else { readingList = old; return false }
+        var failed = Set<UUID>()
+        for entry in old where ids.contains(entry.id) {
+            if let id = entry.offlineID {
+                do { try offlineStore.remove(id) } catch { failed.insert(entry.id) }
+            }
+        }
+        if !failed.isEmpty {
+            readingList = old.filter { !ids.contains($0.id) || failed.contains($0.id) }
+            _ = saveNow(replaceBackup: true)
+            selected.errorMessage = SavedPageError.removalFailed.localizedDescription
+            return false
+        }
+        return true
     }
 
     func deleteBookmarkFolder(_ id: UUID) {

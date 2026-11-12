@@ -12,6 +12,11 @@
 - Replaces the 19-service baseline with bundled EasyList/EasyPrivacy supported network and cosmetic rules, plus opt-in Cookie List filtering. Adds transactional automatic/manual updates, per-site draft-preserving switches, and offline filter credits. Filter data uses upstream CC licenses; independent app/converter code remains MIT. See [design, licensing and limits](MAINTAINED_FILTERS.md).
 - Debug simulator build, 221 portable assertions, 186 web assertions and strict SwiftLint passed. Full bundled source lists compiled through a separate native macOS WebKit probe. An initial web timing failure under heavy concurrent compiler load passed on rerun with no JavaScript changes.
 - iOS native integration and visual/pose evidence are pending in this draft; no real-site effectiveness percentage or hardware claim is made.
+## Saved pages and offline reading — November 12, 2026
+
+- Added native Save Page with editable titles, Favorites/folder/Read Later destinations and explicit private-save disclosure. Library now supports folder creation/rename/move, bookmark editing, read/unread filtering and offline copy management. Reader appearance, spacing and text size persist.
+- Offline saves reuse sanitized Reader extraction, capture bounded anonymous same-origin HTTPS raster images, and render from local snapshots with network-denying CSP in a separate ephemeral WebKit store. Storage is capped at 50 MB; unsupported images, videos and interactive content are not promised offline. Failed writes roll back saves; failed copy deletion reports an error and retains a retryable item.
+- Debug/Release builds, 210 portable assertions, 186 web assertions, strict SwiftLint, repository checks and full native suite passed before the final disk-deletion follow-up (three added native assertions await integration). Real Save/Library/folder/offline interactions, fold poses, rotation, dark appearance, maximum text size and Reduce Motion were exercised. Final accessibility metadata-stacking correction compiled in Release; a fresh integration screenshot, full spoken VoiceOver, pinch/live occlusion, physical-device and real HTTPS-image capture remain open. [Detailed evidence and precise follow-up status](reviews/2026-11-12-saved-pages/README.md).
 
 ## Onboarding redesign — November 11, 2026
 

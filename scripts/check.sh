@@ -16,6 +16,8 @@ swiftc -warnings-as-errors DuoBrowser/RedditLinks.swift Tests/RedditLinksTests.s
 work/checks/reddit
 swiftc -warnings-as-errors DuoBrowser/FilterListConverter.swift Tests/FilterListConverterTests.swift -o work/checks/filters
 work/checks/filters
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/SavedPages.swift Tests/SavedPagesTests.swift -o work/checks/saved-pages
+work/checks/saved-pages
 swiftc -frontend -parse DuoBrowser/*.swift Tests/NativeBrowserChecks.swift
 for source in DuoBrowser/*.js Tests/*.cjs; do node --check "$source"; done
 python3 scripts/repository-check.py
