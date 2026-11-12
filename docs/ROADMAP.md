@@ -1,5 +1,12 @@
 # Build plan
 
+## Onboarding redesign — November 11, 2026
+
+- PR #17 review follow-up: retain the model’s status message during transfer review so a failed save displays its recovery instructions. Added a regression assertion for failed durable writes; the normal review notice remains concise. Removed optional category counts after review found that received bookmark totals could misrepresent the selected Favorites category; the saved summary reports actual results.
+- Rebuilt the four-step setup presentation with system typography, plain surfaces, concise copy, aligned Back/Skip navigation and full-width primary actions. The welcome expansion symbol points horizontally. Transfer review has compact category toggles; extra details are disclosed on demand, and unavailable capabilities do not show unusable switches.
+- Kept the existing transfer/privacy/persistence model. Maximum accessibility sizes remove decorative images and put actions in the scrollable content. Completed first-run, synthetic import, reentry and skip interactions on the iOS 27.1 Duo simulator, with closed/open/partial poses, rotation, dark appearance and maximum text size.
+- Debug/Release builds, 192 portable assertions, 186 web assertions, SwiftLint, repository checks and the combined native suite passed. A simulator Reduce Motion pass covered forward navigation, Back and Skip; the original setting was restored. Full spoken VoiceOver, live occlusion, hardware and actual Safari transfer remain unverified. [Screenshots and evidence](reviews/2026-11-11-onboarding/README.md).
+
 ## Reddit app links and ad-blocking controls — November 11, 2026
 
 - Added native Apollo Reborn handoff for trusted Reddit content-link taps and supported Google wrappers, a remembered first choice, Ask Every Time, browser fallback, private-tab confirmation and Settings controls. A fixed isolated-world click gate prevents scripted clicks from launching apps; URLs are not persisted or logged. Artemis was researched but is not exposed until its deep-link contract and actual post/comment behavior can be verified.
