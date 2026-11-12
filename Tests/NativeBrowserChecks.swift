@@ -1478,6 +1478,11 @@ final class NativeCheckRunner {
         let expanded = CGRect(x: 180, y: 90, width: 286, height: 40)
         let stacked = SetupLayout.clearance(below: [expanded, camera], controls: controls)
         try check(controls.allSatisfy { frame in [camera, expanded].allSatisfy { !frame.offsetBy(dx: 0, dy: stacked).intersects($0) } }, "setup clearance handles multiple measured obstructions without moving the horizontal center")
+        let staggered = [CGRect(x: 100, y: 0, width: 20, height: 10), CGRect(x: 0, y: 80, width: 20, height: 10)]
+        let overlapping = [CGRect(x: 100, y: 20, width: 20, height: 100), CGRect(x: 0, y: 80, width: 20, height: 20)]
+        let staggeredClearance = SetupLayout.clearance(below: overlapping, controls: staggered)
+        try check(staggered.allSatisfy { frame in overlapping.allSatisfy { !frame.offsetBy(dx: 0, dy: staggeredClearance).intersects($0) } },
+                  "clearing a lower control cannot move a higher control into a previously skipped taller region")
         for safeInsets in [UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92), UIEdgeInsets(top: 12, left: 92, bottom: 18, right: 0)] {
             var measured: [String: CGRect] = [:]
             let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { measured = $0 }))

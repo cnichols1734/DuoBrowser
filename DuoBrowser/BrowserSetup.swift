@@ -376,10 +376,8 @@ private struct SetupSceneReader: UIViewRepresentable {
         override func layoutSubviews() {
             super.layoutSubviews()
             let scene = window?.windowScene
-            let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map { region in
-                region.frame.inset(by: UIEdgeInsets(top: -region.margins.top, left: -region.margins.left,
-                                                   bottom: -region.margins.bottom, right: -region.margins.right))
-            }
+            // UIKit's frame already includes the interactive-content margins.
+            let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
             guard scene !== lastScene || regions != lastRegions else { return }
             lastScene = scene; lastRegions = regions
             DispatchQueue.main.async { [weak self] in self?.update?(scene, regions) }
@@ -391,7 +389,9 @@ enum SetupLayout {
     static func clearance(below regions: [CGRect], controls: [CGRect]) -> CGFloat {
         guard let top = controls.map(\.minY).min() else { return 0 }
         var clearance: CGFloat = 0
-        for region in regions.filter({ !$0.isNull && !$0.isInfinite && !$0.isEmpty }).sorted(by: { $0.minY < $1.minY }) {
+        // Clearing a later bottom edge also clears every previously examined region,
+        // including when individual controls have different vertical positions.
+        for region in regions.filter({ !$0.isNull && !$0.isInfinite && !$0.isEmpty }).sorted(by: { $0.maxY < $1.maxY }) {
             if controls.contains(where: { $0.offsetBy(dx: 0, dy: clearance).intersects(region) }) {
                 clearance = max(clearance, region.maxY + 8 - top)
             }
