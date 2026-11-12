@@ -39,6 +39,28 @@ import Foundation
             existingFolders: all.folders, existingHistory: all.history, existingReadingList: all.readingList)
         check(repeated.totalAdded == 0 && repeated.duplicates == 4, "repeated import deduplicates every category")
         check(repeated.folders.count == 2, "repeated import reuses folders")
+        var siblings = BrowserImportBatch()
+        for source in ["first", "second"] {
+            try siblings.addBookmark(.init(identifier: source, parent: nil, title: "Same name", address: nil, isFolder: true))
+            try siblings.addBookmark(.init(identifier: source + "-child", parent: source, title: "Nested", address: nil, isFolder: true))
+            try siblings.addBookmark(.init(identifier: source + "-page", parent: source + "-child", title: source,
+                address: "https://example.com/shared", isFolder: false))
+        }
+        func siblingPlan(bookmarks: [LibraryEntry] = [], folders: [BookmarkFolder] = []) throws -> BrowserImportPlan {
+            try siblings.plan(choices: .init(), favoriteFolder: "first", existingBookmarks: bookmarks,
+                existingFolders: folders, existingHistory: [], existingReadingList: [])
+        }
+        let distinct = try siblingPlan()
+        check(distinct.folders.count == 4 && distinct.bookmarks.count == 2, "same-named siblings keep both subtrees and matching URLs")
+        check(Set(distinct.bookmarks.compactMap(\.folderID)).count == 2, "distinct source folders never share a destination")
+        check(distinct.bookmarks.filter { $0.isFavorite == true }.count == 1, "favorites do not leak to same-named sibling")
+        let distinctRepeated = try siblingPlan(bookmarks: distinct.bookmarks, folders: distinct.folders)
+        check(distinctRepeated.folders.count == 4 && distinctRepeated.totalAdded == 0 && distinctRepeated.duplicates == 2,
+            "repeat import matches same-named siblings one-to-one")
+        let existingFolder = BookmarkFolder(title: "Same name")
+        let mixed = try siblingPlan(folders: [existingFolder])
+        check(mixed.folders.count == 4 && mixed.folders.filter { $0.id == existingFolder.id }.count == 1,
+            "an existing folder is claimed by only one incoming sibling")
         try batch.addPage(address: "javascript:alert(1)", title: "Bad", date: Date(), isHistory: true)
         try batch.addPage(address: "https://user:password@example.com", title: "Credentials", date: Date(), isHistory: false)
         try batch.addPage(address: "https://example.com/future", title: "Future", date: Date().addingTimeInterval(172_800), isHistory: true)

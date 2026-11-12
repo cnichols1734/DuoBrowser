@@ -98,9 +98,8 @@ struct BrowserImportBatch {
         var bookmarkIndex = Dictionary(existingBookmarks.enumerated().map {
             (BookmarkKey(address: $0.element.address, folder: $0.element.folderID), $0.offset)
         }, uniquingKeysWith: { first, _ in first })
-        var folderIndex = Dictionary(existingFolders.map {
-            (FolderKey(title: $0.title, parent: $0.parentID), $0)
-        }, uniquingKeysWith: { first, _ in first })
+        let folderIndex = Dictionary(grouping: existingFolders) { FolderKey(title: $0.title, parent: $0.parentID) }
+        var claimedFolders = Set<UUID>()
         for id in bookmarkOrder {
             guard let item = bookmarks[id] else { continue }
             let path = (paths[id] ?? []) + (item.isFolder ? [id] : [])
@@ -111,8 +110,12 @@ struct BrowserImportBatch {
                 if let mapped = folderMap[sourceID] { parentID = mapped; continue }
                 let title = bookmarks[sourceID]?.title ?? ""
                 let key = FolderKey(title: title, parent: parentID)
-                let folder = folderIndex[key] ?? BookmarkFolder(title: title, parentID: parentID)
-                if folderIndex[key] == nil { plan.folders.append(folder); folderIndex[key] = folder }
+                // Each source folder owns one destination, even when sibling names match.
+                // Only pre-existing folders are candidates for repeat-import matching.
+                let existing = folderIndex[key]?.first { !claimedFolders.contains($0.id) }
+                let folder = existing ?? BookmarkFolder(title: title, parentID: parentID)
+                if existing == nil { plan.folders.append(folder) }
+                claimedFolders.insert(folder.id)
                 folderMap[sourceID] = folder.id
                 parentID = folder.id
             }

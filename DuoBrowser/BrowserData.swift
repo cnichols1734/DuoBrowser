@@ -132,6 +132,15 @@ final class BrowserArchiveStore {
     }
     private var primary: URL { directory.appendingPathComponent("session.json") }
     private var backup: URL { directory.appendingPathComponent("session.backup.json") }
+    private var writeOptions: Data.WritingOptions {
+        #if os(iOS)
+        // Apply protection to the atomic write itself. Nothing may throw after
+        // replacing the primary, or callers could report a committed save as failed.
+        return [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        #else
+        return .atomic
+        #endif
+    }
     private func decode(_ url: URL) -> BrowserArchive? {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
               (values.fileSize ?? Int.max) <= LibraryLimits.archiveBytes,
@@ -149,22 +158,14 @@ final class BrowserArchiveStore {
         let data = try JSONEncoder().encode(valid)
         guard data.count <= LibraryLimits.archiveBytes else { throw CocoaError(.fileWriteOutOfSpace) }
         if let old = decode(primary) {
-            try JSONEncoder().encode(old).write(to: backup, options: .atomic)
+            try JSONEncoder().encode(old).write(to: backup, options: writeOptions)
         }
-        try data.write(to: primary, options: .atomic)
-        #if os(iOS)
-        for file in [primary, backup] where manager.fileExists(atPath: file.path) {
-            try manager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: file.path)
-        }
-        #endif
+        try data.write(to: primary, options: writeOptions)
     }
     /// Deletion writes both generations so recovery cannot resurrect deleted history.
     func replace(_ archive: BrowserArchive) throws {
         try write(archive)
-        try Data(contentsOf: primary).write(to: backup, options: .atomic)
-        #if os(iOS)
-        try manager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: backup.path)
-        #endif
+        try Data(contentsOf: primary).write(to: backup, options: writeOptions)
     }
 }
 

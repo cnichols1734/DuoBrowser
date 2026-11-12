@@ -976,6 +976,15 @@ private final class NativeCheckRunner {
         model.save(into: session)
         try check(model.state == .saved && session.bookmarks.count == 1 && session.readingList.count == 1, "confirmed selection commits supported data")
         try check(store.load()?.readingList?.count == 1, "confirmed transfer survives archive reload")
+        #if !targetEnvironment(simulator)
+        // The simulator omits NSFileProtectionKey; verify the class on a device.
+        guard session.saveNow() else { throw BrowserImportError.saveFailed }
+        for name in ["session.json", "session.backup.json"] {
+            let attributes = try FileManager.default.attributesOfItem(atPath: directory.appendingPathComponent(name).path)
+            try check(attributes[.protectionKey] as? String == FileProtectionType.completeUntilFirstUserAuthentication.rawValue,
+                "atomic archive write applies protection to \(name): \(String(describing: attributes[.protectionKey]))")
+        }
+        #endif
         model.save(into: session)
         try check(session.bookmarks.count == 1, "double save cannot duplicate data")
         model.finish()
