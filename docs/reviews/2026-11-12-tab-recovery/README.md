@@ -23,3 +23,19 @@ Physical touch, full spoken VoiceOver, battery/endurance, and hardware folding r
 ## Follow-up review
 
 Clear Recently Closed now checks the durable replacement result, preserves rows for retry after a failed write, and displays a failure alert. Pages that requested camera/microphone/location permission use URL recovery immediately, avoiding retention during an unresolved system permission prompt. A retained Undo page now rejects new navigation and permission prompts; detached pages already have no native presenter for JavaScript dialogs. Additional native assertions cover the missing presenter, canceled confirm dialog/navigation, storage failure and retry. Debug build, portable checks, SwiftLint and repository checks passed for this follow-up; focused native revalidation is pending the coordinated simulator slot.
+
+## Copilot follow-up — November 12
+
+Undo's rendered height and the stack's 8-point gap now contribute to WebKit's
+obscured-content inset and camera-aware control lifting. Dismissal removes the
+reservation. Its ordinary eight-second lifetime is computed from `closedAt`, so
+profile switches and view recreation do not restart it. VoiceOver and accessibility
+text sizes retain the notice until explicit dismissal. Closed-record validation
+and close capture use the same `WebAddress` contract as reopening.
+
+Eight added portable URL-boundary/elapsed-time checks pass (239 portable checks
+before merging the current blocker update), as do strict SwiftLint and Debug.
+Three added native checks measure maximum-text notice height, verify a synthetic
+fixed footer clears it, and verify dismissal restores the original inset. These
+runtime checks are pending coordinated simulator access; no new hardware or
+spoken VoiceOver evidence is claimed.

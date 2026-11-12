@@ -72,6 +72,22 @@ struct DownloadStoreTests {
         check(!store.acceptsResponse(length: -1, excluding: UUID()), "unknown-length retry cannot bypass full or blocked storage")
         try store.remove(oversizedID)
         check(store.acceptsResponse(length: -1, excluding: UUID()), "unknown-length download can proceed when storage is available")
+        let danglingID = UUID(), dangling = root.appendingPathComponent(UUID().uuidString)
+        let danglingLink = root.appendingPathComponent(danglingID.uuidString)
+        try FileManager.default.createSymbolicLink(at: danglingLink, withDestinationURL: dangling)
+        check(!FileManager.default.fileExists(atPath: danglingLink.path) && store.diskUsage() > DownloadStore.storageLimit,
+              "dangling UUID symlink is recovered and blocks quota")
+        try store.remove(danglingID)
+        check((try? FileManager.default.destinationOfSymbolicLink(atPath: danglingLink.path)) == nil &&
+              !store.load().contains(where: { $0.id == danglingID }), "Remove unlinks dangling UUID entry without recovering it again")
+        check(store.acceptsResponse(length: 1, excluding: UUID()), "removing dangling link restores quota admission")
+        let target = root.appendingPathComponent("outside-directory")
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        let outsideDocument = target.appendingPathComponent("keep.txt"); try content.write(to: outsideDocument)
+        let liveLinkID = UUID()
+        try FileManager.default.createSymbolicLink(at: root.appendingPathComponent(liveLinkID.uuidString), withDestinationURL: target)
+        try store.remove(liveLinkID)
+        check(try Data(contentsOf: outsideDocument) == content, "UUID directory-link removal does not follow its target")
         print("\(checks) download storage checks passed")
     }
 }

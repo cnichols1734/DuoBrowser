@@ -48,12 +48,7 @@ struct BrowserLibrary: View {
     }
     private func open(_ entry: LibraryEntry) {
         do {
-            var savedArticle: ReaderArticle?
-            if section == 2, let id = entry.offlineID {
-                guard let article = ReaderArticle.offline(try session.offlineStore.read(id)) else { throw SavedPageError.invalidArticle }
-                savedArticle = article
-            }
-            if section == 2 { var read = entry; read.isRead = true; try session.savePage(read, reading: true) }
+            let savedArticle = section == 2 ? try session.articleForOpening(entry) : nil
             if let savedArticle { offlineArticle = savedArticle }
             else { session.selected.navigate(to: entry.address); dismiss() }
         } catch { self.error = error.localizedDescription + " You can also choose Open Website from the item’s menu." }

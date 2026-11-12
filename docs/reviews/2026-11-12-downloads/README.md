@@ -43,3 +43,16 @@ Physical touch/energy/endurance, iOS suspension/background behavior, signed-devi
 Combined-stack review found that GET retry attached its replacement download without the originating tab ID. Closing that tab could therefore stop its web view; pending retries had the same gap. The fix retains the pending web view and owner until WebKit returns a download, carries ownership into the active transfer, and clears retry context when the source closes. Resume-token transfers remain owned by the dedicated session web view. Generation checks still discard canceled/removed/private-session callbacks before consuming pending state.
 
 Four new native assertions exercise authenticated GET restart followed by immediate source closure and closure after progress begins. Both explicitly expire Undo so its eight-second retention cannot hide lifecycle failure. The suite now requires 41 download checks; the combined validation run owns execution. Portable checks and strict lint were rerun for this follow-up.
+
+
+## Copilot review follow-up
+
+- GET restart now binds the weak originating BrowserModel and its document generation as well as the web view and URL. A new provisional document proactively clears old GET eligibility; reload and away/back cannot recover it merely by returning to the same address. Opaque WebKit resume remains available independently when supplied. Two native regressions perform a real reload and away/back navigation, force the no-token GET path and verify that it starts no work. The combined suite now requires 43 Downloads assertions; execution belongs to final combined validation.
+- Removal checks the UUID directory entry itself for a symbolic link before the existence check that follows links. Four added portable checks cover a dangling link's quota block, actual unlink/recovery removal, restored admission and preserving a live link's external target. All 32 download-store assertions pass, alongside strict lint and source parsing.
+
+Reviewed threads: [document-generation binding](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087538), [dangling-link removal](https://github.com/cnichols1734/DuoBrowser/pull/21#discussion_r4557087587).
+
+
+## Hosted receipt timeout diagnostics
+
+The older combined PR22 head `6fbd2d3` timed out waiting 180 seconds for DownloadChecks on a slow hosted simulator; no failing assertion receipt was emitted, and the initial app installation alone took about 4.5 minutes. This does not establish a functional test result. Downloads now receives a 600-second group receipt allowance, while every functional assertion and per-interaction deadline stays unchanged. A fresh Debug-only progress file records a bounded last-passed synthetic label/count every five checks (also startup/first check); timeout output prints it to identify the last completed stage. Both receipt and progress are reset before every launch. Progress can diagnose a timeout but cannot satisfy the success gate.

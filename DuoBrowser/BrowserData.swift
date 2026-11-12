@@ -130,7 +130,9 @@ struct BrowserArchive: Codable {
 final class BrowserArchiveStore {
     let directory: URL
     private let manager = FileManager.default
-    init(directory: URL? = nil) {
+    private let writeData: (Data, URL, Data.WritingOptions) throws -> Void
+    init(directory: URL? = nil, writeData: @escaping (Data, URL, Data.WritingOptions) throws -> Void = { try $0.write(to: $1, options: $2) }) {
+        self.writeData = writeData
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("BrowserState", isDirectory: true)
     }
@@ -153,7 +155,7 @@ final class BrowserArchiveStore {
         return archive.validated()
     }
     func load() -> BrowserArchive? { decode(primary) ?? decode(backup) }
-    func write(_ archive: BrowserArchive) throws {
+    private func preparedData(_ archive: BrowserArchive) throws -> Data {
         guard let valid = archive.validated() else { throw CocoaError(.fileWriteInvalidFileName) }
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var folder = directory
@@ -161,15 +163,24 @@ final class BrowserArchiveStore {
         try folder.setResourceValues(values)
         let data = try JSONEncoder().encode(valid)
         guard data.count <= LibraryLimits.archiveBytes else { throw CocoaError(.fileWriteOutOfSpace) }
-        if let old = decode(primary) {
-            try JSONEncoder().encode(old).write(to: backup, options: writeOptions)
-        }
-        try data.write(to: primary, options: writeOptions)
+        return data
     }
-    /// Deletion writes both generations so recovery cannot resurrect deleted history.
+    func write(_ archive: BrowserArchive) throws {
+        let data = try preparedData(archive)
+        if let old = decode(primary) {
+            try writeData(JSONEncoder().encode(old), backup, writeOptions)
+        }
+        try writeData(data, primary, writeOptions)
+    }
+    /// The primary is the final throwing commit. A backup failure never follows a committed deletion.
     func replace(_ archive: BrowserArchive) throws {
-        try write(archive)
-        try Data(contentsOf: primary).write(to: backup, options: writeOptions)
+        let data = try preparedData(archive)
+        try writeData(data, backup, writeOptions)
+        try writeData(data, primary, writeOptions)
+    }
+    /// Both recoverable archive generations own their offline snapshots.
+    func offlineReferences() -> Set<UUID> {
+        Set([decode(primary), decode(backup)].compactMap { $0 }.flatMap { ($0.readingList ?? []).compactMap(\.offlineID) })
     }
 }
 

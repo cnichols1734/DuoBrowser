@@ -19,10 +19,23 @@ struct NativeBrowserChecks: UIViewControllerRepresentable {
 final class NativeCheckRunner {
     let host: UIViewController
     var results: [String] = []
-    init(host: UIViewController) { self.host = host }
+    private var passedChecks = 0
+    init(host: UIViewController) {
+        self.host = host
+        writeProgress(last: "Harness started.")
+    }
+    private func writeProgress(last label: String) {
+        // Only this Debug synthetic harness writes progress; never capture a live page or browsing state.
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NativeCheckProgress.txt")
+        let text = "\(passedChecks) checks passed\nLast: \(label.prefix(512))\n"
+        try? text.write(to: file, atomically: true, encoding: .utf8)
+    }
     func check(_ value: Bool, _ label: String) throws {
         if !value { throw NSError(domain: label, code: 1) }
         results.append("PASS: " + label)
+        passedChecks += 1
+        if passedChecks == 1 || passedChecks.isMultiple(of: 5) { writeProgress(last: label) }
     }
     func tabStackChecks() async throws {
         let models = (0..<6).map { _ in BrowserModel(dataStore: .nonPersistent()) }
@@ -543,7 +556,9 @@ final class NativeCheckRunner {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
     func maintainedFilterChecks(_ browser: BrowserModel) async throws {
-        try check(await FilterCatalog.shared.awaitMaintainedForTesting(), "maintained protection becomes ready within the bounded preparation window")
+        let ready = await FilterCatalog.shared.awaitMaintainedForTesting()
+        try check(ready, "maintained protection becomes ready within the bounded preparation window" +
+                  (ready ? "" : ": " + FilterCatalog.shared.preparationDiagnosticsForTesting()))
         try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
                   "bundled maintained sources compile on the deployed iOS runtime without fallback")
         try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
@@ -591,8 +606,54 @@ final class NativeCheckRunner {
         // Use first-party fetch so the broad third-party probe rule does not apply.
         try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
                   "other resource filter does not widen to fetch")
+        try await converterReviewChecks(browser)
         ContentBlocking.useTestRules(nil)
         try await staleBlockingChecks(browser)
+    }
+
+    func converterReviewChecks(_ browser: BrowserModel) async throws {
+        let source = """
+        [Adblock Plus 2.0]
+        ||127.0.0.1:8765/badfilter.js$xmlhttprequest
+        ||127.0.0.1:8765/scope-probe$xmlhttprequest,domain=127.0.0.1
+        ||127.0.0.1:8765/scope-negative$xmlhttprequest,domain=~localhost
+        ||localhost:8765/frame-exception^$subdocument
+        @@||localhost:8765/frame-exception^$document,subdocument
+        ||127.0.0.1:8765/socket-probe$websocket
+        @@||127.0.0.1:8765/socket-probe?allowed$websocket
+        """
+        let converted = try FilterListConverter.convert(source)
+        ContentBlocking.useTestRuleChunks(try converted.chunks().map { String(decoding: $0, as: UTF8.self) })
+        defer { ContentBlocking.useTestRules(nil) }
+        try await load(browser, "upgrades")
+        try check(try await asyncJS(browser, "return await fetch('/badfilter.js').then(()=>false).catch(()=>true)") as? Bool == true,
+                  "ordinary badfilter URL substring remains blocked in WebKit")
+        try check(try await asyncJS(browser, "const token=crypto.randomUUID(); const blocked=await fetch('/scope-probe?token='+token).then(()=>false).catch(()=>true); const count=await fetch('/frame-count?token='+token).then(r=>r.text()); return blocked && count==='0';") as? Bool == true,
+                  "domain-scoped fetch blocks in the matching initiating document before network delivery")
+        for (path, expectedBlocked) in [("scoped-frame", false), ("scoped-parent", true), ("scoped-frame?negative=1", false)] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID(), frame=document.createElement('iframe');
+            const result=await new Promise(resolve=>{
+                const listener=event=>{if(event.source===frame.contentWindow&&event.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);resolve(event.data)}};
+                const timer=setTimeout(()=>{window.removeEventListener('message',listener);resolve({timeout:true})},5000);
+                window.addEventListener('message',listener);
+                frame.src='http://localhost:8765/'+path+(path.includes('?')?'&':'?')+'token='+token;document.body.append(frame);
+            });
+            frame.remove();const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));
+            return !result.timeout && result.blocked===expected && (expected ? count===0 : count>0);
+            """, arguments: ["path": path, "expected": expectedBlocked], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, "requesting-frame scope preserved for \(path), expected blocked=\(expectedBlocked)")
+        }
+        try check(try await asyncJS(browser, "return await new Promise(resolve=>{const token=crypto.randomUUID(),frame=document.createElement('iframe');const listener=e=>{if(e.source===frame.contentWindow&&e.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);frame.remove();resolve(e.data.loaded===true)}};const timer=setTimeout(()=>{window.removeEventListener('message',listener);frame.remove();resolve(false)},5000);window.addEventListener('message',listener);frame.src='http://localhost:8765/frame-exception?token='+token;document.body.append(frame)});") as? Bool == true,
+                  "document-plus-subdocument exception allows the embedded page on an unrelated top site")
+        for allowed in [false, true] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID();
+            await new Promise(resolve=>{const socket=new WebSocket('ws://127.0.0.1:8765/socket-probe?'+(allowed?'allowed':'blocked')+'&token='+token);const timer=setTimeout(()=>{socket.close();resolve()},5000);socket.onopen=()=>{clearTimeout(timer);socket.close();resolve()};socket.onerror=()=>{clearTimeout(timer);resolve()}});
+            const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));return allowed ? count>0 : count===0;
+            """, arguments: ["allowed": allowed], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, allowed ? "websocket exception allows the handshake to reach the fixture server" : "domain-anchored websocket rule prevents handshake delivery")
+        }
     }
 
     func initialProtectionChecks() async throws {
@@ -759,6 +820,44 @@ final class NativeCheckRunner {
                   "Private Reader preserves the ephemeral source profile")
         privateReader.close(); privateSource.close()
     }
+    func closedNoticeGeometryChecks(_ session: BrowserSession) async throws {
+        let browser = session.selected
+        _ = try await js(browser, "const footer=document.createElement('footer');footer.id='notice-footer';footer.style.cssText='position:fixed;bottom:0;height:30px';footer.textContent='Synthetic fixed action';document.body.append(footer)")
+        host.view.subviews.forEach { $0.removeFromSuperview() }
+        let viewport = ViewportView(browser: browser)
+        viewport.frame = host.view.bounds
+        host.view.addSubview(viewport)
+        viewport.layoutIfNeeded()
+        let baseline = browser.webView.obscuredContentInsets.bottom
+        var measured: CGFloat = 0
+        let notice = UIHostingController(rootView: VStack {
+            Spacer()
+            ClosedTabNotice(session: session) { height in
+                measured = height
+                viewport.additionalBottomObstruction = height > 0 ? height + 8 : 0
+                viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            }
+        }.environment(\.dynamicTypeSize, .accessibility5))
+        host.addChild(notice); notice.view.frame = host.view.bounds
+        notice.view.backgroundColor = .clear
+        host.view.addSubview(notice.view); notice.didMove(toParent: host)
+        defer {
+            notice.willMove(toParent: nil); notice.view.removeFromSuperview(); notice.removeFromParent()
+            viewport.removeFromSuperview(); mount(browser)
+        }
+        try await wait { measured > 52 }
+        try check(abs(browser.webView.obscuredContentInsets.bottom - baseline - measured - 8) < 1,
+                  "measured accessibility Undo notice and spacing reserve additional WebKit content space")
+        try await wait {
+            guard let footer = try? await self.js(browser, "document.getElementById('notice-footer').getBoundingClientRect().bottom") as? Double else { return false }
+            return footer <= browser.webView.bounds.height - browser.webView.obscuredContentInsets.bottom + 1
+        }
+        try check(true, "fixed page footer stays above the expanded Undo notice")
+        session.closedTabNotice = nil
+        try await wait { measured == 0 && abs(browser.webView.obscuredContentInsets.bottom - baseline) < 1 }
+        try check(true, "dismissing Undo removes its measured reservation")
+        _ = try await js(browser, "document.getElementById('notice-footer').remove()")
+    }
     func tabRecoveryChecks() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabRecovery-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
@@ -788,6 +887,7 @@ final class NativeCheckRunner {
         try check(record.scrollY != nil, "closed tab captures reading position")
         try check(store.load()?.recentlyClosed?.first?.id == record.id, "normal closed tab is durably saved")
         try check(session.closedTabNotice == record.id, "normal close offers immediate Undo")
+        try await closedNoticeGeometryChecks(session)
         try check(session.reopenClosedTab(record.id), "Undo reopens a normal tab")
         try check(!session.reopenClosedTab(record.id), "stale Undo cannot reopen a second copy")
         try check(session.recentlyClosed.isEmpty && session.closedTabNotice == nil, "reopening consumes recovery entry and notice")
@@ -1553,7 +1653,7 @@ final class NativeCheckRunner {
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/" + path)!)
             await withCheckedContinuation { continuation in
                 retryTab.webView.startDownload(using: request) { download in
-                    manager.add(download, owner: retryTab.id); continuation.resume()
+                    manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
                 }
             }
         }
@@ -1595,7 +1695,7 @@ final class NativeCheckRunner {
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             retryTab.webView.startDownload(using: URLRequest(url: URL(string: "https://127.0.0.1:8443/download")!)) { download in
-                manager.add(download, owner: retryTab.id); continuation.resume()
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
             }
         }
         let untrusted = manager.items[0]
@@ -1606,7 +1706,7 @@ final class NativeCheckRunner {
         post.httpMethod = "POST"; post.httpBody = Data("synthetic=download".utf8)
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             retryTab.webView.startDownload(using: post) { download in
-                manager.add(download, owner: retryTab.id); continuation.resume()
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
             }
         }
         let postResult = manager.items[0]
@@ -1627,7 +1727,7 @@ final class NativeCheckRunner {
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)")!)
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 source.webView.startDownload(using: request) { download in
-                    manager.add(download, owner: source.id, source: source.webView); continuation.resume()
+                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
                 }
             }
             let restarted = manager.items[0]
@@ -1648,6 +1748,37 @@ final class NativeCheckRunner {
         }
         try await retryThenCloseSource(afterProgress: false)
         try await retryThenCloseSource(afterProgress: true)
+
+        func rejectReplacedDocumentRetry(reload: Bool) async throws {
+            let source = session.newTab()
+            try await load(source, "")
+            let originalURL = source.webView.url, originalDocument = source.documentGeneration
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                source.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?stale-document=\(reload)")!)) { download in
+                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
+                }
+            }
+            let staleDocument = manager.items[0]
+            try await wait { staleDocument.received > 0 && staleDocument.isDownloading }
+            manager.cancel(staleDocument)
+            if reload {
+                source.webView.reload()
+                try await wait { source.documentGeneration != originalDocument && !source.webView.isLoading }
+            } else {
+                try await load(source, "next")
+                try await load(source, "")
+            }
+            // Force the no-token GET path even if WebKit supplied an optional cancellation token.
+            staleDocument.resumeData = nil; staleDocument.canRetry = true
+            let activeBefore = manager.activeCount
+            manager.retry(staleDocument)
+            try check(source.webView.url == originalURL && source.documentGeneration != originalDocument &&
+                      !staleDocument.isDownloading && !staleDocument.canRetry && manager.activeCount == activeBefore,
+                      "GET retry rejects a replacement document at the same URL (reload=\(reload))")
+            manager.remove(staleDocument); session.close(source.id); session.releaseClosedTab(); mount(session.selected)
+        }
+        try await rejectReplacedDocumentRetry(reload: true)
+        try await rejectReplacedDocumentRetry(reload: false)
 
         await start("download-slow?last-normal=1")
         let lastNormal = manager.items[0]
@@ -1939,7 +2070,11 @@ final class NativeCheckRunner {
             try await wait { normal.showingStartPage && !normal.webView.isLoading }
             try check(normal.showingStartPage, "new tabs show the native start page")
             normal.navigate(to: "http://127.0.0.1:1/unreachable")
-            try await wait { normal.errorMessage != nil }
+            do {
+                try await wait(timeout: 60) { normal.errorMessage != nil }
+            } catch {
+                throw NSError(domain: "Unreachable synthetic navigation did not report failure within 60 seconds; loading=\(normal.webView.isLoading), startPage=\(normal.showingStartPage)", code: 1)
+            }
             try check(normal.showingStartPage, "failed first navigation preserves the native start page")
             try await load(normal, "normal")
             try check(!normal.showingStartPage, "navigation dismisses the start page")

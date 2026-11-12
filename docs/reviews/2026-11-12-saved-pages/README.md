@@ -29,3 +29,9 @@ Verification is recorded below as checks complete. All fixtures are synthetic. H
 Use `--browser-checks --saved-pages-preview` in Debug with the synthetic fixture server for an isolated interactive preview. It uses a temporary archive and nonpersistent website data; it does not read the normal browsing profile.
 
 Final source review follow-up: bookmark and folder deletion now return failure, restore the displayed records, and show a Library alert when the archive cannot be written. Three native assertions cover a blocked backup write, intact durable records and folder descendants, and a successful retry preserving unrelated bookmarks. All 249 portable assertions, source parsing, repository checks and strict SwiftLint passed for this follow-up; the three new native assertions are queued for the final integrated suite.
+
+## Review corrections
+
+Archive replacement writes the new backup before committing the primary, with no throwing operation afterward. Fault-injection checks cover both write boundaries and backup recovery. Reading remains available if marking an article read cannot persist; already-read articles do not rewrite the archive. Bookmark edits prefer stable IDs before URL deduplication. Offline reconciliation preserves snapshots referenced by either archive generation and retries unreferenced UUID files after cleanup failures; entry capacity is checked before writing a new snapshot. Folder destinations share a precomputed child/parent index, including coverage of the full 2,000-folder limit.
+
+260 portable assertions and strict lint passed for these corrections. Six added native assertions cover duplicate-URL editing, failed read-status writes, no-op already-read opens and offline backup recovery; integrated runtime verification is pending.

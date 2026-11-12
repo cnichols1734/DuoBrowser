@@ -69,16 +69,19 @@ PY
 xcrun simctl install "$device" "$derived/Build/Products/Debug-iphonesimulator/DuoBrowser.app"
 container=$(xcrun simctl get_app_container "$device" dev.local.DuoBrowser data)
 run_receipt() {
-    local receipt="$1" minimum="$2"
+    local receipt="$1" minimum="$2" receipt_timeout=180
+    # Expanded download batches and cold filter preparation need a separate hosted budget.
+    # Functional interaction deadlines and the 300-second full-protection assertion stay bounded.
+    if [[ "$receipt" == DownloadChecks.txt || "$receipt" == SettingsChecks.txt || "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
     shift 2
     xcrun simctl terminate "$device" dev.local.DuoBrowser >/dev/null 2>&1 || true
     # Remove only this Debug harness's synthetic receipt, never browsing files.
-    rm -f "$container/Library/Caches/$receipt"
+    rm -f "$container/Library/Caches/$receipt" "$container/Library/Caches/NativeCheckProgress.txt"
     xcrun simctl launch "$device" dev.local.DuoBrowser --browser-checks "$@"
-    python3 - "$container/Library/Caches/$receipt" "$minimum" <<'PY'
+    python3 - "$container/Library/Caches/$receipt" "$minimum" "$receipt_timeout" <<'PY'
 import pathlib,sys,time
-p=pathlib.Path(sys.argv[1]); minimum=int(sys.argv[2])
-for attempt in range(180):
+p=pathlib.Path(sys.argv[1]); minimum=int(sys.argv[2]); timeout=int(sys.argv[3])
+for attempt in range(timeout):
     if p.exists():
         text=p.read_text()
         if 'FAIL:' in text:
@@ -88,10 +91,14 @@ for attempt in range(180):
         if passed < minimum: raise SystemExit(f'Incomplete receipt {p.name}: {passed}/{minimum}')
         print(f'{p.name}: {passed} checks passed'); break
     time.sleep(1)
-else: raise SystemExit('Timed out waiting for '+p.name)
+else:
+    progress=p.with_name('NativeCheckProgress.txt')
+    if progress.exists(): print(progress.read_text()[:4096],flush=True)
+    else: print('No native assertion progress was recorded for this launch.',flush=True)
+    raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
-run_receipt DownloadChecks.txt 41 --download-checks
+run_receipt DownloadChecks.txt 43 --download-checks
 run_receipt SettingsChecks.txt 40 --settings-checks
 run_receipt SetupChecks.txt 23 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks

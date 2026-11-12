@@ -6,7 +6,7 @@ Run from the repo root:
 mkdir -p work
 swiftc DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/scroll-chrome-tests
 work/scroll-chrome-tests
-swiftc DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
+swiftc DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
 work/tab-archive-tests
 ```
 
@@ -83,6 +83,8 @@ Run `bash scripts/check.sh` for the portable Swift assertions, Swift parsing, Ja
 
 `bash scripts/native-checks.sh` builds Debug, creates an isolated Duo simulator, starts local fixtures, runs native/persistence/memory checks and checks fresh receipts before deleting the test simulator. It fails if the required runtime or ports are unavailable. `--skip-build` uses an already-built Debug app in `DerivedData`; `DUO_DERIVED_DATA` overrides that directory. For a deliberately selected existing test simulator, set `DUO_TEST_DEVICE`; the script leaves that device and its normal browsing data intact and returns to the normal app afterward. Do not point it at a personal device.
 
+Each launch clears its receipt and `NativeCheckProgress.txt`. The Debug harness writes a bounded synthetic last-passed label/count at startup, after the first assertion and every five assertions; the script prints it if a receipt times out. Downloads has a 600-second group receipt allowance for slow hosted startup and multiple deliberately slow transfers. Individual interaction deadlines and functional assertions are unchanged; a progress file is never accepted as a passing receipt.
+
 GitHub CI uses the public-preview `xcode-27` hosted runner and selects Xcode 27.1 explicitly. The published runner inventory currently includes the 27.1 Duo simulator. Runner availability can change; missing SDK/runtime support fails the native job and the required gate rather than silently skipping tests. Portable tests still help diagnose failures, but are not a substitute for the native build. Never fall back to a credential-bearing self-hosted runner.
 
 CI validates workflows with actionlint, checks pinned tool digests, scans full Git history with redacted Gitleaks output, and audits the locked npm graph. No release credentials or browsing artifacts are uploaded. SwiftLint initially enables a narrow set of correctness rules; it does not impose a wholesale format rewrite. Patch whitespace is checked separately.
@@ -98,4 +100,4 @@ Reader follow-up adds synthetic image order/loading, full-width camera fitting a
 
 `DownloadStoreTests.swift` adds portable tests for the bounded persistent manifest, safe filenames, path/symlink rejection, retained-file integrity checks and private cleanup. `scripts/check.sh` runs these checks.
 
-`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 41 checks in `DownloadChecks.txt`. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).
+`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 43 checks in `DownloadChecks.txt`. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).
