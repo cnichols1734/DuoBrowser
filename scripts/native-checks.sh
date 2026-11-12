@@ -70,9 +70,9 @@ xcrun simctl install "$device" "$derived/Build/Products/Debug-iphonesimulator/Du
 container=$(xcrun simctl get_app_container "$device" dev.local.DuoBrowser data)
 run_receipt() {
     local receipt="$1" minimum="$2" receipt_timeout=180
-    # Downloads exercise multiple real, deliberately slow transfers. Allow hosted cold-start
-    # overhead without changing any assertion or individual interaction deadline.
-    if [[ "$receipt" == DownloadChecks.txt ]]; then receipt_timeout=600; fi
+    # Expanded download batches and cold filter preparation need a separate hosted budget.
+    # Functional interaction deadlines and the 300-second full-protection assertion stay bounded.
+    if [[ "$receipt" == DownloadChecks.txt || "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
     shift 2
     xcrun simctl terminate "$device" dev.local.DuoBrowser >/dev/null 2>&1 || true
     # Remove only this Debug harness's synthetic receipt, never browsing files.

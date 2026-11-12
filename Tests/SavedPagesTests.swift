@@ -50,6 +50,19 @@ import Foundation
         let failing = OfflineArticleStore(directory: directory, deleteFile: { _ in throw CocoaError(.fileWriteNoPermission) })
         do { try failing.remove(protectedID); preconditionFailure("removal failure hidden") } catch { checks += 1 }
         check(FileManager.default.fileExists(atPath: store.url(protectedID).path), "failed deletion retains offline copy")
+        let orphan = UUID()
+        try store.write(protectedArticle, id: orphan)
+        check(!failing.reconcile(retaining: [protectedID]) && FileManager.default.fileExists(atPath: store.url(orphan).path),
+              "failed cleanup keeps durable orphan for a later retry")
+        check(store.reconcile(retaining: [protectedID]) && !FileManager.default.fileExists(atPath: store.url(orphan).path) &&
+              FileManager.default.fileExists(atPath: store.url(protectedID).path), "cleanup retry removes only unreferenced copies")
+        let broadRoot = BookmarkFolder(title: "Broad root", parentID: nil)
+        let descendants = (0..<999).map { BookmarkFolder(title: "Child \($0)", parentID: broadRoot.id) }
+        let destinations = (0..<1000).map { BookmarkFolder(title: "Destination \($0)", parentID: nil) }
+        let choices = SavedPagesPolicy.Destinations(movingID: broadRoot.id, folders: [broadRoot] + descendants + destinations)
+        check(destinations.allSatisfy { choices.canMove(to: $0.id) } && descendants.allSatisfy { !choices.canMove(to: $0.id) },
+              "2000-folder picker computes every destination without rescanning the subtree")
+        check(choices.path(descendants[0]) == "Broad root / Child 0", "folder paths use shared parent index")
         let full = directory.appendingPathComponent("capacity.json")
         try Data(repeating: 0, count: OfflineArticleStore.maximumStoreBytes).write(to: full)
         let valid = OfflineArticle(title: "Article", address: "https://example.test", blocks: [.init(kind: "paragraph", text: "Saved")])

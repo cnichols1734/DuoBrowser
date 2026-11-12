@@ -6,7 +6,7 @@ Run from the repo root:
 mkdir -p work
 swiftc DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/scroll-chrome-tests
 work/scroll-chrome-tests
-swiftc DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
+swiftc DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
 work/tab-archive-tests
 ```
 

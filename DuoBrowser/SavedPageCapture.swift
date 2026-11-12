@@ -86,13 +86,34 @@ extension BrowserModel {
 }
 
 extension BrowserSession {
+    func reconcileOfflineCopies() {
+        let referenced = archiveStore.offlineReferences().union(readingList.compactMap(\.offlineID))
+        offlineStore.reconcile(retaining: referenced)
+    }
+    func articleForOpening(_ entry: LibraryEntry) throws -> ReaderArticle? {
+        var article: ReaderArticle?
+        if let id = entry.offlineID {
+            guard let saved = ReaderArticle.offline(try offlineStore.read(id)) else { throw SavedPageError.invalidArticle }
+            article = saved
+        }
+        markReadWhenOpened(entry)
+        return article
+    }
+    /// Reading remains available when a best-effort status update cannot be persisted.
+    func markReadWhenOpened(_ entry: LibraryEntry) {
+        guard let current = readingList.first(where: { $0.id == entry.id }), current.isRead != true else { return }
+        var read = current; read.isRead = true
+        try? savePage(read, reading: true)
+    }
     func savePage(_ entry: LibraryEntry, reading: Bool, offline: OfflineArticle? = nil) throws {
         guard entry.title.count <= 512, WebAddress.valid(URL(string: entry.address)) != nil,
               offline == nil || offline?.address == entry.address,
               SavedPagesPolicy.canMove(nil, to: entry.folderID, folders: bookmarkFolders) else { throw SavedPageError.invalidFolder }
         let old = reading ? readingList : bookmarks
         var updated = entry
-        let index = old.firstIndex { $0.id == entry.id || $0.address == entry.address }
+        let index = old.firstIndex { $0.id == entry.id } ?? old.firstIndex { $0.address == entry.address }
+        guard index != nil || old.count < (reading ? LibraryLimits.readingList : LibraryLimits.bookmarks) else { throw SavedPageError.saveFailed }
+        if offline != nil { reconcileOfflineCopies() }
         let previous = index.map { old[$0] }
         if let previous { updated.id = previous.id; updated.offlineID = previous.offlineID }
         let store = offlineStore
@@ -105,21 +126,15 @@ extension BrowserSession {
         }
         var entries = old
         if let index { entries[index] = updated }
-        else {
-            guard entries.count < (reading ? LibraryLimits.readingList : LibraryLimits.bookmarks) else {
-                if let id = updated.offlineID, id != previous?.offlineID { try? store.remove(id) }
-                throw SavedPageError.saveFailed
-            }
-            entries.insert(updated, at: 0)
-        }
+        else { entries.insert(updated, at: 0) }
         if reading { readingList = entries } else { bookmarks = entries }
         // write() commits the primary last; do not roll back after a backup-only post-commit error.
         guard saveNow() else {
             if reading { readingList = old } else { bookmarks = old }
-            if let id = updated.offlineID, id != previous?.offlineID { try? store.remove(id) }
+            if offline != nil { reconcileOfflineCopies() }
             throw SavedPageError.saveFailed
         }
-        if let id = previous?.offlineID, id != updated.offlineID { try? store.remove(id) }
+        if offline != nil { reconcileOfflineCopies() }
     }
 
     func saveFolder(_ folder: BookmarkFolder) throws {

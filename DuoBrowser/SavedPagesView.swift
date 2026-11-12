@@ -104,21 +104,13 @@ struct FolderPicker: View {
     @Binding var selection: UUID?
     var movingID: UUID?
     var body: some View {
+        let destinations = SavedPagesPolicy.Destinations(movingID: movingID, folders: folders)
         Picker("Folder", selection: $selection) {
-            Text("All Bookmarks").tag(nil as UUID?)
-            ForEach(folders.filter { SavedPagesPolicy.canMove(movingID, to: $0.id, folders: folders) }) { folder in
-                Text(path(folder)).tag(Optional(folder.id))
+            Text("All Bookmarks").tag(nil as UUID?).disabled(!destinations.canMove(to: nil))
+            ForEach(folders.filter { destinations.canMove(to: $0.id) }) { folder in
+                Text(destinations.path(folder)).tag(Optional(folder.id))
             }
         }
-    }
-    private func path(_ folder: BookmarkFolder) -> String {
-        var names = [folder.title]
-        var parent = folder.parentID
-        for _ in 0..<32 {
-            guard let id = parent, let next = folders.first(where: { $0.id == id }) else { break }
-            names.insert(next.title, at: 0); parent = next.parentID
-        }
-        return names.joined(separator: " / ")
     }
 }
 

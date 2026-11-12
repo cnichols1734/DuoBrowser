@@ -89,6 +89,45 @@ extension NativeCheckRunner {
         session.deleteBookmarks(ids: Set(session.bookmarks.filter { $0.address == expected.absoluteString }.map(\.id)))
         session.deleteBookmarkFolder(folder.id)
 
+        let identityDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        var rejectWrites = false
+        var writes = 0
+        let identityArchive = BrowserArchiveStore(directory: identityDirectory, writeData: { data, url, options in
+            writes += 1
+            if rejectWrites { throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        let identity = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.SavedIdentity")!, archiveStore: identityArchive, dataStore: .nonPersistent())
+        defer { identity.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: identityDirectory) }
+        let first = LibraryEntry(address: captured.address, title: "First copy")
+        var second = LibraryEntry(address: captured.address, title: "Second copy")
+        identity.bookmarks = [first, second]; try check(identity.saveNow(), "Duplicate imported bookmarks persist before editing")
+        second.title = "Edited second copy"
+        try identity.savePage(second, reading: false)
+        try check(identity.bookmarks.first { $0.id == first.id }?.title == "First copy" &&
+                  identity.bookmarks.first { $0.id == second.id }?.title == "Edited second copy",
+                  "Editing a duplicate URL targets its stable bookmark ID")
+        var saved = LibraryEntry(address: captured.address, title: "Available offline")
+        try identity.savePage(saved, reading: true, offline: captured)
+        saved = identity.readingList[0]
+        rejectWrites = true
+        try check(try identity.articleForOpening(saved) != nil && identity.readingList[0].isRead != true,
+                  "Offline article opens even when marking read cannot be saved")
+        rejectWrites = false
+        identity.markReadWhenOpened(saved)
+        let writesBeforeOpening = writes
+        try check(try identity.articleForOpening(identity.readingList[0]) != nil && writes == writesBeforeOpening,
+                  "Opening an already-read article performs no archive write")
+        let priorSnapshot = identity.readingList[0].offlineID!
+        try identity.savePage(identity.readingList[0], reading: true, offline: captured)
+        let newestSnapshot = identity.readingList[0].offlineID!
+        try check(priorSnapshot != newestSnapshot && FileManager.default.fileExists(atPath: identity.offlineStore.url(priorSnapshot).path),
+                  "Replacing offline article preserves the backup generation snapshot")
+        try Data("corrupt primary".utf8).write(to: identityDirectory.appendingPathComponent("session.json"))
+        let recovered = identityArchive.load()!.readingList![0]
+        try check(recovered.offlineID == priorSnapshot && (try? identity.offlineStore.read(priorSnapshot)) != nil,
+                  "Backup recovery still opens the previous offline article")
+
         let failedDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let failed = BrowserSession(storage: UserDefaults(suiteName: "DuoBrowser.SavedPageFailure")!,
                                     archiveStore: BrowserArchiveStore(directory: failedDirectory), dataStore: .nonPersistent())
