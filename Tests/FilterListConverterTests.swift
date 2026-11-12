@@ -62,6 +62,36 @@ import Foundation
         let document = try FilterListConverter.convert("[Adblock Plus 2.0]\n||ads.example^\n@@||trusted.example^$document")
         let exemption = document.exceptions[0]["trigger"] as! [String: Any]
         check(exemption["url-filter"] as? String == ".*" && exemption["if-top-url"] != nil, "document exception scopes all resources to the permitted top page")
+        let badfilter = try FilterListConverter.convert("""
+        [Adblock Plus 2.0]
+        ||example.com/badfilter.js
+        ||example.com/path?badfilter=yes
+        ||example.com/first$script
+        ||example.com/first$badfilter,script
+        ||example.com/middle$script,image
+        ||example.com/middle$script,badfilter,image
+        ||example.com/last$image
+        ||example.com/last$image,badfilter
+        """)
+        check(badfilter.network.count == 2, "only actual badfilter options disable their corresponding rules")
+        check((badfilter.network[0]["trigger"] as! [String: Any])["url-filter"] as? String == FilterListConverter.urlFilter("||example.com/badfilter.js"), "badfilter substring in URL remains an ordinary blocking rule")
+        let frame = rules.network[1]["trigger"] as! [String: Any]
+        check(frame["if-domain"] == nil && frame["if-frame-url"] as? [String] == [FilterListConverter.urlFilter("||example.com^")!], "network domain restriction matches requesting frame instead of top page")
+        let excludedFrame = try FilterListConverter.convert("[Adblock Plus 2.0]\n||ads.example^$domain=~example.com")
+        check((excludedFrame.network[0]["trigger"] as! [String: Any])["unless-frame-url"] as? [String] == [FilterListConverter.urlFilter("||example.com^")!], "negative network domain restriction remains frame-scoped")
+        let split = try FilterListConverter.convert("[Adblock Plus 2.0]\n||jokerly.com^$subdocument\n@@||jokerly.com^$document,subdocument")
+        check(split.exceptions.count == 2 && split.cosmeticExceptions.count == 1, "document plus subdocument emits separate allowlist alternatives")
+        let frameException = split.exceptions[1]["trigger"] as! [String: Any]
+        check(frameException["url-filter"] as? String == FilterListConverter.urlFilter("||jokerly.com^") && frameException["if-top-url"] == nil && frameException["resource-type"] as? [String] == ["child-document"], "subdocument exception retains original resource URL without top-page restriction")
+        let scopedDocument = try FilterListConverter.convert("[Adblock Plus 2.0]\n||jokerly.com^\n@@||jokerly.com^$document,subdocument,domain=example.com")
+        check(scopedDocument.exceptions.count == 1 && scopedDocument.cosmeticExceptions.isEmpty && scopedDocument.skipped == 1, "unrepresentable domain-scoped document allowlist is skipped without discarding subdocument alternative")
+        let scopedTrigger = scopedDocument.exceptions[0]["trigger"] as! [String: Any]
+        check(scopedTrigger["if-frame-url"] != nil && scopedTrigger["if-top-url"] == nil, "remaining scoped alternative keeps only the exact requesting-frame condition")
+        check(matches("ws://ads.example/socket"), "domain anchor matches websocket scheme")
+        check(matches("wss://sub.ads.example/socket"), "domain anchor matches secure websocket subdomain")
+        check(!matches("wss://notads.example/socket") && !matches("wss://ads.example.evil/socket"), "websocket matching preserves hostname boundaries")
+        let sockets = try FilterListConverter.convert("[Adblock Plus 2.0]\n||ads.example^$websocket\n@@||ads.example/allowed$websocket")
+        check((sockets.network[0]["trigger"] as! [String: Any])["resource-type"] as? [String] == ["websocket"] && (sockets.exceptions[0]["trigger"] as! [String: Any])["resource-type"] as? [String] == ["websocket"], "websocket block and exception preserve their resource type")
         for source in ["<html>error</html>", "[Adblock Plus 2.0]\n! empty", "[Adblock Plus 2.0]\n" + String(repeating: "x", count: 5_000_001)] {
             do { _ = try FilterListConverter.convert(source); fatalError("invalid source accepted") }
             catch { checks += 1 }
