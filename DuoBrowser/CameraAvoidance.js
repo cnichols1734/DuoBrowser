@@ -532,9 +532,9 @@
   addEventListener('scroll', moving, {passive:true, capture:true});
   addEventListener('resize', () => { moving(); });
   addEventListener('touchstart', () => { touching = true; moving(); }, {passive:true, capture:true});
-  for (const name of ['touchend','touchcancel']) addEventListener(name, e => { touching = e.touches.length > 0; schedule(); }, {passive:true, capture:true});
+  for (const name of ['touchend','touchcancel']) addEventListener(name, e => { touching = e.touches.length > 0; moving(); }, {passive:true, capture:true});
   addEventListener('pointerdown', e => { if (e.pointerType === 'touch') return; touching = true; moving(); }, {passive:true, capture:true});
-  for (const name of ['pointerup','pointercancel']) addEventListener(name, e => { if (e.pointerType === 'touch') return; touching = false; schedule(); }, {passive:true, capture:true});
+  for (const name of ['pointerup','pointercancel']) addEventListener(name, e => { if (e.pointerType === 'touch') return; touching = false; moving(); }, {passive:true, capture:true});
   addEventListener('focusin', moving, {capture:true});
   addEventListener('focusout', schedule);
   addEventListener('pagehide', () => { clearTimeout(timer); timer = 0; stopped = true; reset(); });

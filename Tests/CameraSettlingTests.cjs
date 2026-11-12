@@ -258,7 +258,9 @@ module.exports = async function runSettlingTests(page, source) {
     await p.evaluate(()=>dispatchEvent(new Event('pointerdown')));
     const longPaused=await box('reading');await p.waitForTimeout(250);
     assert(Math.abs((await box('reading')).x-longPaused.x)<.5,'touch freezes long-paragraph presentation without a jump');
-    await p.evaluate(()=>dispatchEvent(new Event('pointerup')));await settled();
+    await p.evaluate(()=>dispatchEvent(new Event('pointerup')));await p.waitForTimeout(100);
+    assert(Math.abs((await box('reading')).x-longPaused.x)<.5,'touch release starts a complete quiet period before long text resumes');
+    await settled();
     assert((await box('reading')).right<=378 && Math.abs((await box('reading')).y-longOriginal.y)<1,
       'interrupted long-paragraph settling reaches safe geometry without a downshift');
     await send(geometry([]));await settled();

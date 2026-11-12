@@ -105,7 +105,7 @@ run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks
 run_receipt NativeBrowserChecks.txt 93
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
-run_receipt CameraSettlingChecks.txt 34 --settling-checks
+run_receipt CameraSettlingChecks.txt 42 --settling-checks
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-write
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-read
 run_receipt MemoryChecks.txt 13 --memory-checks

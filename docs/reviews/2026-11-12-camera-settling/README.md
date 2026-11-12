@@ -24,10 +24,9 @@ static avoidance; VoiceOver retains the existing conservative text behavior.
 
 ## Verification
 
-- All 196 web assertions pass, including ten added checks for long text, static
+- All 197 web assertions pass, including eleven added checks for long text, static
   Reduce Motion, original DOM/form preservation, continuous mutation activity,
-  uninterrupted animation completion, gradual progress, touch interruption and
-  reverse settling.
+  uninterrupted animation completion, gradual progress, touch interruption, a complete quiet period after release, and reverse settling.
 - All 328 portable assertions and strict SwiftLint pass. Debug simulator build
   passes; the final incremental build includes the new native interruption check.
 - Eight added native assertions cover a long article intersecting an actual system
