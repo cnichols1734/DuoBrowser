@@ -1,5 +1,13 @@
 # Build plan
 
+## Reddit app links and ad-blocking controls — November 11, 2026
+
+- Added native Apollo Reborn handoff for trusted Reddit content-link taps and supported Google wrappers, a remembered first choice, Ask Every Time, browser fallback, private-tab confirmation and Settings controls. A fixed isolated-world click gate prevents scripted clicks from launching apps; URLs are not persisted or logged. Artemis was researched but is not exposed until its deep-link contract and actual post/comment behavior can be verified.
+- Added the global Block Ads & Trackers switch over the existing 19-service rules. Preserves site exceptions and page drafts; existing tabs apply changes to new requests without automatic reload. New tabs, private tabs and Reader inherit the preference. This is built-in blocking, not support for installed Safari extensions.
+- Passed Debug/Release simulator builds (Xcode 27.2, iOS 27.2 SDK, deployment target unchanged at iOS 27.1), 192 portable assertions, 177 Playwright assertions, SwiftLint and repository checks. Full native suite passed: 23 setup, 25 Reddit, 18 tab-stack, 93 core, 63 upgrade/blocking/Reader, 34 settling, 2 cookie-write, 2 cookie-read and 13 memory checks.
+- Real simulator tap verified the production gesture gate and chooser, correct comment deep link, remembered selection and retained draft using a simulated OS launch. Settings controls were exercised in closed/open/partially folded poses and rotation. Actual Apollo installations/sideload variants, Artemis, hardware touch/energy, full spoken VoiceOver, large text and the remaining accessibility/occlusion matrix remain unverified. [Evidence and limitations](REDDIT_LINKS_AND_BLOCKING.md).
+- Parallel research confirmed public native WebKit extension-hosting APIs, but Safari transfer contains extension metadata rather than packages/settings/permissions. A tested compatible catalog and a permission-aware extension host need separate implementation before useful migration. [Extension feasibility and stages](SAFARI_EXTENSIONS.md). No extension runtime, merge, release or App Store approval is claimed.
+
 ## Completed setup — October 26, 2026
 
 - Local Git repository initialized on main.
