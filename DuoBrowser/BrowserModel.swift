@@ -60,6 +60,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         attachedBlockingRules.forEach(controller.add)
     }
     private var policyGeneration = UUID()
+    private var expectsDownloadPolicyInterruption = false
     private var closed = false
     var onClose: (() -> Void)?
     var onVisit: ((URL, String) -> Void)?
@@ -340,6 +341,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        expectsDownloadPolicyInterruption = false
         presentation.cancel()
         documentGeneration = UUID()
         cancelReader()
@@ -378,7 +380,15 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     private func report(_ error: Error) {
-        guard (error as NSError).code != NSURLErrorCancelled else { return }
+        let failure = error as NSError
+        // WebKit reports this policy-interruption NSError when navigation becomes a download.
+        // Consume only a change this model requested; unrelated policy failures still surface.
+        if expectsDownloadPolicyInterruption, failure.domain == "WebKitErrorDomain", failure.code == 102 {
+            expectsDownloadPolicyInterruption = false
+            return
+        }
+        expectsDownloadPolicyInterruption = false
+        guard failure.code != NSURLErrorCancelled else { return }
         loadedWebView?.scrollView.refreshControl?.endRefreshing()
         revealControls()
         let code = (error as NSError).code
@@ -536,12 +546,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             String(url.absoluteString.split(separator: "#", maxSplits: 1).first ?? "").lowercased()) {
             decisionHandler(.allow, preferences)
         } else if scheme == "data" && (navigationAction.targetFrame?.isMainFrame == false || navigationAction.shouldPerformDownload) {
-            decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+            decisionHandler(self.actionPolicy(for: navigationAction), preferences)
         } else if scheme == "file", let resource = Bundle.main.resourceURL,
                   url.standardizedFileURL.path.hasPrefix(resource.path + "/") {
             decisionHandler(.allow, preferences)
         } else if scheme == "blob" {
-            decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+            decisionHandler(self.actionPolicy(for: navigationAction), preferences)
         } else {
             decisionHandler(.cancel, preferences)
             if navigationAction.navigationType == .linkActivated,
@@ -552,6 +562,14 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             }
             // A background frame or automatic app redirect must not replace the page with an error.
         }
+    }
+
+    private func actionPolicy(for action: WKNavigationAction) -> WKNavigationActionPolicy {
+        if action.shouldPerformDownload {
+            expectsDownloadPolicyInterruption = true
+            return .download
+        }
+        return .allow
     }
 
     private func authorizeRedditTap(_ url: URL, completion: @escaping (Bool) -> Void) {
@@ -584,7 +602,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             if !adBlockingEnabled || !blockAds {
                 policyGeneration = UUID()
                 applyBlocking([], to: webView)
-                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                decisionHandler(self.actionPolicy(for: navigationAction), preferences)
                 return
             }
             let generation = UUID()
@@ -595,14 +613,18 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                     decisionHandler(.cancel, preferences); return
                 }
                 self.applyBlocking(rules, to: webView)
-                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                decisionHandler(self.actionPolicy(for: navigationAction), preferences)
             }
-        } else { decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences) }
+        } else { decisionHandler(self.actionPolicy(for: navigationAction), preferences) }
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void) {
-        decisionHandler(navigationResponse.canShowMIMEType ? .allow : .download)
+        let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
+            .split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let shouldDownload = disposition == "attachment" || !navigationResponse.canShowMIMEType
+        if shouldDownload { expectsDownloadPolicyInterruption = true }
+        decisionHandler(shouldDownload ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {

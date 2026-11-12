@@ -63,6 +63,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Disposition', 'attachment; filename="oversized.bin"')
             self.send_header('Content-Length', str(1073741825))
             self.end_headers(); return
+        if self.path.startswith('/download-inline'):
+            self.send_header('Content-Type', 'text/plain')
+            self.send_header('Content-Disposition', 'inline; filename="inline.txt"')
+            self.end_headers(); self.wfile.write(b'Inline document remains a webpage.'); return
         if self.path.startswith('/download'):
             self.send_header('Content-Type','application/octet-stream')
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')

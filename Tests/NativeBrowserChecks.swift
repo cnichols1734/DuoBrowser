@@ -1453,6 +1453,21 @@ final class NativeCheckRunner {
         let draft = try await js(tab, "document.querySelector('#kept').value") as? String
         try check(draft == "Preserved download draft" && tab.webView.url?.path == "/", "download and export dismissal preserve the source page and draft")
 
+        let directTab = session.newTab()
+        mount(directTab)
+        directTab.navigate(to: "http://127.0.0.1:8765/download")
+        try await wait(timeout: 30) { manager.completedCount == 2 }
+        let attachment = manager.items[0]
+        let noDownloadError = tab.errorMessage == nil && directTab.errorMessage == nil
+        directTab.webView(directTab.webView, didFailProvisionalNavigation: nil,
+            withError: NSError(domain: "WebKitErrorDomain", code: 102))
+        try check(noDownloadError && directTab.errorMessage != nil, "download conversion suppresses only its expected policy interruption, not unrelated failures")
+        directTab.errorMessage = nil
+        try check(attachment.name == "browser-fixture.txt", "direct attachment navigation downloads even when WebKit can display its MIME type")
+        try await load(directTab, "download-inline")
+        try check(manager.items.count == 2 && directTab.webView.url?.path == "/download-inline", "inline disposition remains a webpage without creating a download")
+        manager.remove(attachment); session.close(directTab.id); session.releaseClosedTab(); mount(tab)
+
         let secondTab = session.newTab()
         try await load(secondTab, "")
         _ = try await js(secondTab, "const a=document.createElement('a');a.href='/download-slow';a.download='';document.body.append(a);a.click()")
