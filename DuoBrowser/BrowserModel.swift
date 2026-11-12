@@ -8,6 +8,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     #if DEBUG
     var testNavigationObserver: ((String) -> Void)?
     var testRedditTapAuthorization: ((URL) -> Bool)?
+    var testBlockingRules: (@MainActor () async -> [WKContentRuleList])?
     #endif
     static let redditTapWorld = WKContentWorld.world(name: "DuoBrowser.RedditTap")
     let id: UUID
@@ -32,13 +33,23 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     @Published var blockingStatus = "Preparing protection"
     private(set) var adBlockingEnabled = true
 
+    private var blockingGeneration = UUID()
+    private func currentBlockingRules() async -> [WKContentRuleList] {
+        #if DEBUG
+        if let testBlockingRules { return await testBlockingRules() }
+        #endif
+        return await ContentBlocking.rules()
+    }
     func setAdBlockingEnabled(_ enabled: Bool) {
         adBlockingEnabled = enabled
+        blockingGeneration = UUID()
+        let generation = blockingGeneration
         guard let view = loadedWebView else { return }
         if !enabled || !blockAds { applyBlocking([], to: view); return }
-        Task { @MainActor [weak self] in
-            let rules = await ContentBlocking.rules()
-            guard let self, !self.closed, let view = self.loadedWebView else { return }
+        Task { @MainActor [weak self, weak view] in
+            guard let self else { return }
+            let rules = await self.currentBlockingRules()
+            guard !self.closed, self.blockingGeneration == generation, let view, self.loadedWebView === view else { return }
             self.applyBlocking(rules, to: view)
         }
     }
@@ -48,7 +59,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private func applyBlocking(_ rules: [WKContentRuleList], to view: WKWebView) {
         let desired = adBlockingEnabled && blockAds ? rules : []
         blockingStatus = !adBlockingEnabled ? "Off in Settings" : !blockAds ? "Off for this site"
-            : rules.isEmpty ? "Protection unavailable" : "Protection on"
+            : rules.isEmpty ? "Protection unavailable" : FilterCatalog.shared.preparing ? "Preparing full protection"
+            : FilterCatalog.shared.usingFallback ? "Basic protection on" : "Protection on"
         // Initial preparation and navigation may both deliver the same catalog.
         // Avoid invalidating cosmetic styles on a page whose protection is unchanged.
         guard attachedBlockingRules.map(\.identifier) != desired.map(\.identifier) else { return }
@@ -576,12 +588,24 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             let generation = UUID()
             policyGeneration = generation
             Task { @MainActor [weak self] in
-                let rules = await ContentBlocking.rules()
-                guard let self, !self.closed, self.policyGeneration == generation else {
-                    decisionHandler(.cancel, preferences); return
+                guard let self else { decisionHandler(.cancel, preferences); return }
+                // Initial compilation or a setting change may supersede an awaited catalog.
+                // Resolve current protection before the first request; never proceed with stale rules.
+                for _ in 0..<4 {
+                    let blockingGeneration = self.blockingGeneration
+                    let rules = await self.currentBlockingRules()
+                    guard !self.closed, self.loadedWebView === webView, self.policyGeneration == generation else {
+                        decisionHandler(.cancel, preferences); return
+                    }
+                    guard self.blockingGeneration == blockingGeneration else { continue }
+                    self.applyBlocking(rules, to: webView)
+                    decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                    return
                 }
-                self.applyBlocking(rules, to: webView)
-                decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences)
+                // Continuous changes must not leave a navigation policy decision pending forever.
+                self.blockingStatus = !self.adBlockingEnabled ? "Off in Settings" : !self.blockAds ? "Off for this site" : "Protection is updating"
+                self.errorMessage = "Protection settings changed while this page was opening. Try opening the page again."
+                decisionHandler(.cancel, preferences)
             }
         } else { decisionHandler(navigationAction.shouldPerformDownload ? .download : .allow, preferences) }
     }
