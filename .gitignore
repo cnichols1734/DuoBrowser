@@ -23,3 +23,4 @@ node_modules/
 playwright-report/
 test-results/
 
+!Configuration/ApprovedDefaultBrowser.xcconfig

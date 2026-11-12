@@ -12,6 +12,8 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 
 ## Features
 
+- Optional first-run walkthrough with setup reentry from Page options. Direct Safari transfer integration is prepared with category selection and review before saving; activation awaits Apple’s Default Web Browser approval. No file-export/import workflow. See [status and requirements](docs/SAFARI_TRANSFER.md).
+
 - Full-width browsing with camera-aware adjustments based on actual system geometry. Page options includes **Time, Signal & Battery**, a remembered on/off control.
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.

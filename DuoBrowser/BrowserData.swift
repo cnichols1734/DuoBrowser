@@ -39,11 +39,27 @@ struct SitePreference: Codable, Equatable {
     var blockAds: Bool? = nil
 }
 
+enum LibraryLimits {
+    static let bookmarks = 10_000
+    static let history = 20_000
+    static let readingList = 10_000
+    static let folders = 2_000
+    static let archiveBytes = 32_000_000
+}
+
+struct BookmarkFolder: Codable, Identifiable {
+    var id = UUID()
+    var title: String
+    var parentID: UUID?
+}
+
 struct LibraryEntry: Codable, Identifiable {
     var id = UUID()
     var address: String
     var title: String
     var date = Date()
+    var folderID: UUID? = nil
+    var isFavorite: Bool? = nil
 }
 
 struct BrowserArchive: Codable {
@@ -53,6 +69,8 @@ struct BrowserArchive: Codable {
     var bookmarks: [LibraryEntry] = []
     var sites: [String: SitePreference] = [:]
     var workspaces: [Workspace]? = nil
+    var bookmarkFolders: [BookmarkFolder]? = nil
+    var readingList: [LibraryEntry]? = nil
 
     func validated() -> BrowserArchive? {
         guard version == 1, let session = session.validated() else { return nil }
@@ -77,8 +95,27 @@ struct BrowserArchive: Codable {
                     var e = entry; e.title = String(e.title.prefix(512)); return e
                 }
         }
-        result.history = clean(history, limit: 1000)
-        result.bookmarks = clean(bookmarks, limit: 500)
+        result.history = clean(history, limit: LibraryLimits.history)
+        result.bookmarks = clean(bookmarks, limit: LibraryLimits.bookmarks)
+        result.readingList = clean(readingList ?? [], limit: LibraryLimits.readingList)
+        var folderIDs = Set<UUID>()
+        result.bookmarkFolders = Array((bookmarkFolders ?? []).filter { folderIDs.insert($0.id).inserted }.prefix(LibraryLimits.folders))
+        let folderLookup = Dictionary(uniqueKeysWithValues: (result.bookmarkFolders ?? []).map { ($0.id, $0.parentID) })
+        // Reject corrupted or cyclic folder graphs rather than creating inaccessible saved pages.
+        for folder in result.bookmarkFolders ?? [] {
+            var seen: Set<UUID> = [folder.id]
+            var parent = folder.parentID
+            while let id = parent {
+                guard seen.count <= 32, seen.insert(id).inserted, let next = folderLookup[id] else { return nil }
+                parent = next
+            }
+        }
+        result.bookmarkFolders = result.bookmarkFolders?.map {
+            var folder = $0; folder.title = String(folder.title.prefix(512)); return folder
+        }
+        for entry in result.bookmarks where entry.folderID != nil {
+            guard folderLookup.keys.contains(entry.folderID!) else { return nil }
+        }
         result.sites = Dictionary(uniqueKeysWithValues: sites.sorted { $0.key < $1.key }
             .filter { !$0.key.isEmpty && $0.key.count <= 253 }.prefix(500).map { ($0.key, $0.value) })
         return result
@@ -95,38 +132,40 @@ final class BrowserArchiveStore {
     }
     private var primary: URL { directory.appendingPathComponent("session.json") }
     private var backup: URL { directory.appendingPathComponent("session.backup.json") }
+    private var writeOptions: Data.WritingOptions {
+        #if os(iOS)
+        // Apply protection to the atomic write itself. Nothing may throw after
+        // replacing the primary, or callers could report a committed save as failed.
+        return [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        #else
+        return .atomic
+        #endif
+    }
     private func decode(_ url: URL) -> BrowserArchive? {
         guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
-              (values.fileSize ?? Int.max) <= 8_000_000,
+              (values.fileSize ?? Int.max) <= LibraryLimits.archiveBytes,
               let data = try? Data(contentsOf: url),
               let archive = try? JSONDecoder().decode(BrowserArchive.self, from: data) else { return nil }
         return archive.validated()
     }
     func load() -> BrowserArchive? { decode(primary) ?? decode(backup) }
     func write(_ archive: BrowserArchive) throws {
-        guard let valid = archive.validated() else { return }
+        guard let valid = archive.validated() else { throw CocoaError(.fileWriteInvalidFileName) }
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var folder = directory
         var values = URLResourceValues(); values.isExcludedFromBackup = true
         try folder.setResourceValues(values)
         let data = try JSONEncoder().encode(valid)
+        guard data.count <= LibraryLimits.archiveBytes else { throw CocoaError(.fileWriteOutOfSpace) }
         if let old = decode(primary) {
-            try JSONEncoder().encode(old).write(to: backup, options: .atomic)
+            try JSONEncoder().encode(old).write(to: backup, options: writeOptions)
         }
-        try data.write(to: primary, options: .atomic)
-        #if os(iOS)
-        for file in [primary, backup] where manager.fileExists(atPath: file.path) {
-            try manager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: file.path)
-        }
-        #endif
+        try data.write(to: primary, options: writeOptions)
     }
     /// Deletion writes both generations so recovery cannot resurrect deleted history.
     func replace(_ archive: BrowserArchive) throws {
         try write(archive)
-        try Data(contentsOf: primary).write(to: backup, options: .atomic)
-        #if os(iOS)
-        try manager.setAttributes([.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication], ofItemAtPath: backup.path)
-        #endif
+        try Data(contentsOf: primary).write(to: backup, options: writeOptions)
     }
 }
 

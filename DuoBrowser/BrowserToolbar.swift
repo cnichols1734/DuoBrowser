@@ -221,7 +221,10 @@ struct BrowserToolbar: View {
             Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
             Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
                 .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
-            Button("Bookmarks & History", systemImage: "book") { session.showingLibrary = true }
+            Button("Library", systemImage: "book") { session.showingLibrary = true }
+            Button("Set Up DuoBrowser", systemImage: "sparkles") {
+                session.setup.reopen(); session.showingSetup = true
+            }
             Button("Website Protection", systemImage: browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
             Toggle(isOn: $session.showSystemStatus) {
                 Label("Time, Signal & Battery", systemImage: "info.circle")
@@ -260,7 +263,7 @@ private struct BrowserPrivacyView: View {
             List {
                 Section("Your browsing data") {
                     Text("DuoBrowser has no app analytics, advertising SDKs or tracking service. History, bookmarks, settings and normal tabs are stored in the app on your device and may be included in system backups.")
-                    Text("Delete history and bookmarks in Bookmarks & History. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
+                    Text("Delete history, bookmarks, folders, and Reading List items in Library. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
                 }
                 Section("Private browsing") {
                     Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Private mode does not hide your network traffic.")

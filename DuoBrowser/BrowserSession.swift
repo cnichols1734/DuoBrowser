@@ -10,6 +10,11 @@ final class BrowserSession: ObservableObject {
     @Published private(set) var privateMode = false
     @Published var history: [LibraryEntry] = []
     @Published var bookmarks: [LibraryEntry] = []
+    @Published var bookmarkFolders: [BookmarkFolder] = []
+    @Published var readingList: [LibraryEntry] = []
+    @Published var showingSetup = false
+    let setup: BrowserSetupModel
+    var favorites: [LibraryEntry] { bookmarks.filter { $0.isFavorite != false } }
     @Published var showingLibrary = false
     @Published var showRegions = false
     @Published var showSystemStatus: Bool {
@@ -41,6 +46,7 @@ final class BrowserSession: ObservableObject {
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
         self.settingsStorage = storage
+        self.setup = BrowserSetupModel(storage: storage)
         self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
         self.archiveStore = archiveStore
@@ -61,6 +67,8 @@ final class BrowserSession: ObservableObject {
         } ?? [BrowserModel(id: firstID, dataStore: dataStore)]
         history = saved?.history ?? []
         bookmarks = saved?.bookmarks ?? []
+        bookmarkFolders = saved?.bookmarkFolders ?? []
+        readingList = saved?.readingList ?? []
         normalSites = saved?.sites ?? [:]
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
@@ -138,7 +146,7 @@ final class BrowserSession: ObservableObject {
             guard let self, let tab, self.tabs.contains(where: { $0.id == tab.id }), !tab.isPrivate, WebAddress.valid(url) != nil else { return }
             if self.history.first?.address == url.absoluteString { self.history.removeFirst() }
             self.history.insert(LibraryEntry(address: url.absoluteString, title: String(title.prefix(512))), at: 0)
-            self.history = Array(self.history.prefix(1000))
+            self.history = Array(self.history.prefix(LibraryLimits.history))
             self.scheduleSave()
         }
         tab.preferenceForURL = { [weak self, weak tab] url in
@@ -390,8 +398,12 @@ final class BrowserSession: ObservableObject {
         guard let url = selected.restorationURL else { return }
         // Deliberate Save is allowed in private mode; automatic history is never recorded there.
         guard !bookmarks.contains(where: { $0.address == url.absoluteString }) else { return }
+        guard bookmarks.count < LibraryLimits.bookmarks else {
+            selected.errorMessage = "Your bookmark library is full. Delete a bookmark before saving another page."
+            return
+        }
         bookmarks.insert(LibraryEntry(address: url.absoluteString, title: selected.title), at: 0)
-        bookmarks = Array(bookmarks.prefix(500))
+        bookmarks = Array(bookmarks.prefix(LibraryLimits.bookmarks))
         saveNow()
     }
     func deleteHistory(ids: Set<UUID>? = nil) {
@@ -404,6 +416,36 @@ final class BrowserSession: ObservableObject {
         bookmarks.removeAll { ids.contains($0.id) }
         saveNow(replaceBackup: true)
     }
+    func deleteReadingList(ids: Set<UUID>) {
+        readingList.removeAll { ids.contains($0.id) }
+        saveNow(replaceBackup: true)
+    }
+
+    func deleteBookmarkFolder(_ id: UUID) {
+        var ids: Set<UUID> = [id]
+        for _ in 0..<32 {
+            let children = bookmarkFolders.filter { $0.parentID.map(ids.contains) ?? false }.map(\.id)
+            let previous = ids.count
+            ids.formUnion(children)
+            if previous == ids.count { break }
+        }
+        bookmarkFolders.removeAll { ids.contains($0.id) }
+        bookmarks.removeAll { $0.folderID.map(ids.contains) ?? false }
+        WebsiteIconStore.shared.clear()
+        saveNow(replaceBackup: true)
+    }
+
+    func applyImport(_ plan: BrowserImportPlan) throws {
+        guard !privateMode else { throw BrowserImportError.saveFailed }
+        let previous = (bookmarks, bookmarkFolders, history, readingList)
+        bookmarks = plan.bookmarks; bookmarkFolders = plan.folders
+        history = plan.history; readingList = plan.readingList
+        guard saveNow() else {
+            (bookmarks, bookmarkFolders, history, readingList) = previous
+            throw BrowserImportError.saveFailed
+        }
+    }
+
     func background() {
         tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot(); $0.cancelReader() } }
         saveNow()
@@ -426,7 +468,8 @@ final class BrowserSession: ObservableObject {
             TabRecord(id: $0.id, address: $0.restorationURL?.absoluteString, fixture: $0.isFixture,
                       scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
         }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
-        history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces)
+        history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces,
+        bookmarkFolders: bookmarkFolders, readingList: readingList)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
             return true
