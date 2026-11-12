@@ -204,13 +204,8 @@ struct BrowserSetup: View {
                         }
                     }
                 }
-                if let message = model.message, model.state != .review {
+                if let message = model.message {
                     Text(message).font(.subheadline).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("setup.import.status")
-                }
-                if model.state == .review {
-                    Text("Nothing is saved until you tap Add Selected Data.")
-                        .font(.footnote).foregroundStyle(.secondary)
                         .accessibilityIdentifier("setup.import.status")
                 }
                 if model.state != .saved {

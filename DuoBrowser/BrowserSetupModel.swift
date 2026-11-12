@@ -155,7 +155,7 @@ final class BrowserSetupModel: ObservableObject {
         batch = incoming; folders = options; favoriteFolder = ""
         storage.set(false, forKey: "setup.transferPending")
         state = .review
-        message = "Choose what to keep. Nothing is saved until you tap Add Selected Data."
+        message = "Nothing is saved until you tap Add Selected Data."
     }
 
     func save(into session: BrowserSession) {

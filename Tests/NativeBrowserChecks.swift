@@ -1038,6 +1038,7 @@ private final class NativeCheckRunner {
         defer { failing.tabs.forEach { $0.close() } }
         model.save(into: failing)
         try check(model.state == .review && failing.history.isEmpty, "failed durable save preserves review and rolls back library")
+        try check(model.message == BrowserImportError.saveFailed.localizedDescription, "failed durable save supplies recovery instructions during review")
         model.cancel()
         try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
     }
