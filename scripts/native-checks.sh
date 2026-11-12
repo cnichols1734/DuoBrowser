@@ -91,7 +91,7 @@ for attempt in range(180):
 else: raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
-run_receipt DownloadChecks.txt 37 --download-checks
+run_receipt DownloadChecks.txt 41 --download-checks
 run_receipt SettingsChecks.txt 40 --settings-checks
 run_receipt SetupChecks.txt 23 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks
