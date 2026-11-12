@@ -2,6 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p work/checks
+swiftc -warnings-as-errors DuoBrowser/DownloadStore.swift Tests/DownloadStoreTests.swift -o work/checks/downloads
+work/checks/downloads
 swiftc -warnings-as-errors DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/checks/scroll
 work/checks/scroll
 swiftc -warnings-as-errors DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/checks/archive

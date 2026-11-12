@@ -1,0 +1,34 @@
+PASS: real navigation download receives the server filename
+PASS: WebKit download persists with its byte size
+PASS: completion does not interrupt browsing with an exporter
+PASS: normal completed download restores from disk
+PASS: restored file retains its contents
+PASS: dismissing Files export keeps the downloaded file
+PASS: download and export dismissal preserve the source page and draft
+PASS: native WebKit progress exposes actual transferred bytes
+PASS: closing originating normal tab leaves the session transfer active
+PASS: closed-tab download completed: completed, no error
+PASS: transfer retains its original WebKit cookie profile
+PASS: first cancel fixture remains active: interrupted, no error
+PASS: two independent transfers overlap: 2, no error
+PASS: individual cancel retains a safe GET retry
+PASS: cancel affects only its own transfer
+PASS: GET retry uses the same WebKit cookie profile
+PASS: identical filenames remain separate downloads
+PASS: network failure offers a bounded WebKit retry
+PASS: retry completes after a synthetic interrupted response
+PASS: unknown-length transfer still reports actual bytes without inventing a percentage
+PASS: oversized response is rejected before allocating a destination
+PASS: download uses platform certificate validation and rejects untrusted TLS
+PASS: failed POST download never offers a potentially mutating replay
+PASS: removed retry cannot reappear after its asynchronous callback
+PASS: stale retry does not recreate deleted download files
+PASS: last normal tab closes to native Start Page without a mounted webpage
+PASS: download finishes after last normal tab closes to native Start Page
+PASS: private download metadata never persists
+PASS: last private-tab closure clears private transfers and files
+PASS: private cleanup preserves normal downloads
+PASS: normal manifest excludes origins, cookies and resume tokens
+PASS: filesystem deletion failure retains the download row and explains recovery
+PASS: explicit Remove deletes the retained app copy
+PASS: removing one retained file leaves other downloads available

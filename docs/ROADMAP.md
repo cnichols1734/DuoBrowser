@@ -299,3 +299,12 @@ Debug and Release simulator builds passed; 139 portable assertions (28 new impor
 The final synthetic review UI was exercised with Favorites mapped and History deselected; it saved one bookmark, one favorite, zero history entries, and one Reading List item. [Verification and screenshot](reviews/2026-11-11-setup/README.md).
 
 - PR #15 review follow-up: preserve distinct same-named source folders with one-to-one destination matching; apply archive file protection within atomic writes so there is no throwing post-commit operation. Portable coverage now totals 148 assertions. Device-only protection-class checks added because the simulator omits that metadata. Initial hosted CI failed during simulator startup before native tests; require passing CI on the corrected head before merge.
+
+
+## Native Downloads — November 12, 2026
+
+Added Page options → Downloads with filenames, byte progress, per-item Cancel/Retry, Quick Look, Save to Files and explicit removal. Normal files belong to the session and survive tab closure/relaunch; dismissing export keeps the app copy. Private transfers and files are isolated and removed with the last private tab. Safe retry uses a WebKit resume token or the unchanged original webpage context; a fresh data store alone is insufficient to preserve cookie context. No credentials are extracted or POST requests replayed.
+
+Files use bounded UUID directories, sanitized names, protected/excluded-from-backup storage and a manifest without URLs, credentials or resume tokens. Failed deletion remains visible; recovered files have explicitly unverified completion and count toward actual disk limits. See [behavior and boundaries](DOWNLOADS.md) and [review evidence](reviews/2026-11-12-downloads/README.md).
+
+Validation: Debug simulator build, 220 portable assertions (28 new storage checks), 186 browser/DOM assertions and strict SwiftLint passed. All 34 native Downloads checks passed, including authenticated retry, file export dismissal, independent cancellation, source-tab closure, last-normal-tab closure to native Start Page with no loaded WKWebView, stale callbacks and private cleanup. Initial runs found source lifecycle and retry cookie-context issues; both were corrected before this passing run. Full native regression, final Release and manual UI results are recorded in the review evidence after completion. Physical touch/energy, iOS suspension, signed Files-provider export and full spoken VoiceOver remain device acceptance work. No merge or release was performed.

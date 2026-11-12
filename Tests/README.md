@@ -92,3 +92,10 @@ CI validates workflows with actionlint, checks pinned tool digests, scans full G
 `npm test` includes the 44-check bounded Reader extraction suite. The native script also runs `--browser-checks --upgrade-checks` and requires 55 passing assertions in `Library/Caches/UpgradeChecks.txt`. This covers workspace/pin restoration, local search and private boundaries, Reader cancellation and untouched forms/scroll, Peek lifetime and same-view promotion, and actual WKContentRuleList blocking/exception/first-party behavior using loopback fixtures. A Debug-only host substitution makes the production rule flags testable without external ad requests. No normal browsing data is used.
 
 Reader follow-up adds synthetic image order/loading, full-width camera fitting and restoration, typed markup validation, CSP, shared/ephemeral profile, and temporary-view cleanup checks. The native settling suite now requires 34 checks, including horizontal-overflow shells and column-flex article flow.
+
+
+## Download management checks
+
+`DownloadStoreTests.swift` adds portable tests for the bounded persistent manifest, safe filenames, path/symlink rejection, retained-file integrity checks and private cleanup. `scripts/check.sh` runs these checks.
+
+`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 34 checks in `DownloadChecks.txt`. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).

@@ -21,6 +21,10 @@
 "8F9A7C611BD046A4A911B001" = { isa = PBXBuildFile; fileRef = "8F9A7C611BD046A4A911A001"; };
 "8F9A7C611BD046A4A911A000" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SavedPages.swift; sourceTree = "<group>"; };
 "8F9A7C611BD046A4A911B000" = { isa = PBXBuildFile; fileRef = "8F9A7C611BD046A4A911A000"; };
+"D06D00000000000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadsView.swift; sourceTree = "<group>"; };
+"D06D10000000000000000001" = { isa = PBXBuildFile; fileRef = "D06D00000000000000000001"; };
+"D06D00000000000000000000" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadStore.swift; sourceTree = "<group>"; };
+"D06D10000000000000000000" = { isa = PBXBuildFile; fileRef = "D06D00000000000000000000"; };
 "DB5100000000000000000005" = { isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = RedditTap.js; sourceTree = "<group>"; };
 "DB5200000000000000000005" = { isa = PBXBuildFile; fileRef = "DB5100000000000000000005"; };
 "DB5100000000000000000004" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RedditLinkRouting.swift; sourceTree = "<group>"; };
@@ -208,6 +212,8 @@
 "80E262EA78178C607CB98FD6",
 				"B7F643DAAB884B9ACBDD9281",
 				"D4047B891DE2FE8B64BC4CE2",
+"D06D00000000000000000001",
+"D06D00000000000000000000",
 				"499E8B100639209979D2F241",
 "8F9A7C611BD046A4A911A002",
 "8F9A7C611BD046A4A911A003",
@@ -276,6 +282,8 @@
 "06B4A2B885D6259AD4F62EDE",
 				"633D407FA64D304DEE8BABB4",
 				"8706D5B2472C6173E7D3BED0",
+"D06D10000000000000000001",
+"D06D10000000000000000000",
 				"8AD28E05760063DD7CB8F2FC",
 "8F9A7C611BD046A4A911B002",
 "8F9A7C611BD046A4A911B003",

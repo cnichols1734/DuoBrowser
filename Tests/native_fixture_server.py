@@ -1,8 +1,8 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-import struct, zlib
-from urllib.parse import urlsplit, parse_qs
+import struct, zlib, time
+from urllib.parse import urlsplit, urlparse, parse_qs
 from threading import Lock
 
 FRAME_REQUESTS = {}
@@ -17,6 +17,7 @@ PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initi
 <a href="/download" download>Download fixture</a><input type="file" multiple><input type="file" accept="image/*">
 <p id="result"></p><main><p>Find this browser fixture.</p></main><footer><button onclick="this.textContent='Footer works'">Footer action</button></footer>'''
 class Handler(BaseHTTPRequestHandler):
+    failed_downloads = set()
     def log_message(self, *_): pass
     def do_GET(self):
         self.send_response(200)
@@ -41,6 +42,27 @@ class Handler(BaseHTTPRequestHandler):
                 return struct.pack('!I', len(payload)) + kind + payload + struct.pack('!I', zlib.crc32(kind + payload))
             png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
             self.send_header('Content-Type', 'image/png'); self.end_headers(); self.wfile.write(png); return
+        if self.path.startswith(('/download-slow', '/download-retry', '/download-chunked')):
+            authorized = 'duo-download=synthetic' in self.headers.get('Cookie', '')
+            payload = (b'Authenticated synthetic download.\n' if authorized else b'No cookie.\n') * 16000
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="download-progress.txt"')
+            if not self.path.startswith('/download-chunked'): self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            token = parse_qs(urlparse(self.path).query).get('case', ['default'])[0]
+            if self.path.startswith('/download-retry') and token not in self.failed_downloads:
+                self.failed_downloads.add(token)
+                self.wfile.write(payload[:4096]); self.wfile.flush(); self.close_connection = True; return
+            try:
+                for offset in range(0, len(payload), 8192):
+                    self.wfile.write(payload[offset:offset+8192]); self.wfile.flush(); time.sleep(0.15)
+            except (BrokenPipeError, ConnectionResetError): pass
+            return
+        if self.path.startswith('/download-too-large'):
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="oversized.bin"')
+            self.send_header('Content-Length', str(1073741825))
+            self.end_headers(); return
         if self.path.startswith('/download'):
             self.send_header('Content-Type','application/octet-stream')
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')
@@ -65,6 +87,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b'<meta name="viewport" content="width=device-width"><title>Memory fixture</title><input id="kept"><main style="height:2400px">Synthetic page</main>')
         else: self.wfile.write(PAGE.encode())
     def do_POST(self):
+        if self.path.startswith('/download-post'):
+            self.rfile.read(min(4096, int(self.headers.get('Content-Length', '0'))))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="post-result.txt"')
+            self.send_header('Content-Length', '1000')
+            self.end_headers(); self.wfile.write(b'Partial POST response.'); self.close_connection = True; return
         body=self.rfile.read(min(4096,int(self.headers.get('Content-Length','0'))))
         self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers()
         self.wfile.write(b'<title>POST child</title><p id="received">'+body.replace(b'<',b'&lt;')+b'</p><script>if(opener)opener.postReceived=true;</script>')

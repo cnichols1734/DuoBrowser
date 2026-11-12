@@ -22,6 +22,8 @@ final class BrowserSession: ObservableObject {
         }
     }
     let setup: BrowserSetupModel
+    let normalDownloads: BrowserDownloads
+    private var privateDownloads: BrowserDownloads?
     let redditLinks: RedditLinkRouting
     var favorites: [LibraryEntry] { bookmarks.filter { $0.isFavorite != false } }
     @Published var showingLibrary = false
@@ -66,7 +68,8 @@ final class BrowserSession: ObservableObject {
         self.normalStore = dataStore
         self.archiveStore = archiveStore
         self.offlineStore = offlineStore ?? OfflineArticleStore(directory: archiveStore.directory.appendingPathComponent("OfflineArticles", isDirectory: true))
-        BrowserDownloads.cleanPreviousSession()
+        normalDownloads = BrowserDownloads(isPrivate: false, dataStore: dataStore,
+            directory: archiveStore.directory.appendingPathComponent("Downloads", isDirectory: true))
         let saved = archiveStore.load()
         let legacy = storage.data(forKey: "browser.tabs.v1").flatMap {
             $0.count <= 8_000_000 ? try? JSONDecoder().decode(TabArchive.self, from: $0) : nil
@@ -90,6 +93,7 @@ final class BrowserSession: ObservableObject {
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
         for tab in tabs { connect(tab) }
+        if let warning = normalDownloads.errorMessage { selected.errorMessage = warning }
         selected.activate()
         startFilterUpdates()
         lastNormalID = selectedID
@@ -126,6 +130,14 @@ final class BrowserSession: ObservableObject {
     }
 
     private func connect(_ tab: BrowserModel) {
+        if tab.isPrivate {
+            if privateDownloads == nil {
+                privateDownloads = BrowserDownloads(isPrivate: true, dataStore: store(isPrivate: true),
+                    directory: BrowserDownloads.stagingRoot.appendingPathComponent(UUID().uuidString))
+            }
+            tab.downloads = privateDownloads!
+        } else { tab.downloads = normalDownloads }
+        tab.downloadsOwnedBySession = true
         tab.redditLinks = redditLinks
         tab.setAdBlockingEnabled(adBlockingEnabled)
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
@@ -399,6 +411,10 @@ final class BrowserSession: ObservableObject {
         saveNow()
     }
     private func endPrivateSession() {
+        if privateDownloads?.cancelAll() == false {
+            for tab in tabs where !tab.isPrivate { tab.errorMessage = privateDownloads?.errorMessage }
+        }
+        privateDownloads = nil
         let old = privateStore
         privateStore = nil
         privateSites.removeAll()

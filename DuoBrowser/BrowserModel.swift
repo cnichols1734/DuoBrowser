@@ -69,7 +69,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private let configuration: WKWebViewConfiguration
     private(set) var loadedWebView: WKWebView?
     lazy var presentation = BrowserPresentation(browser: self)
-    lazy var downloads = BrowserDownloads(browser: self)
+    lazy var downloads = BrowserDownloads(isPrivate: true, dataStore: configuration.websiteDataStore,
+        directory: BrowserDownloads.stagingRoot.appendingPathComponent(UUID().uuidString))
+    var downloadsOwnedBySession = false
     var pendingScrollY: Double?
     private var restoringURL: URL?
     private var applyingPreferences = false
@@ -115,8 +117,6 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private func updatePageLayout() {
         pageLayout?.setEnabled(fullWidthLayout && !originalPageLayout)
     }
-    @Published var availableDownloads = 0
-    @Published var activeDownloads = 0
     @Published var address = ""
     @Published var canGoBack = false
     @Published var canGoForward = false
@@ -279,11 +279,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         policyGeneration = UUID()
         cancelReader()
         presentation.cancel()
-        downloads.cancelAll()
-        loadedWebView?.stopLoading()
+        if !downloadsOwnedBySession { downloads.cancelAll() }
+        if !downloads.hasWork(for: id) { loadedWebView?.stopLoading() }
         loadedWebView?.navigationDelegate = nil
         loadedWebView?.uiDelegate = nil
         loadedWebView?.scrollView.delegate = nil
+        downloads.sourceClosed(id)
         loadedWebView?.removeFromSuperview()
         loadedWebView = nil
         suspendedInteractionState = nil
@@ -442,7 +443,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     /// Only static reading documents can be suspended; forms and scripts may carry unsaved state.
     func suspendIfIdle(stillInactive: () -> Bool) async -> Bool {
         guard stillInactive(), let view = loadedWebView, view.window == nil, !view.isLoading,
-              currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork,
+              currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork(for: id),
               let url = restorationURL else { return false }
         let protected = try? await view.callAsyncJavaScript("""
             if (document.querySelector('script,form,input,textarea,select,[contenteditable],video,audio,iframe,canvas') || document.activeElement?.isContentEditable) return true;
@@ -451,7 +452,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             return Array.from(nodes).some(node => Array.from(node.attributes).some(attribute => attribute.name.startsWith('on')));
             """, arguments: [:], in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
         guard protected == false, stillInactive(), loadedWebView === view, view.window == nil, !view.isLoading,
-              view.url == url, currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork,
+              view.url == url, currentMethod == "GET", !hasWindowRelationships, !downloads.hasWork(for: id),
               let state = view.interactionState else { return false }
         suspendedInteractionState = state
         pendingURL = url
@@ -604,10 +605,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        downloads.add(download)
+        downloads.add(download, owner: id, source: webView)
+        if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        downloads.add(download)
+        downloads.add(download, owner: id, source: webView)
+        if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
 
 }
