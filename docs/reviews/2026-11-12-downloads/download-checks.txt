@@ -5,6 +5,8 @@ PASS: normal completed download restores from disk
 PASS: restored file retains its contents
 PASS: dismissing Files export keeps the downloaded file
 PASS: download and export dismissal preserve the source page and draft
+PASS: direct attachment navigation downloads even when WebKit can display its MIME type
+PASS: inline disposition remains a webpage without creating a download
 PASS: native WebKit progress exposes actual transferred bytes
 PASS: closing originating normal tab leaves the session transfer active
 PASS: closed-tab download completed: completed, no error

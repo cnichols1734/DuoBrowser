@@ -13,15 +13,25 @@ The list uses system typography, separators and navigation, with 44-point contro
 - Portable checks: 220 assertions passed, including 28 download-store assertions covering path/bidi/UTF-8 safety, manifest bounds, symlinks, persistence, deletion failure, orphan recovery and sparse-file quota accounting.
 - Browser/DOM checks: all 186 assertions passed.
 - SwiftLint strict: zero violations.
-- Debug simulator build: passed with Xcode 27.2 / iOS 27.1. Final Release and manual UI verification are still pending.
+- Debug simulator build: passed with Xcode 27.2 / iOS 27.1. Integrated Debug and Release simulator builds passed before the final scoped policy-error suppression. The final37-check native receipt and build confirmation for that small follow-up are delegated to the combined Settings branch validation.
 
 The first native run exposed a source-tab closure failure. The corrected implementation retains the source WKWebView, avoids stopping its active download when the normal tab closes, cancels further navigation and suspends that retained page's media. The corrected native suite passed all 34 checks, including the separate last-normal-tab case with no loaded replacement WKWebView. A second real finding was that a fresh retry web view lost cookie context: GET restart now uses the unchanged original page, with native resume tokens preferred. Authenticated retry passed after that correction.
 
-- Native Downloads: all 34 assertions passed on the existing iOS 27.1 Duo QA simulator. The complete native regression run is in progress.
+- Native Downloads: all 34 assertions passed on the existing iOS 27.1 Duo QA simulator. The complete standalone regression run passed: Setup24, Reddit29, Tabs19, Core93, Upgrade71, Settling34, cookie persistence4 and Memory13. After stacking on tabs/library/blocking, the expanded36-check download suite passed, including direct attachment and inline-document navigation. Integrated portable checks passed277 assertions; strict lint reported zero violations.
 
 ## Interaction evidence
 
-`before-menu.png` records the prior page-options download experience on the shared QA simulator (the Library feature was also installed on that baseline). Final feature screenshots and exercised interactions are recorded below after execution.
+`before-menu.png` records the prior page-options download experience on the shared QA simulator (the Library feature was also installed on that baseline). Manual Device Hub interaction confirmed:
+
+- Direct attachment becomes a named file; native Quick Look displays its exact synthetic text.
+- Save to Files opens the native destination picker. Invoking its Cancel accessibility action dismisses it; the retained row remains available for preview/export.
+- The slow fixture shows actual percentage and bytes. Individual Cancel changes only that row to Canceled; Retry restarts progress and reaches completed status. A same-named prior file remains intact.
+- Downloads stays usable through open, partial-fold, closed and rotated layouts. Maximum accessibility text hides decorative icons and keeps controls reachable in the scrollable native list. Dark appearance and Reduce Motion were exercised; accessibility exposes filenames, progress, cancel, retry and per-file actions.
+- Simulator restored to closed portrait, Light appearance, Text Size3, Reduce Motion off, Capture Keyboard off. No transfer was active at handoff.
+
+Screenshots: [completed files](completed-closed.png), [retried progress](retry-progress.png), [open/dark/maximum text](open-dark-large-text.png).
+
+Manual testing also found two policy issues: displayable server attachments previously rendered as pages, and successful conversion showed a misleading “Frame load interrupted” banner. The attachment correction passed two new native checks (36 total). The follow-up scopes suppression of the observed NSError domain/code to a download policy this model actually requested; its 37th assertion also verifies an unrelated same-code error still surfaces. That final assertion awaits the combined-stack run.
 
 ## Remaining device checks
 
