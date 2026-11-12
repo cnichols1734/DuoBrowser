@@ -16,6 +16,10 @@ struct FilterSettingsView: View {
                 Text("Uses EasyList Cookie List. Hiding a notice doesn’t choose consent for you. Turn this off if a website needs its consent controls. Reload when you’re ready to apply visual changes.")
             }
             Section {
+                if filters.preparing {
+                    HStack { ProgressView(); Text("Preparing Filters…") }
+                        .accessibilityElement(children: .combine)
+                }
                 Toggle("Automatic Updates", isOn: $filters.automaticUpdates)
                 if let date = filters.updatedAt {
                     LabeledContent("Filters Updated") { Text(date, style: .date).foregroundStyle(.secondary) }
