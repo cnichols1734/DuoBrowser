@@ -72,7 +72,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         attachedBlockingRules.forEach(controller.add)
     }
     private var policyGeneration = UUID()
-    private var expectsDownloadPolicyInterruption = false
+    private var expectedDownloadInterruptions: [URL] = []
     private var closed = false
     var onClose: (() -> Void)?
     var onVisit: ((URL, String) -> Void)?
@@ -290,6 +290,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     func close() {
         snapshotGeneration += 1
         closed = true
+        expectedDownloadInterruptions.removeAll()
         policyGeneration = UUID()
         cancelReader()
         presentation.cancel()
@@ -353,7 +354,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        expectsDownloadPolicyInterruption = false
+        expectedDownloadInterruptions.removeAll()
         presentation.cancel()
         documentGeneration = UUID()
         downloads.sourceDocumentChanged(id)
@@ -392,15 +393,26 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         restoringURL = nil
     }
 
+    func expectDownloadInterruption(for url: URL?) {
+        guard let url, url.absoluteString.utf8.count <= 16_384 else { return }
+        if !expectedDownloadInterruptions.contains(url) {
+            if expectedDownloadInterruptions.count == 8 { expectedDownloadInterruptions.removeFirst() }
+            expectedDownloadInterruptions.append(url)
+        }
+    }
+
     private func report(_ error: Error) {
         let failure = error as NSError
-        // WebKit reports this policy-interruption NSError when navigation becomes a download.
-        // Consume only a change this model requested; unrelated policy failures still surface.
-        if expectsDownloadPolicyInterruption, failure.domain == "WebKitErrorDomain", failure.code == 102 {
-            expectsDownloadPolicyInterruption = false
+        let failingURL = failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL ??
+            (failure.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
+        // Conversion may omit this callback or deliver it after the file completes. Attribute
+        // it to a requested download URL, never merely to the next policy error on the tab.
+        if failure.domain == "WebKitErrorDomain", failure.code == 102, let failingURL,
+           let index = expectedDownloadInterruptions.firstIndex(of: failingURL) {
+            expectedDownloadInterruptions.remove(at: index)
             return
         }
-        expectsDownloadPolicyInterruption = false
+        // An unrelated cancellation must not consume the expected conversion callback.
         guard failure.code != NSURLErrorCancelled else { return }
         loadedWebView?.scrollView.refreshControl?.endRefreshing()
         revealControls()
@@ -579,7 +591,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     private func actionPolicy(for action: WKNavigationAction) -> WKNavigationActionPolicy {
         if action.shouldPerformDownload {
-            expectsDownloadPolicyInterruption = true
+            expectDownloadInterruption(for: action.request.url)
             return .download
         }
         return .allow
@@ -648,7 +660,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let shouldDownload = disposition == "attachment" || !navigationResponse.canShowMIMEType
-        if shouldDownload { expectsDownloadPolicyInterruption = true }
+        if shouldDownload { expectDownloadInterruption(for: navigationResponse.response.url) }
         decisionHandler(shouldDownload ? .download : .allow)
     }
 

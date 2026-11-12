@@ -2,8 +2,8 @@
 
 The owner reported text remaining beneath the camera and abrupt motion. The
 simulator review reproduced a long paragraph beneath the camera with Original
-Layout off and full width on, under both Reduce Motion settings. This is evidence
-of the prior behavior; the new native interaction pass is still pending.
+Layout off and full width on, under both Reduce Motion settings. The updated
+production browser now keeps that long text clear of the camera.
 
 The previous fitter rejected every paragraph taller than 320 CSS pixels, even
 when ordinary text had room beside the camera. Validated side fitting now accepts
@@ -32,8 +32,22 @@ static avoidance; VoiceOver retains the existing conservative text behavior.
 - Eight added native assertions cover a long article intersecting an actual system
   occlusion, the production `ViewportView` geometry bridge, gradual interpolation
   and interruption, retained DOM/draft/font, Original Layout reversal and static
-  Reduce Motion. These are pending coordinated execution.
+  Reduce Motion. All 42 focused native camera assertions passed. A review follow-up sets Original
+  Layout after navigation applies site preferences and waits for reversal before
+  capturing the unadapted baseline; the focused rerun verifies that ordering.
 
-Simulator frame pacing and visible interaction inspection remain required. These
-checks do not establish physical-device performance, battery behavior, universal
-site adaptation or a full spoken VoiceOver pass.
+## Production UI inspection
+
+On the closed iOS 27.1 Duo QA simulator, the actual address field loaded the
+synthetic `/upgrades?camera-review#camera-reading` page. The paragraph anchor
+positions the long article beneath the system camera reproducibly. Screenshots
+show [camera avoidance](long-article-avoided.png), [Original Layout restoring the
+authored width](long-article-original.png), and [static avoidance with Reduce
+Motion enabled](long-article-reduce-motion.png). Website Settings controls were
+actually toggled; Full-width Page remained on. Reduce Motion was restored off.
+
+Device Hub scrolling returned `windowNotFoundAtPosition`, so this pass does not
+claim a manual scroll gesture or motion recording. Web and native interpolation
+checks establish bounded motion behavior; they do not establish frame rate,
+physical-device performance, battery behavior, universal site adaptation or a
+full spoken VoiceOver pass. Final combined-stack validation is tracked separately.
