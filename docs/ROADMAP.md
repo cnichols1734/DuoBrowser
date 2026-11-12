@@ -1,5 +1,10 @@
 # Build plan
 
+## Camera avoidance and gradual settling — November 12, 2026
+
+- Responds to the owner's long-paragraph camera overlap and abrupt-motion report. Side fitting now supports bounded longer paragraphs; mutation activity cannot indefinitely postpone fitting or repeatedly restart a glide. Motion uses a gentler horizontal transform, with one settled reflow, presentation-preserving interruption, unchanged reading anchors and static Reduce Motion avoidance.
+- 196 web assertions, 328 portable assertions, strict lint and Debug pass. Eight new native checks exercise actual system occlusions and the production geometry bridge; coordinated runtime and visible motion review remain pending. [Evidence and limits](reviews/2026-11-12-camera-settling/README.md).
+
 ## Tab recovery and navigation — November 12, 2026
 
 - Copilot follow-up: Undo measures its rendered height and spacing for WebKit's obscured-content reservation, including accessibility text and camera-aware control lifting. Ordinary notice expiry uses the original close timestamp; VoiceOver/accessibility sizes still keep explicit dismissal. Closed records and close capture share reopening's 8192-character URL contract. Eight portable URL/time regressions pass; three new native measured-height/footer/removal checks await the coordinated runtime run.

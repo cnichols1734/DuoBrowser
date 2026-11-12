@@ -11,6 +11,7 @@
   let geometry = null, timer = 0, touching = false, lastScroll = -Infinity, stopped = false;
   let ledger = new Map(), animations = new Map(), serial = 0;
   let bodySize = '', settlingScroll = null;
+  let pendingMutation = false;
   const rect = el => el.getBoundingClientRect();
   const near = (a, b) => Math.abs(a - b) < 1;
   const overlaps = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
@@ -23,11 +24,11 @@
     Math.abs((visualViewport?.scale ?? 1) - 1) > .01;
   const authorMotion = el => el.getAnimations().some(a => a !== animations.get(el));
   const observer = new MutationObserver(records => {
-    if (records.some(r => r.target !== sheet && r.target.parentNode !== sheet)) schedule();
+    if (records.some(r => r.target !== sheet && r.target.parentNode !== sheet)) scheduleMutation();
   });
   const sizeObserver = new ResizeObserver(() => {
     const r = document.body?.getBoundingClientRect();
-    if (r && `${r.width},${r.height}` !== bodySize) schedule();
+    if (r && `${r.width},${r.height}` !== bodySize) scheduleMutation();
   });
 
   function cancelAnimations() {
@@ -52,8 +53,13 @@
     el.removeAttribute(marker); ledger.delete(el); rules();
   }
   function schedule() {
-    clearTimeout(timer);
-    if (!stopped && geometry?.enabled) timer = setTimeout(settle, QUIET);
+    // Coalesce page activity without allowing an unrelated ticker to postpone work forever.
+    if (!timer && !stopped && geometry?.enabled) timer = setTimeout(settle, QUIET);
+  }
+  function scheduleMutation() {
+    pendingMutation = true;
+    // Background DOM updates must not restart an otherwise uninterrupted glide.
+    if (![...animations.values()].some(a => a.playState === 'running')) schedule();
   }
   function moving(event) {
     // A synchronous reading-position correction is not a new user scroll. Its
@@ -66,6 +72,7 @@
     lastScroll = performance.now();
     // Freeze at the current presentation, including when a new swipe interrupts settling.
     for (const a of animations.values()) if (a.playState === 'running') a.pause();
+    clearTimeout(timer); timer = 0;
     schedule();
   }
   function regionsNow() {
@@ -329,7 +336,7 @@
     if (!followers || geometry.voiceOver || !followers.every(canAnimateUnit)) return false;
     const box = rect(el), lines = textRects(el), css = getComputedStyle(el);
     if (!lines || !['static', 'relative'].includes(css.position) || css.float !== 'none' ||
-        css.display !== 'block' || box.height > 320) return false;
+        css.display !== 'block' || box.height > Math.min(1600, Math.max(480, innerHeight*2))) return false;
     if (!lines.some(line => regions.some(r => overlaps(line, r)))) return false;
     const before = new Map(followers.guards.map(n => [n, rect(n)]));
     const shells = new Map(followers.ancestors.map(n => [n, rect(n)]));
@@ -356,7 +363,7 @@
     }
     const after = rect(el), growth = after.height-box.height;
     const valid = side && near(after.top, box.top) && near(after.left, left) && near(after.right, right) &&
-      growth >= -1 && growth <= 160 && after.height <= 480 && !regions.some(r => overlaps(after, r)) &&
+      growth >= -1 && growth <= 160 && after.height <= Math.min(1760, Math.max(640, innerHeight*2+160)) && !regions.some(r => overlaps(after, r)) &&
       document.documentElement.scrollWidth <= innerWidth+1 && document.documentElement.scrollHeight <= beforeHeight+growth+1 &&
       [...before].every(([n, a]) => {
         const b = rect(n), delta = b.top-a.top;
@@ -393,9 +400,12 @@
       const opacity = Number(getComputedStyle(el).opacity);
       const a = el.animate([{transform:`translate(${dx}px,${dy}px)`, opacity:resized ? opacity*.8 : opacity},
         {transform:'translate(0px,0px)', opacity}],
-        {duration:DURATION, easing:'cubic-bezier(0.22, 1, 0.36, 1)'});
+        {duration:DURATION, easing:'cubic-bezier(0.25, 0.1, 0.35, 1)'});
       animations.set(el, a);
-      a.onfinish = () => { if (animations.get(el) === a) animations.delete(el); };
+      a.onfinish = () => {
+        if (animations.get(el) === a) animations.delete(el);
+        if (pendingMutation && ![...animations.values()].some(a => a.playState === 'running')) schedule();
+      };
     }
   }
   function readingAnchor(before) {
@@ -442,6 +452,7 @@
     if (stopped || !geometry?.enabled) return;
     if (touching || performance.now()-lastScroll < QUIET) { schedule(); return; }
     if (unavailable()) return;
+    pendingMutation = false;
     const regions = regionsNow(), old = new Map(ledger), nodes = candidates(regions, old);
     const motion = new Set([...old.keys(), ...animations.keys(), ...nodes]);
     // Pause/cancel only our animations; author animation remains a conservative fallback.
@@ -515,7 +526,7 @@
       reduceMotion:value.reduceMotion === true, voiceOver:value.voiceOver === true};
     if (JSON.stringify(next) === JSON.stringify(geometry)) return;
     geometry = next;
-    if (!value.enabled) { clearTimeout(timer); reset(); }
+    if (!value.enabled) { clearTimeout(timer); timer = 0; pendingMutation = false; reset(); }
     else schedule();
   }};
   addEventListener('scroll', moving, {passive:true, capture:true});
@@ -526,9 +537,9 @@
   for (const name of ['pointerup','pointercancel']) addEventListener(name, e => { if (e.pointerType === 'touch') return; touching = false; schedule(); }, {passive:true, capture:true});
   addEventListener('focusin', moving, {capture:true});
   addEventListener('focusout', schedule);
-  addEventListener('pagehide', () => { clearTimeout(timer); stopped = true; reset(); });
+  addEventListener('pagehide', () => { clearTimeout(timer); timer = 0; stopped = true; reset(); });
   addEventListener('pageshow', () => { stopped = false; touching = false; schedule(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(timer); cancelAnimations(); touching = false; } else schedule(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { clearTimeout(timer); timer = 0; cancelAnimations(); touching = false; } else schedule(); });
   document.addEventListener('selectionchange', () => { if (editing()) moving(); else schedule(); });
   document.addEventListener('fullscreenchange', schedule);
   // WebKit/Chromium can emit load for our own freshly attached stylesheet.
