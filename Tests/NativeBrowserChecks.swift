@@ -1579,6 +1579,36 @@ final class NativeCheckRunner {
                   "non-Reddit link preserves original web navigation without app launch")
     }
 
+    func downloadInterruptionAttributionChecks() throws {
+        let model = BrowserModel(isPrivate: true, dataStore: .nonPersistent())
+        defer { model.close() }
+        let expected = URL(string: "http://127.0.0.1:8765/download-attribution")!
+        let matching = NSError(domain: "WebKitErrorDomain", code: 102,
+                               userInfo: [NSURLErrorFailingURLErrorKey: expected])
+        func report(_ error: NSError) {
+            model.webView(model.webView, didFailProvisionalNavigation: nil, withError: error)
+        }
+        model.expectDownloadInterruption(for: expected)
+        report(NSError(domain: "WebKitErrorDomain", code: 102))
+        let missingVisible = model.errorMessage != nil
+        model.errorMessage = nil
+        report(NSError(domain: "WebKitErrorDomain", code: 102,
+                       userInfo: [NSURLErrorFailingURLErrorKey: URL(string: "http://127.0.0.1:8765/unrelated")!]))
+        try check(missingVisible && model.errorMessage != nil,
+                  "pending download never hides missing-URL or mismatched policy failures")
+        model.errorMessage = nil
+        report(NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+        report(matching)
+        try check(model.errorMessage == nil, "unrelated cancellation preserves the matching download interruption")
+        report(matching)
+        try check(model.errorMessage != nil, "a matching download interruption is consumed only once")
+        model.errorMessage = nil
+        model.expectDownloadInterruption(for: expected)
+        model.webView(model.webView, didStartProvisionalNavigation: nil)
+        report(matching)
+        try check(model.errorMessage != nil, "a new document invalidates pending download interruptions")
+    }
+
     func downloadsChecks() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DownloadChecks-" + UUID().uuidString)
         let defaults = UserDefaults(suiteName: "DuoBrowser.DownloadChecks")!
@@ -1623,12 +1653,14 @@ final class NativeCheckRunner {
         let noDownloadError = tab.errorMessage == nil && directTab.errorMessage == nil
         directTab.webView(directTab.webView, didFailProvisionalNavigation: nil,
             withError: NSError(domain: "WebKitErrorDomain", code: 102))
-        try check(noDownloadError && directTab.errorMessage != nil, "download conversion suppresses only its expected policy interruption, not unrelated failures")
+        try check(noDownloadError && directTab.errorMessage != nil,
+                  "download conversion suppresses only its expected policy interruption, not unrelated failures (conversionClear=\(noDownloadError), unrelatedVisible=\(directTab.errorMessage != nil))")
         directTab.errorMessage = nil
         try check(attachment.name == "browser-fixture.txt", "direct attachment navigation downloads even when WebKit can display its MIME type")
         try await load(directTab, "download-inline")
         try check(manager.items.count == 2 && directTab.webView.url?.path == "/download-inline", "inline disposition remains a webpage without creating a download")
         manager.remove(attachment); session.close(directTab.id); session.releaseClosedTab(); mount(tab)
+        try downloadInterruptionAttributionChecks()
 
         let secondTab = session.newTab()
         try await load(secondTab, "")
@@ -1723,24 +1755,47 @@ final class NativeCheckRunner {
 
         func retryThenCloseSource(afterProgress: Bool) async throws {
             let source = session.newTab()
-            try await load(source, "")
-            let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)")!)
+            do { try await load(source, "") }
+            catch {
+                throw NSError(domain: "Retry-close source load timed out; afterProgress=\(afterProgress), loading=\(source.webView.isLoading), errorPresent=\(source.errorMessage != nil)", code: 1)
+            }
+            let gate = UUID().uuidString
+            // Only a synthetic control request uses URLSession; the authenticated file stays in WebKit.
+            let controls = URLSession(configuration: .ephemeral)
+            defer { controls.invalidateAndCancel() }
+            func release(_ attempt: Int) async throws {
+                var control = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-release?gate=\(gate)&attempt=\(attempt)")!)
+                control.timeoutInterval = 10
+                let (data, _) = try await controls.data(for: control)
+                guard String(decoding: data, as: UTF8.self) == "released" else {
+                    throw NSError(domain: "Synthetic download gate rejected release", code: 1)
+                }
+            }
+            let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)&gate=\(gate)")!)
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 source.webView.startDownload(using: request) { download in
                     manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
                 }
             }
             let restarted = manager.items[0]
-            try await wait { restarted.received > 0 && restarted.isDownloading }
+            func awaitProgress(_ stage: String) async throws {
+                do { try await wait { restarted.received > 0 && restarted.isDownloading } }
+                catch {
+                    throw NSError(domain: "Retry-close \(stage) timed out; afterProgress=\(afterProgress), received=\(restarted.received), expected=\(restarted.expected), state=\(restarted.state.rawValue), active=\(restarted.isDownloading)", code: 1)
+                }
+            }
+            try await awaitProgress("initial progress")
             manager.cancel(restarted)
+            try await release(1)
             // Exercise the authenticated GET restart path deterministically, not an optional resume token.
             restarted.resumeData = nil
             manager.retry(restarted)
             try check(manager.hasWork(for: source.id), "GET retry owns its source while WebKit creates the transfer (afterProgress=\(afterProgress))")
-            if afterProgress { try await wait { restarted.received > 0 && restarted.isDownloading } }
+            if afterProgress { try await awaitProgress("retry progress") }
             session.close(source.id)
             session.releaseClosedTab() // Expire Undo now: this must work without its eight-second retention.
             mount(session.selected)
+            try await release(2)
             try await wait(timeout: 30) { !restarted.isDownloading }
             let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
             try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,

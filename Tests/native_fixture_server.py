@@ -3,10 +3,30 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import struct, zlib, time
 from urllib.parse import urlsplit, urlparse, parse_qs
-from threading import Lock
+from threading import Event, Lock
 
 FRAME_REQUESTS = {}
 FRAME_LOCK = Lock()
+
+class DownloadGate:
+    """Two bounded fixture attempts; release may arrive before the retry request."""
+    def __init__(self):
+        self.events = [Event(), Event()]
+        self.attempts = 0
+
+    def begin(self):
+        self.attempts += 1
+        return self.events[self.attempts - 1] if self.attempts <= 2 else None
+
+DOWNLOAD_GATES = {}
+DOWNLOAD_GATE_LOCK = Lock()
+
+def download_gate(token):
+    with DOWNLOAD_GATE_LOCK:
+        if token not in DOWNLOAD_GATES:
+            if len(DOWNLOAD_GATES) >= 16: return None
+            DOWNLOAD_GATES[token] = DownloadGate()
+        return DOWNLOAD_GATES[token]
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="icon" sizes="16x16" href="/favicon.ico"><link rel="apple-touch-icon" sizes="192x192" href="/touch-icon.png"><title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
@@ -22,6 +42,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         path = urlsplit(self.path)
+        query = parse_qs(path.query)
+        gate_token = query.get('gate', [''])[0][:64]
+        if path.path == '/download-release' and gate_token:
+            gate = download_gate(gate_token)
+            attempt = query.get('attempt', [''])[0]
+            if gate and attempt in ('1', '2'): gate.events[int(attempt) - 1].set()
+            self.send_header('Content-Type', 'text/plain'); self.send_header('Cache-Control', 'no-store')
+            self.end_headers(); self.wfile.write(b'released' if gate and attempt in ('1', '2') else b'rejected'); return
         token = parse_qs(path.query).get('token', [''])[0][:64]
         if path.path in ('/frame-ad', '/scope-probe', '/scope-negative', '/socket-probe') and token:
             with FRAME_LOCK:
@@ -53,10 +81,24 @@ class Handler(BaseHTTPRequestHandler):
             if self.path.startswith('/download-retry') and token not in self.failed_downloads:
                 self.failed_downloads.add(token)
                 self.wfile.write(payload[:4096]); self.wfile.flush(); self.close_connection = True; return
+            gate = download_gate(gate_token) if gate_token else None
+            with DOWNLOAD_GATE_LOCK:
+                attempt = gate.begin() if gate else None
+                attempt_number = gate.attempts if gate else 0
             try:
                 for offset in range(0, len(payload), 8192):
-                    self.wfile.write(payload[offset:offset+8192]); self.wfile.flush(); time.sleep(0.15)
+                    self.wfile.write(payload[offset:offset+8192]); self.wfile.flush()
+                    if gate_token and offset == 57344:
+                        # Preserve an observable in-progress transfer until the harness cancels/releases it.
+                        # Expiry interrupts the transfer rather than silently passing the test.
+                        if attempt is None or not attempt.wait(60):
+                            self.close_connection = True; return
+                    if not gate_token: time.sleep(0.15)
             except (BrokenPipeError, ConnectionResetError): pass
+            finally:
+                if gate and (attempt_number == 2 or attempt is None or not attempt.is_set()):
+                    with DOWNLOAD_GATE_LOCK:
+                        if DOWNLOAD_GATES.get(gate_token) is gate: DOWNLOAD_GATES.pop(gate_token)
             return
         if self.path.startswith('/download-too-large'):
             self.send_header('Content-Type', 'application/octet-stream')
