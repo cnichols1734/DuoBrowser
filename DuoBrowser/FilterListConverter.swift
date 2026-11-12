@@ -31,8 +31,8 @@ enum FilterListConverter {
         let lines = text.split(whereSeparator: \.isNewline).map(String.init)
         guard lines.count <= (combined ? 450_000 : 150_000) else { throw Failure.tooLarge }
         var disabled = Set<String>()
-        for line in lines where line.contains("badfilter") {
-            disabled.insert(line.replacingOccurrences(of: ",badfilter", with: "").replacingOccurrences(of: "badfilter,", with: "").replacingOccurrences(of: "$badfilter", with: ""))
+        for line in lines {
+            if let target = badfilterTarget(line) { disabled.insert(target) }
         }
         var network: [[String: Any]] = [], cosmetic: [[String: Any]] = []
         var exceptions: [[String: Any]] = [], cosmeticExceptions: [[String: Any]] = []
@@ -76,36 +76,76 @@ enum FilterListConverter {
             var trigger: [String: Any] = ["url-filter": regex]
             var included = Set<String>(), excluded = Set<String>()
             var valid = true, cosmeticOnly = false, allResources = false
+            var domainScope: String?
             for option in options {
                 if option == "third-party" || option == "3p" { trigger["load-type"] = ["third-party"] }
                 else if option == "~third-party" || option == "first-party" || option == "1p" { trigger["load-type"] = ["first-party"] }
                 else if option == "match-case" { trigger["url-filter-is-case-sensitive"] = true }
                 else if option.hasPrefix("domain=") {
-                    if let domains = domainTrigger(String(option.dropFirst(7)), separator: "|") { trigger.merge(domains) { _, new in new } }
-                    else { valid = false }
+                    domainScope = String(option.dropFirst(7))
+                    if domainScope?.isEmpty != false { valid = false }
                 } else if let type = resourceMap[option] { included.insert(type); if option == "document" { allResources = isException } }
                 else if option.hasPrefix("~"), let type = resourceMap[String(option.dropFirst())] { excluded.insert(type) }
                 else if isException && ["elemhide", "generichide", "specifichide"].contains(option) { cosmeticOnly = true }
                 else if isException && ["genericblock", "important"].contains(option) { /* Conservative allow. */ }
                 else { valid = false }
             }
-            if patternString.isEmpty && trigger["if-domain"] == nil && trigger["unless-domain"] == nil { valid = false }
+            if let domainScope {
+                let domains = cosmeticOnly ? domainTrigger(domainScope, separator: "|") : frameDomainTrigger(domainScope)
+                if let domains { trigger.merge(domains) { _, new in new } } else { valid = false }
+            }
+            if patternString.isEmpty && domainScope == nil { valid = false }
             guard valid else { skipped += 1; continue }
             let types = (included.isEmpty ? Set(resources) : included).subtracting(excluded)
             guard !types.isEmpty else { skipped += 1; continue }
-            if allResources {
-                // ABP document allowlisting applies to all resources of the top-level page.
-                trigger["if-top-url"] = [regex]
-                trigger["url-filter"] = ".*"
-            } else if !cosmeticOnly { trigger["resource-type"] = types.sorted() }
+            if allResources, types.contains("top-document") {
+                // A document exception and a URL-scoped subresource exception are alternatives.
+                // WebKit supports only one URL condition per rule, so a requesting-domain condition
+                // cannot also constrain the document-wide top-URL allowlist. Skip that component.
+                if domainScope == nil {
+                    var documentTrigger = trigger
+                    documentTrigger["if-top-url"] = [regex]
+                    documentTrigger["url-filter"] = ".*"
+                    let documentRule: [String: Any] = ["trigger": documentTrigger, "action": ["type": "ignore-previous-rules"]]
+                    exceptions.append(documentRule); cosmeticExceptions.append(documentRule)
+                } else { skipped += 1 }
+                let remaining = types.subtracting(["top-document"])
+                if !remaining.isEmpty {
+                    trigger["resource-type"] = remaining.sorted()
+                    exceptions.append(["trigger": trigger, "action": ["type": "ignore-previous-rules"]])
+                }
+                continue
+            }
+            if !cosmeticOnly { trigger["resource-type"] = types.sorted() }
             let rule: [String: Any] = ["trigger": trigger, "action": ["type": isException ? "ignore-previous-rules" : "block"]]
             if isException {
                 if cosmeticOnly { cosmeticExceptions.append(rule) }
-                else { exceptions.append(rule); if allResources { cosmeticExceptions.append(rule) } }
+                else { exceptions.append(rule) }
             } else { network.append(rule) }
         }
         guard !network.isEmpty || !cosmetic.isEmpty else { throw Failure.invalidList }
         return Result(network: network, cosmetic: cosmetic, exceptions: exceptions, cosmeticExceptions: cosmeticExceptions, skipped: skipped)
+    }
+
+    private static func badfilterTarget(_ line: String) -> String? {
+        guard !line.hasPrefix("!"), !line.hasPrefix("["), !line.contains("##"), !line.contains("#@#"),
+              let separator = line.firstIndex(of: "$") else { return nil }
+        let options = line[line.index(after: separator)...].split(separator: ",").map(String.init)
+        guard options.contains("badfilter") else { return nil }
+        let remaining = options.filter { $0 != "badfilter" }
+        return String(line[..<separator]) + (remaining.isEmpty ? "" : "$" + remaining.joined(separator: ","))
+    }
+    private static func frameDomainTrigger(_ scope: String) -> [String: Any]? {
+        guard let domains = domainTrigger(scope, separator: "|") else { return nil }
+        // Apple's frame-URL conditions use the initiating document, unlike top-page if-domain.
+        // Reuse the same escaped hostname boundary, including subdomains and explicit ports.
+        if let included = domains["if-domain"] as? [String] {
+            return ["if-frame-url": included.compactMap { urlFilter("||" + $0.dropFirst() + "^") }]
+        }
+        if let excluded = domains["unless-domain"] as? [String] {
+            return ["unless-frame-url": excluded.compactMap { urlFilter("||" + $0.dropFirst() + "^") }]
+        }
+        return nil
     }
 
     private static func validDomain(_ domain: String) -> Bool {
@@ -130,7 +170,7 @@ enum FilterListConverter {
         // Explicit regex rules require a separate audited WebKit-regex translator.
         if value.hasPrefix("/") && value.hasSuffix("/") && value.count > 1 { return nil }
         var pattern = value[...], result = ""
-        if pattern.hasPrefix("||") { result = "^https?://([^/]+\\.)?"; pattern = pattern.dropFirst(2) }
+        if pattern.hasPrefix("||") { result = "^[a-z][a-z0-9+.-]*://([^/]+\\.)?"; pattern = pattern.dropFirst(2) }
         else if pattern.hasPrefix("|") { result = "^"; pattern = pattern.dropFirst() }
         let end = pattern.hasSuffix("|")
         if end { pattern = pattern.dropLast() }

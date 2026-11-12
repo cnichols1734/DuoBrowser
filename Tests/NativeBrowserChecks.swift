@@ -543,7 +543,9 @@ private final class NativeCheckRunner {
         try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
     }
     func maintainedFilterChecks(_ browser: BrowserModel) async throws {
-        try check(await FilterCatalog.shared.awaitMaintainedForTesting(), "maintained protection becomes ready within the bounded preparation window")
+        let ready = await FilterCatalog.shared.awaitMaintainedForTesting()
+        try check(ready, "maintained protection becomes ready within the bounded preparation window" +
+                  (ready ? "" : ": " + FilterCatalog.shared.preparationDiagnosticsForTesting()))
         try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
                   "bundled maintained sources compile on the deployed iOS runtime without fallback")
         try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
@@ -591,8 +593,54 @@ private final class NativeCheckRunner {
         // Use first-party fetch so the broad third-party probe rule does not apply.
         try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
                   "other resource filter does not widen to fetch")
+        try await converterReviewChecks(browser)
         ContentBlocking.useTestRules(nil)
         try await staleBlockingChecks(browser)
+    }
+
+    func converterReviewChecks(_ browser: BrowserModel) async throws {
+        let source = """
+        [Adblock Plus 2.0]
+        ||127.0.0.1:8765/badfilter.js$xmlhttprequest
+        ||127.0.0.1:8765/scope-probe$xmlhttprequest,domain=127.0.0.1
+        ||127.0.0.1:8765/scope-negative$xmlhttprequest,domain=~localhost
+        ||localhost:8765/frame-exception^$subdocument
+        @@||localhost:8765/frame-exception^$document,subdocument
+        ||127.0.0.1:8765/socket-probe$websocket
+        @@||127.0.0.1:8765/socket-probe?allowed$websocket
+        """
+        let converted = try FilterListConverter.convert(source)
+        ContentBlocking.useTestRuleChunks(try converted.chunks().map { String(decoding: $0, as: UTF8.self) })
+        defer { ContentBlocking.useTestRules(nil) }
+        try await load(browser, "upgrades")
+        try check(try await asyncJS(browser, "return await fetch('/badfilter.js').then(()=>false).catch(()=>true)") as? Bool == true,
+                  "ordinary badfilter URL substring remains blocked in WebKit")
+        try check(try await asyncJS(browser, "const token=crypto.randomUUID(); const blocked=await fetch('/scope-probe?token='+token).then(()=>false).catch(()=>true); const count=await fetch('/frame-count?token='+token).then(r=>r.text()); return blocked && count==='0';") as? Bool == true,
+                  "domain-scoped fetch blocks in the matching initiating document before network delivery")
+        for (path, expectedBlocked) in [("scoped-frame", false), ("scoped-parent", true), ("scoped-frame?negative=1", false)] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID(), frame=document.createElement('iframe');
+            const result=await new Promise(resolve=>{
+                const listener=event=>{if(event.source===frame.contentWindow&&event.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);resolve(event.data)}};
+                const timer=setTimeout(()=>{window.removeEventListener('message',listener);resolve({timeout:true})},5000);
+                window.addEventListener('message',listener);
+                frame.src='http://localhost:8765/'+path+(path.includes('?')?'&':'?')+'token='+token;document.body.append(frame);
+            });
+            frame.remove();const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));
+            return !result.timeout && result.blocked===expected && (expected ? count===0 : count>0);
+            """, arguments: ["path": path, "expected": expectedBlocked], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, "requesting-frame scope preserved for \(path), expected blocked=\(expectedBlocked)")
+        }
+        try check(try await asyncJS(browser, "return await new Promise(resolve=>{const token=crypto.randomUUID(),frame=document.createElement('iframe');const listener=e=>{if(e.source===frame.contentWindow&&e.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);frame.remove();resolve(e.data.loaded===true)}};const timer=setTimeout(()=>{window.removeEventListener('message',listener);frame.remove();resolve(false)},5000);window.addEventListener('message',listener);frame.src='http://localhost:8765/frame-exception?token='+token;document.body.append(frame)});") as? Bool == true,
+                  "document-plus-subdocument exception allows the embedded page on an unrelated top site")
+        for allowed in [false, true] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID();
+            await new Promise(resolve=>{const socket=new WebSocket('ws://127.0.0.1:8765/socket-probe?'+(allowed?'allowed':'blocked')+'&token='+token);const timer=setTimeout(()=>{socket.close();resolve()},5000);socket.onopen=()=>{clearTimeout(timer);socket.close();resolve()};socket.onerror=()=>{clearTimeout(timer);resolve()}});
+            const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));return allowed ? count>0 : count===0;
+            """, arguments: ["allowed": allowed], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, allowed ? "websocket exception allows the handshake to reach the fixture server" : "domain-anchored websocket rule prevents handshake delivery")
+        }
     }
 
     func initialProtectionChecks() async throws {
@@ -1501,7 +1549,11 @@ private final class NativeCheckRunner {
             try await wait { normal.showingStartPage && !normal.webView.isLoading }
             try check(normal.showingStartPage, "new tabs show the native start page")
             normal.navigate(to: "http://127.0.0.1:1/unreachable")
-            try await wait { normal.errorMessage != nil }
+            do {
+                try await wait(timeout: 60) { normal.errorMessage != nil }
+            } catch {
+                throw NSError(domain: "Unreachable synthetic navigation did not report failure within 60 seconds; loading=\(normal.webView.isLoading), startPage=\(normal.showingStartPage)", code: 1)
+            }
             try check(normal.showingStartPage, "failed first navigation preserves the native start page")
             try await load(normal, "normal")
             try check(!normal.showingStartPage, "navigation dismisses the start page")

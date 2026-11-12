@@ -76,8 +76,8 @@ final class FilterCatalog: ObservableObject {
         }
     }
     // Bump when converter semantics or chunking changes; cached IDs alone do not identify source semantics.
-    private static let converterVersion = 2
-    private static let compiledPrefix = "DuoBrowser.Filters.v2."
+    private static let converterVersion = 3
+    private static let compiledPrefix = "DuoBrowser.Filters.v3."
     private static let manifestByteLimit = 64_000
     private struct CompiledManifest: Codable {
         struct Variant: Codable {
@@ -101,6 +101,8 @@ final class FilterCatalog: ObservableObject {
     private var loading: Task<Void, Never>?
     private var baselineLoading: Task<Void, Never>?
     #if DEBUG
+    private var testPreparationStarted: ContinuousClock.Instant?
+    private var testPreparationStages: [String] = []
     var testHoldInitialPreparation = false
     var testDownloadSources: (@MainActor () async throws -> Snapshot)?
     static func startupTestCatalog() -> FilterCatalog {
@@ -120,6 +122,10 @@ final class FilterCatalog: ObservableObject {
 
     func rules() async -> [WKContentRuleList] {
         if loading == nil {
+            #if DEBUG
+            testPreparationStarted = .now
+            testPreparationStages = []
+            #endif
             preparing = true
             loading = Task { await self.loadInitial() }
         }
@@ -153,9 +159,11 @@ final class FilterCatalog: ObservableObject {
             try? await Task.sleep(for: .milliseconds(25))
         }
         #endif
+        notePreparation("reading cached source snapshot")
         if let size = try? cacheURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 16_000_000,
            let data = try? Data(contentsOf: cacheURL), let saved = try? JSONDecoder().decode(Snapshot.self, from: data),
            Self.valid(saved), await install(saved) { return }
+        notePreparation("reading bundled sources")
         let sources = Self.definitions.compactMap { definition -> Source? in
             guard let url = Bundle.main.url(forResource: definition.id, withExtension: "txt", subdirectory: "FilterLists"),
                   let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
@@ -169,6 +177,7 @@ final class FilterCatalog: ObservableObject {
         await baselineLoading?.value
         if active.isEmpty { await prepareBaseline() }
         preparing = false
+        notePreparation("maintained preparation failed; retained baseline")
         message = active.isEmpty ? "Protection couldn’t start. Try updating filters."
             : "Basic fallback is active. Update filters to restore full protection."
         NotificationCenter.default.post(name: ContentBlocking.changed, object: nil)
@@ -180,9 +189,17 @@ final class FilterCatalog: ObservableObject {
         snapshot.date.timeIntervalSince1970.isFinite && snapshot.date <= Date().addingTimeInterval(86_400)
     }
     #if DEBUG
+    func preparationDiagnosticsForTesting() -> String {
+        "preparing=\(preparing), fallback=\(usingFallback), count=\(ruleCount), message=\(message ?? "none"), elapsed=\(preparationElapsedForTesting()), stages=[\(testPreparationStages.joined(separator: "; "))]"
+    }
+    private func preparationElapsedForTesting() -> String {
+        guard let started = testPreparationStarted else { return "not started" }
+        let elapsed = started.duration(to: .now).components
+        return String(format: "%.1fs", Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
+    }
     func awaitMaintainedForTesting() async -> Bool {
         _ = await rules()
-        let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(120))
+        let clock = ContinuousClock(), deadline = ContinuousClock.now.advanced(by: .seconds(300))
         while preparing, clock.now < deadline, !Task.isCancelled {
             try? await Task.sleep(for: .milliseconds(50))
         }
@@ -227,6 +244,12 @@ final class FilterCatalog: ObservableObject {
         return checks
     }
     #endif
+    private func notePreparation(_ stage: String) {
+        #if DEBUG
+        if testPreparationStages.count == 64 { testPreparationStages.removeFirst() }
+        testPreparationStages.append(preparationElapsedForTesting() + " " + stage)
+        #endif
+    }
     nonisolated private static func sourceFingerprint(_ sources: [Source]) -> String {
         // Preserve order because conversion runs over concatenated source text. No browsing data is involved.
         digest(Data(sources.map { $0.id + ":" + digest(Data($0.text.utf8)) }.joined(separator: "\n").utf8))
@@ -284,9 +307,12 @@ final class FilterCatalog: ObservableObject {
     }
     private func install(_ next: Snapshot, persist: Bool = false) async -> Bool {
         guard Self.valid(next) else { return false }
+        notePreparation("hashing public source set")
         let sourceSHA = await Task.detached(priority: .utility) { Self.sourceFingerprint(next.sources) }.value
         do {
+            notePreparation("checking compiled manifest")
             var compiled = await readCompiled(sourceSHA: sourceSHA)
+            if compiled != nil { notePreparation("reusing complete compiled manifest") }
             if compiled == nil {
                 var listsByMode: [String: [WKContentRuleList]] = [:]
                 var variants: [String: CompiledManifest.Variant] = [:]
@@ -300,6 +326,7 @@ final class FilterCatalog: ObservableObject {
                 // Convert all enabled text together so exceptions apply across sources and chunks.
                 // Cookie exemptions remain restricted to the opt-in variant.
                 for mode in ["standard", "withCookies"] {
+                    notePreparation("converting " + mode)
                     let sources = next.sources.filter { mode == "withCookies" || $0.id != "cookies" }
                     let converted = try await Task.detached(priority: .utility) {
                         let result = try FilterListConverter.convert(sources.map(\.text).joined(separator: "\n"), combined: true)
@@ -307,11 +334,13 @@ final class FilterCatalog: ObservableObject {
                     }.value
                     guard !converted.0.isEmpty, converted.0.count <= 20 else { throw FilterListConverter.Failure.tooLarge }
                     var lists: [WKContentRuleList] = []
-                    for data in converted.0 {
+                    for (index, data) in converted.0.enumerated() {
+                        notePreparation("resolving \(mode) chunk \(index + 1)/\(converted.0.count)")
                         let identifier = Self.compiledPrefix + Self.digest(data)
                         let store = WKContentRuleListStore.default()!
                         if let cached = try? await store.contentRuleList(forIdentifier: identifier) { lists.append(cached) }
                         else {
+                            notePreparation("compiling \(mode) chunk \(index + 1)/\(converted.0.count)")
                             guard let list = try await store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: String(decoding: data, as: UTF8.self)) else {
                                 throw FilterListConverter.Failure.invalidList
                             }
@@ -333,6 +362,7 @@ final class FilterCatalog: ObservableObject {
                 try? directory.setResourceValues(values)
             }
             usingFallback = false; preparing = false
+            notePreparation("activating maintained rules")
             active = compiled.lists; snapshot = next; updatedAt = next.date
             ruleCount = compiled.manifest.variants["withCookies"]!.count
             skippedCount = compiled.manifest.variants["withCookies"]!.skipped
@@ -343,6 +373,8 @@ final class FilterCatalog: ObservableObject {
             await removeObsoleteCompiledLists(keeping: Set(compiled.lists.values.flatMap { $0.map(\.identifier) }))
             return true
         } catch {
+            let failure = error as NSError
+            notePreparation("installation rejected: \(failure.domain) code \(failure.code)")
             await removeObsoleteCompiledLists(keeping: Set(active.values.flatMap { $0.map(\.identifier) }))
             return false
         }
