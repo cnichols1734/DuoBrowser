@@ -18,6 +18,9 @@ active list is replaced. Failed updates keep working rules. The bundled lists
 work offline; a clearly described 19-service fallback remains available if the
 maintained sources cannot compile. Compilation caches are content-addressed;
 obsolete app-owned compiled lists are removed after a successful installation.
+A bounded source-fingerprint and converter-version manifest reuses complete
+compiled variants on later launches. Missing or corrupt cache entries rebuild;
+initial conversion/compilation remains required once per uncached filter set.
 
 Updates apply to new requests in existing tabs, previews and Reader without
 reloading the page. Per-site switches now also preserve drafts. Visual hiding
@@ -73,7 +76,8 @@ host boundaries, malformed/oversized sources and document allowlisting. Native
 checks exercise actual fetch blocking/allowing, cosmetic hiding, draft-preserving
 site toggles and last-working-update retention with synthetic fixtures.
 
-Build/test results and simulator UI evidence will be recorded before review.
+Build/test results and simulator UI evidence are tracked in the
+[review record](reviews/2026-11-12-content-blocking/README.md).
 Physical-device battery/endurance, full spoken VoiceOver and representative
 real-site/ad/video effectiveness require separate evidence; do not infer them
 from source list size or synthetic test passes.

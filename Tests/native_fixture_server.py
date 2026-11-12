@@ -2,6 +2,11 @@
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import struct, zlib
+from urllib.parse import urlsplit, parse_qs
+from threading import Lock
+
+FRAME_REQUESTS = {}
+FRAME_LOCK = Lock()
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="icon" sizes="16x16" href="/favicon.ico"><link rel="apple-touch-icon" sizes="192x192" href="/touch-icon.png"><title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
@@ -15,6 +20,16 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_): pass
     def do_GET(self):
         self.send_response(200)
+        path = urlsplit(self.path)
+        token = parse_qs(path.query).get('token', [''])[0][:64]
+        if path.path == '/frame-ad' and token:
+            with FRAME_LOCK:
+                if len(FRAME_REQUESTS) >= 128: FRAME_REQUESTS.clear()
+                FRAME_REQUESTS[token] = FRAME_REQUESTS.get(token, 0) + 1
+        if path.path == '/frame-count':
+            with FRAME_LOCK: count = FRAME_REQUESTS.get(token, 0)
+            self.send_header('Content-Type', 'text/plain'); self.send_header('Cache-Control', 'no-store')
+            self.end_headers(); self.wfile.write(str(count).encode()); return
         if self.path.startswith('/reader-photo-') or self.path in ('/favicon.ico', '/touch-icon.png'):
             if self.path in ('/favicon.ico', '/touch-icon.png') and (self.headers.get('Cookie') or self.headers.get('Authorization')):
                 self.end_headers(); self.wfile.write(b'Unexpected credentials'); return

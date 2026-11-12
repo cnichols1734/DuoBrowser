@@ -48,12 +48,16 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private var attachedBlockingRules: [WKContentRuleList] = []
     private var blockingObserver: AnyCancellable?
     private func applyBlocking(_ rules: [WKContentRuleList], to view: WKWebView) {
-        let controller = view.configuration.userContentController
-        attachedBlockingRules.forEach(controller.remove)
-        attachedBlockingRules = adBlockingEnabled && blockAds ? rules : []
-        attachedBlockingRules.forEach(controller.add)
+        let desired = adBlockingEnabled && blockAds ? rules : []
         blockingStatus = !adBlockingEnabled ? "Off in Settings" : !blockAds ? "Off for this site"
             : rules.isEmpty ? "Protection unavailable" : "Protection on"
+        // Initial preparation and navigation may both deliver the same catalog.
+        // Avoid invalidating cosmetic styles on a page whose protection is unchanged.
+        guard attachedBlockingRules.map(\.identifier) != desired.map(\.identifier) else { return }
+        let controller = view.configuration.userContentController
+        attachedBlockingRules.forEach(controller.remove)
+        attachedBlockingRules = desired
+        attachedBlockingRules.forEach(controller.add)
     }
     private var policyGeneration = UUID()
     private var closed = false

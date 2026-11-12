@@ -546,6 +546,7 @@ final class NativeCheckRunner {
         try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
                   "bundled maintained sources compile on the deployed iOS runtime without fallback")
         try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
+        for (name, passed) in await FilterCatalog.shared.compiledCacheChecksForTesting() { try check(passed, name) }
         let source = """
         [Adblock Plus 2.0]
         ||localhost^$third-party,xmlhttprequest
@@ -579,10 +580,12 @@ final class NativeCheckRunner {
         try check(try await js(browser, "document.querySelector('#kept') != null") as? Bool == true,
                   "subdocument filter preserves direct top-level navigation")
         try await load(browser, "upgrades")
-        let frameAllowed = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!!f.contentDocument?.querySelector('#kept')); f.src='/frame-control?fresh'; document.body.append(f); })") as? Bool
+        let frameAllowed = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!!f.contentDocument?.querySelector('#kept')); setTimeout(()=>resolve(false),5000); f.src='/frame-control?fresh'; document.body.append(f); })") as? Bool
         try check(frameAllowed == true, "unmatched child document loads normally")
-        let frameBlocked = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!f.contentDocument?.querySelector('#kept')); f.src='/frame-ad?fresh'; document.body.append(f); })") as? Bool
-        try check(frameBlocked == true, "subdocument filter blocks matching iframe")
+        // Blocked iframe navigations need not emit load/error. Bound the observation and
+        // verify server-side non-delivery, rather than waiting forever for an absent event.
+        let frameBlocked = try await asyncJS(browser, "const token=crypto.randomUUID(); let f=document.createElement('iframe'); f.src='/frame-ad?token='+token; document.body.append(f); await new Promise(resolve=>setTimeout(resolve,500)); const count=await fetch('/frame-count?token='+token).then(r=>r.text()); return count==='0' && !f.contentDocument?.querySelector('#kept');") as? Bool
+        try check(frameBlocked == true, "subdocument filter blocks matching iframe before it reaches the fixture server")
         // Use first-party fetch so the broad third-party probe rule does not apply.
         try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
                   "other resource filter does not widen to fetch")
@@ -1352,12 +1355,20 @@ final class NativeCheckRunner {
         _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
         try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
         let position = try await js(model, "window.scrollY") as? Double
+        // Wait for WebKit's compositor to commit the synthetic scroll before simulating
+        // another interaction. Large cosmetic stylesheets can otherwise expose a DOM/native race.
+        _ = try await asyncJS(model, "return await new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(window.scrollY))))")
+        try await wait { abs(model.webView.scrollView.contentOffset.y - (position ?? 0)) < 2 }
         _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
         try await wait { opened.count == initialCount + 1 }
         try check(opened.last == RedditLinks.apolloURL(url), "real WebKit link action unwraps Google and opens exact comment")
         try check(model.webView.url == page, "successful handoff preserves source URL")
         try check(try await js(model, "document.querySelector('#kept').value") as? String == "Keep this draft", "handoff preserves form draft")
         let afterHandoff = try await js(model, "window.scrollY") as? Double
+        if abs((afterHandoff ?? -1000) - (position ?? 1000)) >= 2 {
+            let layout = try await js(model, "JSON.stringify({height:document.documentElement.scrollHeight,viewport:innerHeight,main:getComputedStyle(document.querySelector('main')).display,focus:document.activeElement?.tagName})")
+            results.append("LAYOUT: synthetic handoff \(layout)")
+        }
         try check(abs((afterHandoff ?? -1000) - (position ?? 1000)) < 2,
                   "handoff preserves scroll position (\(position ?? -1) → \(afterHandoff ?? -1))")
         _ = try await js(model, "a.target='_blank';a.click();true")
