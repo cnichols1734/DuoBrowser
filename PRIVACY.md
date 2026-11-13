@@ -1,6 +1,6 @@
 # DuoBrowser Privacy Policy
 
-Effective November 8, 2026. Developer: Christopher Nichols. Contact: chrisnichols17@gmail.com.
+Effective November 12, 2026. Developer: Christopher Nichols. Contact: chrisnichols17@gmail.com.
 
 DuoBrowser is a native web browser. It has no app analytics, advertising SDKs, app tracking service, account requirement or developer-operated browsing backend. We do not receive your browsing history, cookies, passwords, page content or wallpaper through an app telemetry service. No page content is sent to an AI service.
 
@@ -24,7 +24,7 @@ Offline articles are saved only when you turn on **Save Article Offline** and ch
 
 ## Permissions and files
 
-Websites may request camera, microphone or location access through system prompts. You control permissions in iOS Settings and website prompts. Files/photos selected for website upload go to the destination you choose. Downloads are temporarily held for export to Files; exported files are managed by you. DuoBrowser does not sell personal information or use it for targeted advertising.
+Websites may request camera, microphone or location access through system prompts. You control permissions in iOS Settings and website prompts. Files/photos selected for website upload go to the destination you choose. Normal downloads and their filenames, sizes and completion dates are retained locally until you remove them in Page options → Downloads. Download files are excluded from system backups. Original download URLs, request headers and WebKit resume data are not saved in the download manifest. Private downloads are temporary and are removed when all private tabs close or on the next app launch; copies you deliberately export to Files are managed by you. DuoBrowser does not sell personal information or use it for targeted advertising.
 
 ## Support and beta diagnostics
 

@@ -10,6 +10,8 @@ created=0
 http_pid=""
 tls_pid=""
 cleanup() {
+    local status=$?
+    if [[ "$status" != 0 && -f work/native-ci/http.log ]]; then tail -60 work/native-ci/http.log; fi
     if [[ -n "$http_pid" ]]; then kill "$http_pid" 2>/dev/null || true; fi
     if [[ -n "$tls_pid" ]]; then kill "$tls_pid" 2>/dev/null || true; fi
     if [[ "$created" == 1 ]]; then
@@ -30,7 +32,7 @@ if [[ -z "$device" ]]; then
 fi
 xcrun simctl bootstatus "$device" -b
 if [[ "${1:-}" != --skip-build ]]; then
-    xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser -configuration Debug \
+    xcodebuild -jobs 2 -project DuoBrowser.xcodeproj -scheme DuoBrowser -configuration Debug \
         -destination 'generic/platform=iOS Simulator' -derivedDataPath "$derived" \
         CODE_SIGNING_ALLOWED=NO build > work/native-ci/build.log 2>&1
 fi
@@ -70,13 +72,13 @@ xcrun simctl install "$device" "$derived/Build/Products/Debug-iphonesimulator/Du
 container=$(xcrun simctl get_app_container "$device" dev.local.DuoBrowser data)
 run_receipt() {
     local receipt="$1" minimum="$2" receipt_timeout=180
-    # Hosted cold filter compilation can outlast ordinary UI checks. The upgrade harness
-    # independently requires full readiness within 300 seconds and reports bounded stage timings.
-    if [[ "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
+    # Expanded download batches and cold filter preparation need a separate hosted budget.
+    # Functional interaction deadlines and the 300-second full-protection assertion stay bounded.
+    if [[ "$receipt" == DownloadChecks.txt || "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
     shift 2
     xcrun simctl terminate "$device" dev.local.DuoBrowser >/dev/null 2>&1 || true
     # Remove only this Debug harness's synthetic receipt, never browsing files.
-    rm -f "$container/Library/Caches/$receipt"
+    rm -f "$container/Library/Caches/$receipt" "$container/Library/Caches/NativeCheckProgress.txt"
     xcrun simctl launch "$device" dev.local.DuoBrowser --browser-checks "$@"
     python3 - "$container/Library/Caches/$receipt" "$minimum" "$receipt_timeout" <<'PY'
 import pathlib,sys,time
@@ -91,9 +93,16 @@ for attempt in range(timeout):
         if passed < minimum: raise SystemExit(f'Incomplete receipt {p.name}: {passed}/{minimum}')
         print(f'{p.name}: {passed} checks passed'); break
     time.sleep(1)
-else: raise SystemExit('Timed out waiting for '+p.name)
+else:
+    progress=p.with_name('NativeCheckProgress.txt')
+    if progress.exists(): print(progress.read_text()[:4096],flush=True)
+    else: print('No native assertion progress was recorded for this launch.',flush=True)
+    raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
+# Loopback conversion checks must not depend on an external reputation service.
+# The suite first asserts ordinary production views still enable fraudulent-site warnings.
+run_receipt DownloadChecks.txt 53 --download-checks --download-checks-no-reputation
 run_receipt SetupChecks.txt 23 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks

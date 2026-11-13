@@ -1,12 +1,32 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
-import struct, zlib
-from urllib.parse import urlsplit, parse_qs
-from threading import Lock
+import struct, zlib, time
+from urllib.parse import urlsplit, urlparse, parse_qs
+from threading import Event, Lock
 
 FRAME_REQUESTS = {}
 FRAME_LOCK = Lock()
+
+class DownloadGate:
+    """Two bounded fixture attempts; release may arrive before the retry request."""
+    def __init__(self):
+        self.events = [Event(), Event()]
+        self.attempts = 0
+
+    def begin(self):
+        self.attempts += 1
+        return self.events[self.attempts - 1] if self.attempts <= 2 else None
+
+DOWNLOAD_GATES = {}
+DOWNLOAD_GATE_LOCK = Lock()
+
+def download_gate(token):
+    with DOWNLOAD_GATE_LOCK:
+        if token not in DOWNLOAD_GATES:
+            if len(DOWNLOAD_GATES) >= 16: return None
+            DOWNLOAD_GATES[token] = DownloadGate()
+        return DOWNLOAD_GATES[token]
 
 PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <link rel="icon" sizes="16x16" href="/favicon.ico"><link rel="apple-touch-icon" sizes="192x192" href="/touch-icon.png"><title>Browser checks</title><style>body{font:18px -apple-system;margin:16px}button,a,input{min-height:44px;margin:8px}footer{position:fixed;bottom:0;background:#aee;width:100%;left:0;height:44px}main{height:1800px}</style>
@@ -17,10 +37,21 @@ PAGE = '''<!doctype html><meta name="viewport" content="width=device-width,initi
 <a href="/download" download>Download fixture</a><input type="file" multiple><input type="file" accept="image/*">
 <p id="result"></p><main><p>Find this browser fixture.</p></main><footer><button onclick="this.textContent='Footer works'">Footer action</button></footer>'''
 class Handler(BaseHTTPRequestHandler):
+    failed_downloads = set()
     def log_message(self, *_): pass
     def do_GET(self):
         self.send_response(200)
         path = urlsplit(self.path)
+        if path.path.startswith('/download'):
+            print('Synthetic download request: ' + path.path[:64], flush=True)
+        query = parse_qs(path.query)
+        gate_token = query.get('gate', [''])[0][:64]
+        if path.path == '/download-release' and gate_token:
+            gate = download_gate(gate_token)
+            attempt = query.get('attempt', [''])[0]
+            if gate and attempt in ('1', '2'): gate.events[int(attempt) - 1].set()
+            self.send_header('Content-Type', 'text/plain'); self.send_header('Cache-Control', 'no-store')
+            self.end_headers(); self.wfile.write(b'released' if gate and attempt in ('1', '2') else b'rejected'); return
         token = parse_qs(path.query).get('token', [''])[0][:64]
         if path.path in ('/frame-ad', '/scope-probe', '/scope-negative', '/socket-probe') and token:
             with FRAME_LOCK:
@@ -41,6 +72,50 @@ class Handler(BaseHTTPRequestHandler):
                 return struct.pack('!I', len(payload)) + kind + payload + struct.pack('!I', zlib.crc32(kind + payload))
             png = b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', width, height, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
             self.send_header('Content-Type', 'image/png'); self.end_headers(); self.wfile.write(png); return
+        if self.path.startswith(('/download-slow', '/download-retry', '/download-chunked')):
+            authorized = 'duo-download=synthetic' in self.headers.get('Cookie', '')
+            payload = (b'Authenticated synthetic download.\n' if authorized else b'No cookie.\n') * 16000
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="download-progress.txt"')
+            if not self.path.startswith('/download-chunked'): self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            token = parse_qs(urlparse(self.path).query).get('case', ['default'])[0]
+            if self.path.startswith('/download-retry') and token not in self.failed_downloads:
+                self.failed_downloads.add(token)
+                self.wfile.write(payload[:4096]); self.wfile.flush(); self.close_connection = True; return
+            gate = download_gate(gate_token) if gate_token else None
+            with DOWNLOAD_GATE_LOCK:
+                attempt = gate.begin() if gate else None
+                attempt_number = gate.attempts if gate else 0
+            final_attempt = 1 if query.get('gate-attempts', ['2'])[0] == '1' else 2
+            expired = False
+            try:
+                for offset in range(0, len(payload), 8192):
+                    self.wfile.write(payload[offset:offset+8192]); self.wfile.flush()
+                    if gate_token and offset == 57344:
+                        # Preserve an observable in-progress transfer until the harness cancels/releases it.
+                        # Expiry interrupts the transfer rather than silently passing the test.
+                        if attempt is None or not attempt.wait(60):
+                            expired = True
+                            self.close_connection = True; return
+                    if not gate_token: time.sleep(0.15)
+            except (BrokenPipeError, ConnectionResetError): pass
+            finally:
+                # An early canceled first response still owns attempt 1. Its release must not
+                # recreate the registry entry and accidentally pre-release the retry's gate.
+                if gate and (attempt_number >= final_attempt or attempt is None or expired):
+                    with DOWNLOAD_GATE_LOCK:
+                        if DOWNLOAD_GATES.get(gate_token) is gate: DOWNLOAD_GATES.pop(gate_token)
+            return
+        if self.path.startswith('/download-too-large'):
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="oversized.bin"')
+            self.send_header('Content-Length', str(1073741825))
+            self.end_headers(); return
+        if self.path.startswith('/download-inline'):
+            self.send_header('Content-Type', 'text/plain')
+            self.send_header('Content-Disposition', 'inline; filename="inline.txt"')
+            self.end_headers(); self.wfile.write(b'Inline document remains a webpage.'); return
         if self.path.startswith('/download'):
             self.send_header('Content-Type','application/octet-stream')
             self.send_header('Content-Disposition','attachment; filename="browser-fixture.txt"')
@@ -80,6 +155,13 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(b'<meta name="viewport" content="width=device-width"><title>Memory fixture</title><input id="kept"><main style="height:2400px">Synthetic page</main>')
         else: self.wfile.write(PAGE.encode())
     def do_POST(self):
+        if self.path.startswith('/download-post'):
+            self.rfile.read(min(4096, int(self.headers.get('Content-Length', '0'))))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Content-Disposition', 'attachment; filename="post-result.txt"')
+            self.send_header('Content-Length', '1000')
+            self.end_headers(); self.wfile.write(b'Partial POST response.'); self.close_connection = True; return
         body=self.rfile.read(min(4096,int(self.headers.get('Content-Length','0'))))
         self.send_response(200); self.send_header('Content-Type','text/html'); self.end_headers()
         self.wfile.write(b'<title>POST child</title><p id="received">'+body.replace(b'<',b'&lt;')+b'</p><script>if(opener)opener.postReceived=true;</script>')

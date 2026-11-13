@@ -27,7 +27,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Maintained EasyList/EasyPrivacy ad and tracker filters, supported cosmetic ad hiding, optional cookie-notice filtering, automatic updates with a working fallback, and per-site exceptions. Filter credits and licenses are available in the app.
 - Local history, editable bookmarks and folders, Favorites, and a Reading List with read/unread filtering. Save readable articles for offline use with bounded local image copies; Reader remembers text size, spacing and appearance.
 - Find on page and native sharing.
-- Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
+- Downloads panel with progress, individual cancel/retry, native preview and Save to Files. Completed normal downloads survive tab closure and relaunch; private downloads remain temporary until explicitly exported. WebKit file/photo selection, guarded external links and JavaScript dialogs.
 - Settings includes a global **Block Ads & Trackers** switch and a **Reddit** link preference. Tapped Reddit content links can open in an installed Apollo Reborn, with a remembered first choice, Ask Every Time, browser fallback, and confirmation in private tabs. Artemis is pending a verified deep-link contract. See [coverage and verification](docs/REDDIT_LINKS_AND_BLOCKING.md).
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 

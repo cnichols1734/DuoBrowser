@@ -14,6 +14,7 @@ struct BrowserToolbar: View {
     @State private var showingPrivacy = false
     @State private var showingSettings = false
     @State private var savingPage: LibraryEntry?
+    @State private var showingDownloads = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -46,6 +47,7 @@ struct BrowserToolbar: View {
         .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
         .sheet(item: $savingPage) { SavePageView(session: session, browser: browser, entry: $0) }
         .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
+        .sheet(isPresented: $showingDownloads) { DownloadsView(manager: browser.downloads) }
         .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
@@ -263,12 +265,7 @@ struct BrowserToolbar: View {
                 Toggle("Desktop Website", isOn: $browser.desktopSite)
                 Toggle("Full-width Page", isOn: $browser.fullWidthLayout)
             }
-            if browser.availableDownloads > 0 {
-                Button("Save Download to Files", systemImage: "arrow.down.doc") { browser.downloads.exportNext() }
-            }
-            if browser.activeDownloads > 0 {
-                Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
-            }
+            DownloadMenuAction(manager: browser.downloads) { showingDownloads = true }
             Button("Settings", systemImage: "gearshape") { showingSettings = true }
             Button("Privacy Policy", systemImage: "hand.raised") { showingPrivacy = true }
             #if DEBUG
@@ -278,7 +275,7 @@ struct BrowserToolbar: View {
             }
             #endif
         } label: {
-            Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
+            DownloadPageOptionsSymbol(manager: browser.downloads)
         }
         .accessibilityLabel("Page options")
     }
@@ -295,7 +292,7 @@ private struct BrowserPrivacyView: View {
                     Text("Delete history, bookmarks, folders, and Reading List items in Library. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
                 }
                 Section("Private browsing") {
-                    Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Private mode does not hide your network traffic.")
+                    Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Normal downloads are kept on this device until you remove them from Downloads; private downloads are removed when all private tabs close. Private mode does not hide your network traffic.")
                 }
                 Section("Websites and search") {
                     Text("Websites receive normal browsing requests. Google receives searches and plain keywords typed for suggestions in normal tabs. Private tabs do not request typing suggestions. Shortcut icons load from site home pages and their icon hosts without your saved page paths, cookies or credentials. These services have their own privacy policies.")
