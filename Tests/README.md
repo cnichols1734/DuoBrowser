@@ -117,3 +117,13 @@ with source-closure scenarios and authentication-only diagnostics were removed
 at the owner's request after device testing. Basic authenticated source-closure
 transfers, authenticated retry of a GET download, progress, cancellation, private teardown and
 storage checks remain. Production download code is unchanged.
+
+Hosted CI sets `DUO_SKIP_DOWNLOAD_CHECKS=1` to omit the entire synthetic Downloads
+batch at the owner's request. A subsequent hosted run failed during an earlier
+gated transfer despite authenticated data and initial progress; the fixture was
+never released before the 60-second transfer timeout. The log does not establish
+why the JavaScript/state wait missed that active-transfer window. All 49 retained
+checks pass locally, and the default local command still runs them. Other native
+batches, including the Undo regression, remain mandatory in hosted CI. Setting
+the same environment variable locally exercises the hosted selection explicitly;
+an omitted batch is printed as omitted and is not counted as passing.

@@ -1,5 +1,11 @@
 # Build plan
 
+## Hosted download fixture removal — November 12, 2026
+
+- At the owner's explicit request to remove failing CI tests, hosted CI now omits the synthetic Downloads batch. The default local suite retains its 49 checks, which passed in the complete 517-assertion run. All other native batches, including Undo, and the build/portable/layout/security gates remain enabled.
+- PR #24 run `43368911556` failed after 15 download assertions: the first gated transfer had the expected authenticated length and initial progress, then timed out after about 60 seconds before fixture release. The exact JavaScript/state-wait cause is unestablished. This is distinct from the previously removed retry/source-closure scenarios. No production download behavior was changed.
+- The revised hosted command passed locally with **468 assertions across all 10 retained batches** on a fresh iOS 27.1 Duo simulator. Downloads was explicitly reported as omitted. Workflow lint, shell syntax, 339 portable checks and patch checks passed; independent review confirmed all other gates and local default coverage remain intact. Receipt: `work/hosted-selection-native.log` in the setup worktree.
+
 ## Undo card visibility — November 12, 2026
 
 - Fixed the owner-reported close → Undo → tab-switcher failure. Live Undo correctly retained the tab and page, but the same UUID's card could retain its offscreen close transform or Reduce Motion opacity. Idle card motion is now restored even when close/reopen updates coalesce to unchanged IDs, with active gestures and animations preserved.
