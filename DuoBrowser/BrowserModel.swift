@@ -11,6 +11,8 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var testBlockingRules: (@MainActor () async -> [WKContentRuleList])?
     #endif
     static let redditTapWorld = WKContentWorld.world(name: "DuoBrowser.RedditTap")
+    var isRetainedForUndo = false
+    var hasRequestedWebsitePermission = false
     let id: UUID
     let chrome = BrowserChromeState()
     let viewport = BrowserViewportState()
@@ -109,6 +111,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     var lastUsed = Date()
     private var pendingURL: URL?
     private var startsWithFixture = false
+    private var restoredTitle: String?
     private var pageLayout: PageLayoutAdapter!
     @Published var originalPageLayout = false {
         didSet { updatePageLayout(); if !applyingPreferences { saveSitePreference() } }
@@ -217,6 +220,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         })
     }
 
+    func restoreClosedTabTitle(_ value: String) {
+        guard !activated else { return }
+        restoredTitle = value.isEmpty ? nil : String(value.prefix(512))
+        title = restoredTitle ?? siteName
+    }
+
     /// Restored background tabs do not load until selected.
     func activate() {
         guard !activated else { return }
@@ -313,11 +322,13 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         isLoading = webView.isLoading
         progress = webView.estimatedProgress
         address = restorationURL?.absoluteString ?? ""
-        title = webView.title.flatMap { $0.isEmpty ? nil : $0 } ?? siteName
+        if let actualTitle = webView.title, !actualTitle.isEmpty { restoredTitle = nil; title = actualTitle }
+        else { title = restoredTitle ?? siteName }
         if previousAddress != address || previousTitle != title { onChange?() }
     }
 
     func navigate(to input: String) {
+        restoredTitle = nil
         guard let url = WebAddress.resolve(input) else {
             errorMessage = "Enter a valid website address or search."
             return
@@ -483,6 +494,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        guard !isRetainedForUndo else { decisionHandler(.cancel, preferences); return }
         guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {
             decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: false, decisionHandler: decisionHandler)
             return
@@ -594,7 +606,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                 for _ in 0..<4 {
                     let blockingGeneration = self.blockingGeneration
                     let rules = await self.currentBlockingRules()
-                    guard !self.closed, self.loadedWebView === webView, self.policyGeneration == generation else {
+                    guard !self.closed, !self.isRetainedForUndo, self.loadedWebView === webView, self.policyGeneration == generation else {
                         decisionHandler(.cancel, preferences); return
                     }
                     guard self.blockingGeneration == blockingGeneration else { continue }

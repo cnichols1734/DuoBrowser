@@ -807,6 +807,125 @@ private final class NativeCheckRunner {
                   "Private Reader preserves the ephemeral source profile")
         privateReader.close(); privateSource.close()
     }
+    func closedNoticeGeometryChecks(_ session: BrowserSession) async throws {
+        let browser = session.selected
+        _ = try await js(browser, "const footer=document.createElement('footer');footer.id='notice-footer';footer.style.cssText='position:fixed;bottom:0;height:30px';footer.textContent='Synthetic fixed action';document.body.append(footer)")
+        host.view.subviews.forEach { $0.removeFromSuperview() }
+        let viewport = ViewportView(browser: browser)
+        viewport.frame = host.view.bounds
+        host.view.addSubview(viewport)
+        viewport.layoutIfNeeded()
+        let baseline = browser.webView.obscuredContentInsets.bottom
+        var measured: CGFloat = 0
+        let notice = UIHostingController(rootView: VStack {
+            Spacer()
+            ClosedTabNotice(session: session) { height in
+                measured = height
+                viewport.additionalBottomObstruction = height > 0 ? height + 8 : 0
+                viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            }
+        }.environment(\.dynamicTypeSize, .accessibility5))
+        host.addChild(notice); notice.view.frame = host.view.bounds
+        notice.view.backgroundColor = .clear
+        host.view.addSubview(notice.view); notice.didMove(toParent: host)
+        defer {
+            notice.willMove(toParent: nil); notice.view.removeFromSuperview(); notice.removeFromParent()
+            viewport.removeFromSuperview(); mount(browser)
+        }
+        try await wait { measured > 52 }
+        try check(abs(browser.webView.obscuredContentInsets.bottom - baseline - measured - 8) < 1,
+                  "measured accessibility Undo notice and spacing reserve additional WebKit content space")
+        try await wait {
+            guard let footer = try? await self.js(browser, "document.getElementById('notice-footer').getBoundingClientRect().bottom") as? Double else { return false }
+            return footer <= browser.webView.bounds.height - browser.webView.obscuredContentInsets.bottom + 1
+        }
+        try check(true, "fixed page footer stays above the expanded Undo notice")
+        session.closedTabNotice = nil
+        try await wait { measured == 0 && abs(browser.webView.obscuredContentInsets.bottom - baseline) < 1 }
+        try check(true, "dismissing Undo removes its measured reservation")
+        _ = try await js(browser, "document.getElementById('notice-footer').remove()")
+    }
+    func tabRecoveryChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabRecovery-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let defaults = UserDefaults(suiteName: "DuoBrowser.TabRecoveryChecks")!
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        let first = session.selected
+        try await load(first, "upgrades")
+        _ = try await js(first, "document.title = 'Recovery first'")
+        let middle = session.newTab()
+        try await load(middle, "upgrades")
+        let last = session.newTab()
+        try await load(last, "upgrades")
+        session.select(middle.id)
+        _ = try await js(middle, "document.title = 'Recovery middle'")
+        try await wait { middle.title == "Recovery middle" }
+        _ = try await js(middle, "window.scrollTo(0,150); document.querySelector('#kept').value='Undo draft'")
+        session.close(middle.id)
+        try check(session.selectedID == last.id, "closing selected middle tab selects its next visible neighbor")
+        try check(middle.isRetainedForUndo && middle.presentation.presenter == nil, "retained Undo page has no native presenter")
+        try check(try await js(middle, "confirm('Closed synthetic tab')") as? Bool == false, "retained Undo page cannot present a JavaScript dialog")
+        _ = try await js(middle, "location.href='/form'")
+        try await Task.sleep(for: .milliseconds(150))
+        try check(middle.webView.url?.path == "/upgrades", "retained Undo page cannot navigate while closed")
+        let record = session.recentlyClosed[0]
+        try check(record.title == "Recovery middle" && record.address.contains("upgrades"), "closed tab keeps title and address")
+        try check(record.scrollY != nil, "closed tab captures reading position")
+        try check(store.load()?.recentlyClosed?.first?.id == record.id, "normal closed tab is durably saved")
+        try check(session.closedTabNotice == record.id, "normal close offers immediate Undo")
+        try await closedNoticeGeometryChecks(session)
+        try check(session.reopenClosedTab(record.id), "Undo reopens a normal tab")
+        try check(!session.reopenClosedTab(record.id), "stale Undo cannot reopen a second copy")
+        try check(session.recentlyClosed.isEmpty && session.closedTabNotice == nil, "reopening consumes recovery entry and notice")
+        let reopened = session.selected
+        try check(reopened === middle, "immediate Undo restores the original live model")
+        try check(try await js(reopened, "document.querySelector('#kept').value") as? String == "Undo draft",
+                  "immediate Undo preserves unsent form input")
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch selects previous visible tab")
+        session.select(first.id)
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch stops at workspace edge")
+        session.close(last.id)
+        let normalRecords = session.recentlyClosed.map(\.id)
+        let privateTab = session.newTab(privateTab: true)
+        try await load(privateTab, "upgrades")
+        try check(!session.reopenClosedTab(normalRecords[0]), "normal recovery is unavailable while browsing privately")
+        session.close(privateTab.id)
+        try check(session.recentlyClosed.map(\.id) == normalRecords, "closing private tab never enters recovery")
+        try check(store.load()?.recentlyClosed?.map(\.id) == normalRecords, "archive never acquires private closure")
+        let backup = directory.appendingPathComponent("session.backup.json")
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try check(!session.clearRecentlyClosed() && session.recentlyClosed.map(\.id) == normalRecords, "failed recovery clear reports failure and retains retry rows")
+        try FileManager.default.removeItem(at: backup)
+        try check(session.clearRecentlyClosed(), "recovery clear can retry after storage failure")
+        try check(store.load()?.recentlyClosed?.isEmpty == true, "clear removes persisted recovery")
+        session.createWorkspace("Recovery workspace")
+        let workspace = session.workspaceID
+        let workspaceTab = session.selected
+        try await load(workspaceTab, "upgrades")
+        session.togglePin(workspaceTab)
+        session.close(workspaceTab.id)
+        session.releaseClosedTab()
+        let workspaceRecord = session.recentlyClosed[0]
+        try check(session.reopenClosedTab(workspaceRecord.id) && session.workspaceID == workspace && session.selected.isPinned,
+                  "reopening restores workspace and pin")
+        session.close(session.selectedID)
+        let deletedWorkspaceRecord = session.recentlyClosed[0]
+        session.removeWorkspace(workspace)
+        try check(session.reopenClosedTab(deletedWorkspaceRecord.id) && session.workspaceID == Workspace.defaultID,
+                  "reopening from deleted workspace falls back to Personal")
+        session.select(reopened.id)
+        reopened.hasRequestedWebsitePermission = true
+        session.close(reopened.id)
+        try check(reopened.loadedWebView == nil, "pages with a prior website permission request never retain live Undo")
+        session.deleteHistory()
+        try check(session.recentlyClosed.isEmpty && store.load()?.recentlyClosed?.isEmpty == true,
+                  "clearing history also removes closed-page recovery")
+    }
+
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
@@ -818,6 +937,7 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try await tabRecoveryChecks()
             let normal = session.selected
             try await load(normal, "upgrades")
             _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
@@ -1021,12 +1141,17 @@ private final class NativeCheckRunner {
                 <h2>A little room to explore.</h2><p>A synthetic page for checking tabs, gestures and smooth transitions.</p>
                 <p>Keep your place as you move between pages and open the display.</p><input value="Unsent test note">
                 <p style="height:700px">Scroll, return, and continue reading.</p></main></body></html>
-                """, baseURL: nil)
+                """, baseURL: URL(string: "https://fixture.example/\(index)"))
             try? await wait { !model.webView.isLoading && model.title == page.0 }
             model.captureSnapshot()
             try? await wait { model.snapshot != nil }
         }
         session.select(session.visibleTabs[0].id)
+        if ProcessInfo.processInfo.arguments.contains("--recovery-preview") {
+            session.close(session.selectedID)
+            host.present(UIHostingController(rootView: RecentlyClosedView(session: session)), animated: false)
+            return
+        }
         let controller = BrowserZoomController(session: session)
         host.addChild(controller)
         controller.view.frame = host.view.bounds

@@ -12,7 +12,7 @@ final class BrowserPresentation {
     init(browser: BrowserModel) { self.browser = browser }
 
     var presenter: UIViewController? {
-        guard let root = browser?.loadedWebView?.window?.rootViewController else { return nil }
+        guard let browser, !browser.isRetainedForUndo, let root = browser.loadedWebView?.window?.rootViewController else { return nil }
         var top = root
         while let presented = top.presentedViewController { top = presented }
         return top.isBeingDismissed ? nil : top
@@ -178,11 +178,15 @@ extension BrowserModel: WKUIDelegate {
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
                  decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
-        decisionHandler(origin.protocol == "https" ? .prompt : .deny)
+        let allowed = !isRetainedForUndo && webView.window != nil && origin.protocol == "https"
+        if allowed { hasRequestedWebsitePermission = true }
+        decisionHandler(allowed ? .prompt : .deny)
     }
     func webView(_ webView: WKWebView, requestGeolocationPermissionFor origin: WKSecurityOrigin,
                  initiatedByFrame frame: WKFrameInfo, decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) {
-        decisionHandler(origin.protocol == "https" ? .prompt : .deny)
+        let allowed = !isRetainedForUndo && webView.window != nil && origin.protocol == "https"
+        if allowed { hasRequestedWebsitePermission = true }
+        decisionHandler(allowed ? .prompt : .deny)
     }
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
                  completionHandler: @escaping @MainActor (UIContextMenuConfiguration?) -> Void) {

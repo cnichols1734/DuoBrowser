@@ -17,7 +17,7 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Full-width browsing with camera-aware adjustments based on actual system geometry. Page options includes **Time, Signal & Battery**, a remembered on/off control.
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
-- Normal and private tabs, previews, lazy restoration and a bounded preview cache.
+- Normal and private tabs, previews, lazy restoration and a bounded preview cache. Normal tabs include Undo and a 20-item Recently Closed list; reopening restores the saved address and best-effort reading position, not page input or navigation history. Swipe the address capsule to switch tabs, or use the Tabs context menu. Hold Back for previous pages in the current tab.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
 - Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
 - A shared start-page/tab-switcher wallpaper and locally saved background tint.

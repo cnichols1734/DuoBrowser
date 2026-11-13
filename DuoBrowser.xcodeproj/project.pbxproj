@@ -5,6 +5,8 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"CA7120261112000000000001" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TabRecoveryView.swift; sourceTree = "<group>"; };
+"CA7120261112000000000002" = { isa = PBXBuildFile; fileRef = "CA7120261112000000000001"; };
 "DBB100000000000000000005" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FilterSettingsView.swift; sourceTree = "<group>"; };
 "DBB100000000000000000006" = { isa = PBXBuildFile; fileRef = "DBB100000000000000000005"; };
 "DBB100000000000000000003" = { isa = PBXFileReference; lastKnownFileType = folder; path = FilterLists; sourceTree = "<group>"; };
@@ -184,6 +186,7 @@
 		"482182478A3ECD4745BEA917" = {
 			"isa" = "PBXGroup";
 			"children" = (
+"CA7120261112000000000001",
 "FA7100000000000000000001",
 "A1DDE5500000000000000003",
 "A1DDE5500000000000000001",
@@ -248,6 +251,7 @@
 			"isa" = "PBXSourcesBuildPhase";
 			"buildActionMask" = 2147483647;
 			"files" = (
+"CA7120261112000000000002",
 "FA7100000000000000000002",
 "A1DDE5500000000000000002",
 "CC6600000000000000000002",
