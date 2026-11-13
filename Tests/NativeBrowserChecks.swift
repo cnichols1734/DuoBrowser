@@ -193,7 +193,8 @@ final class NativeCheckRunner {
         try check(true, "Reduce Motion returns to overview without a slide transition")
     }
 
-    func wait(timeout: Double = 10, _ condition: () async -> Bool) async throws {
+    func wait(timeout: Double = 10, file: StaticString = #fileID, line: UInt = #line,
+              _ condition: () async -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(timeout))
         while clock.now < deadline {
@@ -203,7 +204,7 @@ final class NativeCheckRunner {
         // Task.sleep can resume late on a busy simulator. Observe the condition once
         // more after waking instead of reporting stale state from before that sleep.
         if await condition() { return }
-        throw NSError(domain: "Timed out waiting for native WebKit", code: 1)
+        throw NSError(domain: "Timed out waiting for native WebKit at \(file):\(line)", code: 1)
     }
     func mount(_ model: BrowserModel) {
         host.view.subviews.forEach { $0.removeFromSuperview() }
@@ -281,37 +282,52 @@ final class NativeCheckRunner {
         // Dedicated test profile cannot change the user's default browser cookies.
         let store = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "D84C5855-2222-4333-8444-1FCFF8366740")!)
         let model = BrowserModel(dataStore: store)
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let receipt = cache.appendingPathComponent("PersistentCookieChecks.txt")
+        let expectedFile = cache.appendingPathComponent("PersistentCookieExpected.txt")
+        let isWriter = ProcessInfo.processInfo.arguments.contains("--persistent-cookie-write")
         do {
-            try await load(model, "persistent")
-            if ProcessInfo.processInfo.arguments.contains("--persistent-cookie-write") {
-                _ = try await js(model, "document.cookie='duo_persistence=synthetic;max-age=86400;path=/';localStorage.setItem('duo_persistence','synthetic')")
+            let nonce = isWriter ? UUID().uuidString : try String(contentsOf: expectedFile, encoding: .utf8)
+            guard UUID(uuidString: nonce) != nil else { throw NSError(domain: "Invalid synthetic persistence nonce", code: 1) }
+            try await load(model, "persistent?probe=" + UUID().uuidString)
+            if isWriter {
+                _ = try await js(model, "document.cookie='duo_persistence=\(nonce);max-age=86400;path=/';localStorage.setItem('duo_persistence','\(nonce)')")
                 try await wait {
                     let cookies = await withCheckedContinuation { continuation in
                         store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
                     }
-                    return cookies.contains { $0.name == "duo_persistence" && $0.value == "synthetic" &&
+                    return cookies.contains { $0.name == "duo_persistence" && $0.value == nonce &&
                         !$0.isSessionOnly && ($0.expiresDate ?? .distantPast) > Date() }
                 }
-                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true,
-                          "persistent cookie write is visible to WebKit and the document")
+                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=" + nonce) == true,
+                          "fresh persistent cookie write is visible to WebKit and the document")
                 try check(store.isPersistent, "test cookie profile is persistent")
-                // Retain the existing settling interval after confirming the write.
-                try await Task.sleep(for: .seconds(2))
+                try nonce.write(to: expectedFile, atomically: true, encoding: .utf8)
+                // Register before the ready receipt. Retain the view/profile through a real lifecycle transition.
+                let background = NotificationCenter.default.notifications(named: UIApplication.didEnterBackgroundNotification)
+                try results.joined(separator: "\n").write(to: receipt, atomically: true, encoding: .utf8)
+                for await _ in background {
+                    try "background observed".write(to: cache.appendingPathComponent("PersistentCookieBackground.txt"),
+                                                    atomically: true, encoding: .utf8)
+                    break
+                }
             } else {
                 let cookies = await withCheckedContinuation { continuation in
                     store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
                 }
-                let retained = cookies.first { $0.name == "duo_persistence" }
-                let storageRetained = try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic"
-                results.append("PERSISTENCE: nativeCookie=\(retained != nil) persistent=\(retained?.isSessionOnly == false) localStorage=\(storageRetained)")
-                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true, "persistent cookie survives app termination and relaunch")
-                try check(try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic", "persistent localStorage survives app termination and relaunch")
+                let retained = cookies.first { $0.name == "duo_persistence" && $0.value == nonce }
+                let storageRetained = try await js(model, "localStorage.getItem('duo_persistence')") as? String == nonce
+                let firstRequest = try await js(model, "document.querySelector('meta[name=persistence-cookie]')?.content") as? String == nonce
+                results.append("PERSISTENCE: nativeCookie=\(retained != nil) persistent=\(retained?.isSessionOnly == false) localStorage=\(storageRetained) firstRequestAuthenticated=\(firstRequest)")
+                try check(firstRequest, "first request after relaunch carries the fresh persistent cookie")
+                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=" + nonce) == true,
+                          "persistent cookie survives background, termination and relaunch")
+                try check(storageRetained, "fresh persistent localStorage survives background, termination and relaunch")
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
             }
         } catch { results.append("FAIL: \(error)") }
         model.close()
-        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PersistentCookieChecks.txt")
-        try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        try? results.joined(separator: "\n").write(to: receipt, atomically: true, encoding: .utf8)
     }
     func memoryChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MemoryChecks-" + UUID().uuidString)
