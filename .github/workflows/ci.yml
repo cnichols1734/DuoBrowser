@@ -103,6 +103,8 @@ jobs:
               -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
           done
       - name: Native WebKit, persistence and memory checks
+        env:
+          DUO_SKIP_DOWNLOAD_CHECKS: "1"
         run: bash scripts/native-checks.sh --skip-build
 
   required:

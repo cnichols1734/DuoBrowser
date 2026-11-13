@@ -126,6 +126,91 @@ final class NativeCheckRunner {
         try check(closedIDs.filter { $0 == departingID }.count == 1,
                   "filtering and teardown complete a committed close exactly once")
     }
+    func tabUndoOverviewChecks() async throws {
+        for reduced in [false, true] {
+            for coalesced in [true, false] {
+                let suite = "DuoBrowser.UndoOverview." + UUID().uuidString
+                let defaults = UserDefaults(suiteName: suite)!
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+                let session = BrowserSession(storage: defaults,
+                    archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+                let original = session.selected
+                try await load(original, "")
+                let originalView = original.webView
+                _ = try await js(original, "document.querySelector('#kept').value='Undo keeps this draft'; true")
+                _ = session.newTab()
+                session.select(original.id)
+                let controller = TabStackController()
+                var dismissals: [UUID: () -> Void] = [:]
+                var closed: [UUID] = []
+                func update() {
+                    controller.update(tabs: session.visibleTabs, selectedID: session.selectedID,
+                                      reduceMotion: reduced, close: { id in
+                        closed.append(id)
+                        session.close(id)
+                        // A hidden SwiftUI overview can coalesce close and Undo into the same IDs/selection.
+                        if !coalesced { update() }
+                    }) { tab, dismiss in
+                        dismissals[tab.id] = dismiss
+                        return AnyView(Button(action: dismiss) {
+                            Text("Close synthetic tab").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }.buttonStyle(.plain).background(Color.blue.opacity(0.1)))
+                    }
+                }
+                host.addChild(controller)
+                controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 520)
+                host.view.addSubview(controller.view)
+                controller.didMove(toParent: host)
+                defer {
+                    controller.update(tabs: [], selectedID: original.id, reduceMotion: true, close: { _ in }) { _, _ in AnyView(EmptyView()) }
+                    controller.finishPendingDismissals()
+                    controller.willMove(toParent: nil)
+                    controller.view.removeFromSuperview()
+                    controller.removeFromParent()
+                    session.releaseClosedTab()
+                    session.closePrivateTabs()
+                    session.tabs.forEach { $0.close() }
+                    defaults.removePersistentDomain(forName: suite)
+                    try? FileManager.default.removeItem(at: directory)
+                }
+                update()
+                controller.view.layoutIfNeeded()
+                try await wait { dismissals[original.id] != nil }
+                dismissals[original.id]?()
+                try await wait { !session.tabs.contains(where: { $0.id == original.id }) }
+                if !coalesced {
+                    // Undo as soon as the removal snapshot is applied, within the live Undo window.
+                    try await wait { controller.collectionView.numberOfItems(inSection: 0) == 1 }
+                }
+                guard let record = session.closedTabNotice else { throw NSError(domain: "Undo record missing", code: 1) }
+                let restored = session.reopenClosedTab(record)
+                let label = "Reduce Motion \(reduced), coalesced \(coalesced)"
+                try check(restored && session.selected === original && original.webView === originalView,
+                          "Undo restores the same live tab and web view (\(label))")
+                try check(try await js(original, "document.querySelector('#kept').value") as? String == "Undo keeps this draft",
+                          "Undo preserves the source draft (\(label))")
+                update()
+                controller.collectionView.layoutIfNeeded()
+                func cardIsHittable() -> Bool {
+                    guard let preview = controller.zoomSource(for: original.id, centered: true), preview.window != nil else { return false }
+                    let collection = controller.collectionView
+                    let frame = preview.convert(preview.bounds, to: collection)
+                    guard collection.bounds.intersects(frame), !frame.isEmpty else { return false }
+                    let point = CGPoint(x: frame.midX, y: frame.midY)
+                    guard let target = collection.hitTest(point, with: nil) else { return false }
+                    return target === preview || target.isDescendant(of: preview)
+                }
+                if !coalesced { try await wait { cardIsHittable() } }
+                try check(cardIsHittable(), "restored tab has a visible, hittable overview card and zoom source (\(label))")
+                dismissals[original.id]?()
+                try await wait { closed.filter { $0 == original.id }.count == 2 && !session.tabs.contains(where: { $0.id == original.id }) }
+                try await Task.sleep(for: .milliseconds(350))
+                try check(closed.filter { $0 == original.id }.count == 2,
+                          "restored tab can be closed again exactly once (\(label))")
+            }
+        }
+    }
+
     func wideTabLayoutChecks() throws {
         let models = (0..<40).map { _ in BrowserModel(dataStore: .nonPersistent()) }
         let controller = TabStackController()
@@ -1512,6 +1597,59 @@ final class NativeCheckRunner {
         try check(model.message == BrowserImportError.saveFailed.localizedDescription, "failed durable save supplies recovery instructions during review")
         model.cancel()
         try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
+        try await setupLayoutChecks(session: session, model: model)
+    }
+
+    private func setupLayoutChecks(session: BrowserSession, model: BrowserSetupModel) async throws {
+        let controls = [CGRect(x: 190, y: 8, width: 80, height: 44), CGRect(x: 402, y: 8, width: 44, height: 44)]
+        let camera = CGRect(x: 400, y: 0, width: 66, height: 80)
+        let clearance = SetupLayout.clearance(below: [camera], controls: controls)
+        try check(clearance == 80 && controls.allSatisfy { !$0.offsetBy(dx: 0, dy: clearance).intersects(camera) }, "setup moves only overlapping top controls below the measured camera region")
+        try check(SetupLayout.clearance(below: [CGRect(x: 0, y: 0, width: 40, height: 80)], controls: controls) == 0, "an unoccupied camera edge does not inset setup navigation")
+        let expanded = CGRect(x: 180, y: 90, width: 286, height: 40)
+        let stacked = SetupLayout.clearance(below: [expanded, camera], controls: controls)
+        try check(controls.allSatisfy { frame in [camera, expanded].allSatisfy { !frame.offsetBy(dx: 0, dy: stacked).intersects($0) } }, "setup clearance handles multiple measured obstructions without moving the horizontal center")
+        let staggered = [CGRect(x: 100, y: 0, width: 20, height: 10), CGRect(x: 0, y: 80, width: 20, height: 10)]
+        let overlapping = [CGRect(x: 100, y: 20, width: 20, height: 100), CGRect(x: 0, y: 80, width: 20, height: 20)]
+        let staggeredClearance = SetupLayout.clearance(below: overlapping, controls: staggered)
+        try check(staggered.allSatisfy { frame in overlapping.allSatisfy { !frame.offsetBy(dx: 0, dy: staggeredClearance).intersects($0) } },
+                  "clearing a lower control cannot move a higher control into a previously skipped taller region")
+        for safeInsets in [UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92), UIEdgeInsets(top: 12, left: 92, bottom: 18, right: 0)] {
+            var measured: [String: CGRect] = [:]
+            let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { measured = $0 }))
+            preview.additionalSafeAreaInsets = safeInsets
+            host.addChild(preview); preview.view.frame = host.view.bounds; host.view.addSubview(preview.view); preview.didMove(toParent: host)
+            defer { preview.willMove(toParent: nil); preview.view.removeFromSuperview(); preview.removeFromParent() }
+            for step in BrowserSetupModel.Step.allCases {
+                model.step = step
+                try await wait {
+                    measured["step.\(step.rawValue)"] != nil && measured["window.step.\(step.rawValue)"] != nil &&
+                    ["heading", "primary", "canvas", "navigation.progress", "navigation.skip"].allSatisfy { measured["window." + $0] != nil }
+                }
+                let width = preview.view.bounds.width
+                let windowBounds = preview.view.convert(preview.view.bounds, to: preview.view.window)
+                let centered = ["heading", "primary", "navigation.progress"].allSatisfy { key in
+                    abs((measured[key]?.midX ?? -1) - (measured["canvas"]?.midX ?? -2)) < 1 &&
+                    abs((measured["window." + key]?.midX ?? -1) - windowBounds.midX) < 1
+                }
+                let correct = abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered &&
+                    abs(measured["canvas"]?.minX ?? -1) < 1 &&
+                    abs((measured["window.canvas"]?.midX ?? -1) - windowBounds.midX) < 1 &&
+                    (measured["window.primary"]?.maxY ?? .infinity) <= windowBounds.maxY - preview.view.safeAreaInsets.bottom + 1 &&
+                    (measured["window.navigation.skip"]?.minY ?? -.infinity) >= windowBounds.minY + preview.view.safeAreaInsets.top - 1
+                try check(correct, "setup step \(step.rawValue) centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right)" +
+                          (correct ? "" : "; window=\(windowBounds) frames=\(measured)"))
+            }
+        }
+        var largeFrames: [String: CGRect] = [:]
+        model.step = .welcome
+        let large = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { largeFrames = $0 }).environment(\.dynamicTypeSize, .accessibility5))
+        large.additionalSafeAreaInsets = UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92)
+        host.addChild(large); large.view.frame = host.view.bounds; host.view.addSubview(large.view); large.didMove(toParent: host)
+        defer { large.willMove(toParent: nil); large.view.removeFromSuperview(); large.removeFromParent() }
+        try await wait { largeFrames["window.primary"] != nil && largeFrames["window.heading"] != nil && largeFrames["window.navigation.progress"] != nil }
+        let largeBounds = large.view.convert(large.view.bounds, to: large.view.window)
+        try check(["heading", "primary", "navigation.progress"].allSatisfy { abs((largeFrames["window." + $0]?.midX ?? -1) - largeBounds.midX) < 1 }, "accessibility setup keeps UIKit-rendered scrolling content and progress centered on the full display")
     }
 
     func setupPreview() throws {
@@ -1768,40 +1906,10 @@ final class NativeCheckRunner {
         let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: profile)
         let manager = session.normalDownloads
         var trace: [String] = []
-        var authenticationSnapshots: [String] = []
         let traceStart = Date()
         let observe: (String) -> Void = { event in
             if trace.count == 32 { trace.removeFirst() }
             trace.append(String(format: "%.3f ", Date().timeIntervalSince(traceStart)) + String(event.prefix(256)))
-        }
-        let authenticationDiagnostics = ProcessInfo.processInfo.arguments.contains("--download-auth-diagnostics")
-        func recordAuthenticationState(_ stage: String, source: BrowserModel, request: URLRequest? = nil) {
-            let view = source.loadedWebView
-            let entry = String(format: "%.3f ", Date().timeIntervalSince(traceStart)) +
-                "AUTH SYNC \(stage): WKURL=\(String((view?.url?.absoluteString ?? "nil").prefix(256))) WKLoading=\(view?.isLoading ?? false) modelLoading=\(source.isLoading) startPage=\(source.showingStartPage) sameProfile=\(view?.configuration.websiteDataStore === profile) mainDocument=\(String((request?.mainDocumentURL?.absoluteString ?? "nil").prefix(256))) handleCookies=\(request?.httpShouldHandleCookies ?? true)"
-            if authenticationSnapshots.count == 24 { authenticationSnapshots.removeFirst() }
-            authenticationSnapshots.append(entry)
-        }
-        func authenticationSnapshot(_ stage: String, source: BrowserModel, request: URLRequest? = nil) async {
-            guard let view = source.loadedWebView else {
-                authenticationSnapshots.append("AUTH \(stage): no loaded view")
-                return
-            }
-            let before = "WKURL=\(String((view.url?.absoluteString ?? "nil").prefix(256))) WKLoading=\(view.isLoading) modelLoading=\(source.isLoading) startPage=\(source.showingStartPage) address=\(String(source.address.prefix(256)))"
-            let document: String
-            do {
-                let value = try await view.evaluateJavaScript("JSON.stringify({href:String(location.href).slice(0,256),origin:String(location.origin).slice(0,256),ready:document.readyState,cookiePresent:document.cookie.split(';').some(v=>v.trim()==='duo-download=synthetic')})")
-                document = value as? String ?? "no document result"
-            } catch { document = "script error \((error as NSError).domain):\((error as NSError).code)" }
-            let cookies = await withCheckedContinuation { continuation in
-                profile.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
-            }
-            let cookie = cookies.first { $0.name == "duo-download" && $0.value == "synthetic" }
-            let expiry = cookie?.expiresDate.map { String(Int($0.timeIntervalSinceNow)) } ?? "nil"
-            let entry = String(format: "%.3f ", Date().timeIntervalSince(traceStart)) +
-                "AUTH \(stage): before[\(before)] document=\(document) nativeCookie=\(cookie != nil) sessionOnly=\(cookie?.isSessionOnly ?? false) expirySeconds=\(expiry) sameProfile=\(view.configuration.websiteDataStore === profile) afterWKLoading=\(view.isLoading) afterStartPage=\(source.showingStartPage) mainDocument=\(String((request?.mainDocumentURL?.absoluteString ?? "nil").prefix(256))) handleCookies=\(request?.httpShouldHandleCookies ?? true)"
-            if authenticationSnapshots.count == 24 { authenticationSnapshots.removeFirst() }
-            authenticationSnapshots.append(entry)
         }
         manager.testDownloadObserver = observe
         var suiteSucceeded = false
@@ -1811,7 +1919,7 @@ final class NativeCheckRunner {
             let rows = manager.items.prefix(4).map { item in
                 "state=\(item.state.rawValue), active=\(item.isDownloading), canceling=\(item.isCanceling), bytes=\(item.received)/\(item.expected), fileBytes=\((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1), error=\(String((item.message ?? "none").prefix(256))), request=\(String((item.request?.url?.absoluteString ?? "nil").prefix(256)))"
             }.joined(separator: "\n")
-            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nAUTH CONTEXT:\n\(authenticationSnapshots.joined(separator: "\n"))\nTRACE:\n\(trace.joined(separator: "\n"))"
+            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nTRACE:\n\(trace.joined(separator: "\n"))"
         }
         defer {
             if !suiteSucceeded {
@@ -1830,8 +1938,6 @@ final class NativeCheckRunner {
         try await load(tab, "")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "duo-download", .value: "synthetic"])!
         await profile.httpCookieStore.setCookie(cookie)
-        recordAuthenticationState("after seed", source: tab)
-        if authenticationDiagnostics { await authenticationSnapshot("after seed", source: tab) }
         _ = try await js(tab, "document.querySelector('#kept').value='Preserved download draft'")
         _ = try await js(tab, "document.querySelector('a[download]').click()")
         try await wait(timeout: 30) { manager.completedCount == 1 }
@@ -1929,8 +2035,6 @@ final class NativeCheckRunner {
         try await wait(timeout: 30) { canceled.state == .completed && independent.state == .completed }
         try check(try String(contentsOf: canceled.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "GET retry uses the same WebKit cookie profile")
         try check(canceled.id != independent.id && canceled.file != independent.file, "identical filenames remain separate downloads")
-        recordAuthenticationState("after authenticated cancel/retry", source: retryTab)
-        if authenticationDiagnostics { await authenticationSnapshot("after authenticated cancel/retry", source: retryTab) }
 
         await start("download-retry?case=" + UUID().uuidString)
         let failed = manager.items[0]
@@ -1939,8 +2043,6 @@ final class NativeCheckRunner {
         manager.retry(failed)
         try await wait(timeout: 30) { failed.state == .completed && !failed.isDownloading }
         try check(failed.file != nil, "retry completes after a synthetic interrupted response")
-        recordAuthenticationState("after network retry", source: retryTab)
-        if authenticationDiagnostics { await authenticationSnapshot("after network retry", source: retryTab) }
 
         let unknownGate = UUID().uuidString
         await start("download-chunked?gate=\(unknownGate)&gate-attempts=1")
@@ -1964,8 +2066,6 @@ final class NativeCheckRunner {
         let untrusted = manager.items[0]
         try await wait(timeout: 30) { untrusted.state == .failed && !untrusted.isDownloading }
         try check(untrusted.file == nil, "download uses platform certificate validation and rejects untrusted TLS")
-        recordAuthenticationState("after TLS rejection", source: retryTab)
-        if authenticationDiagnostics { await authenticationSnapshot("after TLS rejection", source: retryTab) }
 
         var post = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-post")!)
         post.httpMethod = "POST"; post.httpBody = Data("synthetic=download".utf8)
@@ -1978,8 +2078,6 @@ final class NativeCheckRunner {
         try await wait(timeout: 30) { postResult.state == .failed && !postResult.isDownloading }
         try check(!postResult.canRetry && postResult.request == nil && postResult.resumeData == nil,
                   "failed POST download never offers a potentially mutating replay")
-        recordAuthenticationState("after POST rejection", source: retryTab)
-        if authenticationDiagnostics { await authenticationSnapshot("after POST rejection", source: retryTab) }
 
         await start("download-slow?stale=1")
         let stale = manager.items[0]
@@ -1993,49 +2091,6 @@ final class NativeCheckRunner {
         try await wait { !stale.isCanceling }
         try check(!manager.items.contains(where: { $0.id == stale.id }), "removed retry cannot reappear after its asynchronous callback")
         try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
-        recordAuthenticationState("after pending removal", source: retryTab)
-        if authenticationDiagnostics { await authenticationSnapshot("after pending removal", source: retryTab) }
-
-        func retryThenCloseSource(afterProgress: Bool) async throws {
-            trace.removeAll()
-            let source = session.newTab()
-            diagnosticModel = source
-            source.testDownloadObserver = observe
-            defer { source.testDownloadObserver = nil }
-            do { try await load(source, "") }
-            catch {
-                throw NSError(domain: "Retry-close source load timed out; afterProgress=\(afterProgress), loading=\(source.webView.isLoading), errorPresent=\(source.errorMessage != nil)", code: 1)
-            }
-            let gate = UUID().uuidString
-            let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)&gate=\(gate)")!)
-            recordAuthenticationState("before initial retry-close (progress=\(afterProgress))", source: source, request: request)
-            if authenticationDiagnostics { await authenticationSnapshot("before initial retry-close (progress=\(afterProgress))", source: source, request: request) }
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                source.webView.startDownload(using: request) { download in
-                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
-                }
-            }
-            let restarted = manager.items[0]
-            try await awaitDownloadProgress(restarted, stage: "Retry-close initial progress (afterProgress=\(afterProgress))")
-            manager.cancel(restarted)
-            try await wait { !restarted.isCanceling }
-            try await releaseDownloadFixture(gate)
-            // Exercise the authenticated GET restart path deterministically, not an optional resume token.
-            restarted.resumeData = nil
-            manager.retry(restarted)
-            try check(manager.hasWork(for: source.id), "GET retry owns its source while WebKit creates the transfer (afterProgress=\(afterProgress))")
-            if afterProgress { try await awaitDownloadProgress(restarted, stage: "Retry-close retry progress") }
-            session.close(source.id)
-            session.releaseClosedTab() // Expire Undo now: this must work without its eight-second retention.
-            mount(session.selected)
-            try await releaseDownloadFixture(gate, attempt: 2)
-            try await wait(timeout: 30) { !restarted.isDownloading }
-            let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
-            try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
-                      "authenticated GET retry completes after source closure (afterProgress=\(afterProgress), state=\(restarted.state.rawValue), bytes=\(restarted.received), authenticated=\(content?.hasPrefix("Authenticated synthetic") == true), error=\(restarted.message ?? "none"))")
-        }
-        try await retryThenCloseSource(afterProgress: false)
-        try await retryThenCloseSource(afterProgress: true)
 
         func rejectReplacedDocumentRetry(reload: Bool) async throws {
             let source = session.newTab()
@@ -2129,7 +2184,6 @@ final class NativeCheckRunner {
         manager.remove(first)
         try check(!FileManager.default.fileExists(atPath: originalFile.path), "explicit Remove deletes the retained app copy")
         try check(manager.items.contains(where: { $0.id == second.id }), "removing one retained file leaves other downloads available")
-        results.append("AUTH CONTEXT:\n" + authenticationSnapshots.joined(separator: "\n"))
         suiteSucceeded = true
     }
 
@@ -2392,8 +2446,14 @@ final class NativeCheckRunner {
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--tab-overview-demo") { await overviewDemo(); return }
+        if ProcessInfo.processInfo.arguments.contains("--undo-overview-checks") {
+            do { try await tabUndoOverviewChecks() } catch { results.append("FAIL: \(error)") }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("UndoOverviewChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
-            do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
+            do { try await tabStackChecks(); try await tabUndoOverviewChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
             return

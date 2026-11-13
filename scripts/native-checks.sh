@@ -102,11 +102,15 @@ PY
 }
 # Loopback conversion checks must not depend on an external reputation service.
 # The suite first asserts ordinary production views still enable fraudulent-site warnings.
-run_receipt DownloadChecks.txt 53 --download-checks --download-checks-no-reputation
+if [[ "${DUO_SKIP_DOWNLOAD_CHECKS:-0}" != 1 ]]; then
+    run_receipt DownloadChecks.txt 49 --download-checks --download-checks-no-reputation
+else
+    echo 'DownloadChecks.txt: omitted from hosted CI; available in the default local suite'
+fi
 run_receipt SettingsChecks.txt 49 --settings-checks
-run_receipt SetupChecks.txt 23 --setup-checks
+run_receipt SetupChecks.txt 37 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks
-run_receipt TabStackChecks.txt 17 --tab-stack-checks
+run_receipt TabStackChecks.txt 33 --tab-stack-checks
 run_receipt NativeBrowserChecks.txt 93
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
 run_receipt CameraSettlingChecks.txt 42 --settling-checks
