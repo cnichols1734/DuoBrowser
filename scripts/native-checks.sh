@@ -109,7 +109,7 @@ run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks
 run_receipt NativeBrowserChecks.txt 93
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
-run_receipt CameraSettlingChecks.txt 34 --settling-checks
+run_receipt CameraSettlingChecks.txt 42 --settling-checks
 rm -f "$container/Library/Caches/PersistentCookieBackground.txt" "$container/Library/Caches/PersistentCookieExpected.txt"
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-write
 # Exercise a normal background transition before termination, rather than foreground SIGTERM.

@@ -589,6 +589,64 @@ final class NativeCheckRunner {
             }
 
 
+            try await load(model, "settling")
+            // Navigation reapplies site preferences. Disable adaptation afterward so viewport
+            // mounting cannot begin a correction before the baseline and animation hook exist.
+            model.originalPageLayout = true
+            try await wait {
+                (try? await self.js(model, "![...document.getElementById('reading').attributes].some(a=>a.name.startsWith('data-duo-camera-'))")) as? Bool == true
+            }
+            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');document.getElementById('draft').value='Long article draft'")
+            let longWidth = try await measure("width"), longTop = try await measure("top")
+            try check((try await measure("height")) > 320, "native long article exceeds the previous camera cutoff")
+            // Exercise the production UIKit geometry publisher, not only a synthetic JavaScript update.
+            host.view.subviews.forEach { $0.removeFromSuperview() }
+            let viewport = ViewportView(browser: model)
+            viewport.frame = host.view.bounds; host.view.addSubview(viewport); viewport.layoutIfNeeded()
+            let actualRegions = viewport.reservedRegions(kind: .occlusion).filter(\.isActive).map { region in
+                let r = viewport.convert(region.frame, to: model.webView)
+                return ["x": Double(r.minX), "y": Double(r.minY), "width": Double(r.width), "height": Double(r.height)]
+            }
+            try check(!actualRegions.isEmpty, "production viewport receives active system occlusion geometry")
+            func longTextClear() async throws -> Bool {
+                try await model.webView.callAsyncJavaScript("""
+                const scale=(visualViewport?.width??innerWidth)/width, x=visualViewport?.offsetLeft??0, y=visualViewport?.offsetTop??0;
+                const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));
+                return ![...r.getClientRects()].some(line=>regions.some(o=>line.left<(o.x+o.width)*scale+x&&line.right>o.x*scale+x&&line.top<(o.y+o.height)*scale+y&&line.bottom>o.y*scale+y));
+                """, arguments: ["regions": actualRegions, "width": model.webView.bounds.width], in: nil, contentWorld: .page) as? Bool == true
+            }
+            let initiallyClear = try await longTextClear()
+            try check(!initiallyClear, "long article fixture actually intersects the system camera before adaptation")
+            _ = try await model.webView.evaluateJavaScript("""
+            (()=>{const original=Element.prototype.animate;globalThis.__duoLongMotion=null;
+            Element.prototype.animate=function(...args){const a=original.apply(this,args);if(this.id==='reading'){Element.prototype.animate=original;globalThis.__duoLongMotion=a;a.pause()}return a}})()
+            """, in: nil, contentWorld: PageLayoutAdapter.world)
+            model.originalPageLayout = false
+            try await wait { (try? await model.webView.evaluateJavaScript("Boolean(globalThis.__duoLongMotion)", in: nil, contentWorld: PageLayoutAdapter.world)) as? Bool == true }
+            let interruption = try await model.webView.callAsyncJavaScript("""
+            const a=globalThis.__duoLongMotion;a.currentTime=100;const progress=a.effect.getComputedTiming().progress;
+            a.play();dispatchEvent(new Event('pointerdown'));const x=document.getElementById('reading').getBoundingClientRect().x;
+            await new Promise(resolve=>setTimeout(resolve,150));
+            const stable=a.playState==='paused'&&Math.abs(document.getElementById('reading').getBoundingClientRect().x-x)<1;
+            dispatchEvent(new Event('pointerup'));delete globalThis.__duoLongMotion;return stable&&progress>.15&&progress<.6;
+            """, arguments: [:], in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
+            try check(interruption == true, "native long paragraph uses gradual interpolation and freezes its actual presentation on touch")
+            try await wait { (try? await longTextClear()) == true }
+            let fittedLongTop = try await measure("top"), fittedLongWidth = try await measure("width")
+            try check(abs(fittedLongTop-longTop)<1 && fittedLongWidth < longWidth,
+                      "production geometry bridge fits long article beside actual camera without a downshift")
+            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize==='18px'") as? Bool == true,
+                      "long camera fitting preserves native DOM, draft and font size")
+            model.originalPageLayout = true
+            try await wait { abs(((try? await measure("width")) ?? 0) - longWidth) < 1 }
+            try check(abs((try await measure("width"))-longWidth)<1, "Original Layout reverses long article fitting")
+            try await camera(actualRegions, reduceMotion: true); try await pause()
+            let staticLongClear = try await longTextClear()
+            let staticLongAnimations = try await js(model, "document.getElementById('reading').getAnimations().length") as? Int
+            try check(staticLongClear && staticLongAnimations == 0,
+                      "native Reduce Motion retains static long article avoidance")
+
+
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
@@ -1555,13 +1613,39 @@ final class NativeCheckRunner {
         try await load(model, "reddit-routing")
         let page = model.webView.url
         let initialCount = opened.count
-        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
-        try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
+        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; true")
+        let scrollView = model.webView.scrollView
+        var scrollStage = "native viewport readiness"
+        do {
+            // DOM readiness and animation frames do not acknowledge UIKit's first content-size commit.
+            // This fixture declares initial-scale=1; wait for both coordinate spaces before scrolling.
+            try await wait {
+                let scrollDocument = (try? await self.js(model,
+                    "({width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale})")) as? [String: Any] ?? [:]
+                guard model.webView.window != nil, scrollView.bounds.height > 0,
+                      let width = scrollDocument["width"] as? Double,
+                      let height = scrollDocument["height"] as? Double,
+                      let viewport = scrollDocument["viewport"] as? Double,
+                      let scale = scrollDocument["scale"] as? Double else { return false }
+                return abs(scale - 1) < 0.01 && abs(scrollView.zoomScale - 1) < 0.01 &&
+                    abs(scrollView.bounds.height - viewport) < 2 &&
+                    abs(scrollView.contentSize.width - width) < 2 &&
+                    abs(scrollView.contentSize.height - height) < 2 && height > viewport + 200
+            }
+            scrollStage = "native scroll acknowledgement"
+            // Drive the same native scroll view as a gesture, after its range is committed.
+            scrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+            try await wait {
+                let documentY = (try? await self.js(model, "window.scrollY")) as? Double
+                return documentY.map { abs($0 - 200) < 2 } == true && abs(scrollView.contentOffset.y - 200) < 2
+            }
+        } catch {
+            let document = try? await js(model,
+                "JSON.stringify({y:scrollY,width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale,pageTop:visualViewport.pageTop,offsetTop:visualViewport.offsetTop})")
+            results.append("SCROLL: \(scrollStage) nativeY=\(scrollView.contentOffset.y) size=\(scrollView.contentSize) bounds=\(scrollView.bounds) zoom=\(scrollView.zoomScale) insets=\(scrollView.adjustedContentInset) attached=\(model.webView.window != nil) document=\(String(describing: document))")
+            throw error
+        }
         let position = try await js(model, "window.scrollY") as? Double
-        // Wait for WebKit's compositor to commit the synthetic scroll before simulating
-        // another interaction. Large cosmetic stylesheets can otherwise expose a DOM/native race.
-        _ = try await asyncJS(model, "return await new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(window.scrollY))))")
-        try await wait { abs(model.webView.scrollView.contentOffset.y - (position ?? 0)) < 2 }
         _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
         try await wait { opened.count == initialCount + 1 }
         try check(opened.last == RedditLinks.apolloURL(url), "real WebKit link action unwraps Google and opens exact comment")
