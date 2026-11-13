@@ -431,6 +431,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        #if DEBUG
+        testDownloadObserver?("web content process terminated")
+        #endif
         revealControls()
         presentation.cancel()
         loadedWebView?.scrollView.refreshControl?.endRefreshing()

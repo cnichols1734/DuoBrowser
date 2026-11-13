@@ -42,6 +42,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         path = urlsplit(self.path)
+        if path.path.startswith('/download'):
+            print('Synthetic download request: ' + path.path[:64], flush=True)
         query = parse_qs(path.query)
         gate_token = query.get('gate', [''])[0][:64]
         if path.path == '/download-release' and gate_token:

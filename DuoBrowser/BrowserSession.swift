@@ -421,15 +421,19 @@ final class BrowserSession: ObservableObject {
         saveNow()
     }
     private func endPrivateSession() {
-        if privateDownloads?.cancelAll() == false {
-            for tab in tabs where !tab.isPrivate { tab.errorMessage = privateDownloads?.errorMessage }
-        }
-        privateDownloads = nil
+        let downloads = privateDownloads
         let old = privateStore
-        privateStore = nil
+        privateDownloads = nil; privateStore = nil
+        let cleanup: (String?) -> Void = { [weak self] error in
+            if let error {
+                for tab in self?.tabs ?? [] where !tab.isPrivate { tab.errorMessage = error }
+            }
+            old?.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
+        if let downloads { downloads.cancelAll(completion: cleanup) }
+        else { cleanup(nil) }
         privateSites.removeAll()
         lastPrivateID = nil
-        old?.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
     }
     private func compactInactiveTabs(target: Int = 6) {
         compactTask?.cancel()
