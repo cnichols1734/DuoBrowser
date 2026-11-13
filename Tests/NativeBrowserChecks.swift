@@ -1666,13 +1666,39 @@ final class NativeCheckRunner {
         try await load(model, "reddit-routing")
         let page = model.webView.url
         let initialCount = opened.count
-        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
-        try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
+        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; true")
+        let scrollView = model.webView.scrollView
+        var scrollStage = "native viewport readiness"
+        do {
+            // DOM readiness and animation frames do not acknowledge UIKit's first content-size commit.
+            // This fixture declares initial-scale=1; wait for both coordinate spaces before scrolling.
+            try await wait {
+                let scrollDocument = (try? await self.js(model,
+                    "({width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale})")) as? [String: Any] ?? [:]
+                guard model.webView.window != nil, scrollView.bounds.height > 0,
+                      let width = scrollDocument["width"] as? Double,
+                      let height = scrollDocument["height"] as? Double,
+                      let viewport = scrollDocument["viewport"] as? Double,
+                      let scale = scrollDocument["scale"] as? Double else { return false }
+                return abs(scale - 1) < 0.01 && abs(scrollView.zoomScale - 1) < 0.01 &&
+                    abs(scrollView.bounds.height - viewport) < 2 &&
+                    abs(scrollView.contentSize.width - width) < 2 &&
+                    abs(scrollView.contentSize.height - height) < 2 && height > viewport + 200
+            }
+            scrollStage = "native scroll acknowledgement"
+            // Drive the same native scroll view as a gesture, after its range is committed.
+            scrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+            try await wait {
+                let documentY = (try? await self.js(model, "window.scrollY")) as? Double
+                return documentY.map { abs($0 - 200) < 2 } == true && abs(scrollView.contentOffset.y - 200) < 2
+            }
+        } catch {
+            let document = try? await js(model,
+                "JSON.stringify({y:scrollY,width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale,pageTop:visualViewport.pageTop,offsetTop:visualViewport.offsetTop})")
+            results.append("SCROLL: \(scrollStage) nativeY=\(scrollView.contentOffset.y) size=\(scrollView.contentSize) bounds=\(scrollView.bounds) zoom=\(scrollView.zoomScale) insets=\(scrollView.adjustedContentInset) attached=\(model.webView.window != nil) document=\(String(describing: document))")
+            throw error
+        }
         let position = try await js(model, "window.scrollY") as? Double
-        // Wait for WebKit's compositor to commit the synthetic scroll before simulating
-        // another interaction. Large cosmetic stylesheets can otherwise expose a DOM/native race.
-        _ = try await asyncJS(model, "return await new Promise(resolve => requestAnimationFrame(()=>requestAnimationFrame(()=>resolve(window.scrollY))))")
-        try await wait { abs(model.webView.scrollView.contentOffset.y - (position ?? 0)) < 2 }
         _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
         try await wait { opened.count == initialCount + 1 }
         try check(opened.last == RedditLinks.apolloURL(url), "real WebKit link action unwraps Google and opens exact comment")
