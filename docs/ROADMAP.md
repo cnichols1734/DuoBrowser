@@ -1,9 +1,15 @@
 # Build plan
 
+## Hosted download fixture removal — November 12, 2026
+
+- At the owner's explicit request to remove failing CI tests, hosted CI now omits the synthetic Downloads batch. The default local suite retains its 49 checks, which passed in the complete 517-assertion run. All other native batches, including Undo, and the build/portable/layout/security gates remain enabled.
+- PR #24 run `43368911556` failed after 15 download assertions: the first gated transfer had the expected authenticated length and initial progress, then timed out after about 60 seconds before fixture release. The exact JavaScript/state-wait cause is unestablished. This is distinct from the previously removed retry/source-closure scenarios. No production download behavior was changed.
+- The revised hosted command passed locally with **468 assertions across all 10 retained batches** on a fresh iOS 27.1 Duo simulator. Downloads was explicitly reported as omitted. Workflow lint, shell syntax, 339 portable checks and patch checks passed; independent review confirmed all other gates and local default coverage remain intact. Receipt: `work/hosted-selection-native.log` in the setup worktree.
+
 ## Combined photo-save fix and beta preparation — November 12, 2026
 
 - The owner tested the Undo-corrected developer build on the connected Duo and accepted it. The owner authorized merging PRs #18–25, including setup centering and the photo-save permission fix, while leaving Playwright #14 open, then building and uploading TestFlight.
-- Integrated the photo-save metadata fix with the verified feature stack using an ordinary merge. The only app difference from the accepted developer build is the add-only Photos purpose string. Both combined Debug/Release simulator builds and processed-plist guards passed, as did 339 portable checks and pinned strict SwiftLint. Browser source and native tests match the 517-check Undo validation above; hosted CI validates the integrated head independently.
+- Integrated the photo-save metadata fix with the verified feature stack using an ordinary merge. The only app difference from the accepted developer build is the add-only Photos purpose string. Both combined Debug/Release simulator builds and processed-plist guards passed, as did 339 portable checks and pinned strict SwiftLint. Browser source and native tests match the 517-check Undo validation below; hosted CI validates the integrated head independently.
 - PR #25's earlier failure was three public EasyList commit-annotation hashes matching a secret-scanner rule. The existing narrow filter-list allowlist in #18 resolves those matches without disabling scanning. The photo fix's earlier native/build/layout jobs passed.
 - Final TestFlight archive/export must verify the nonempty Photos purpose string, exact merged source and selected build number, distribution signing and disabled default-browser/Safari-transfer capability. The next build number is checked in App Store Connect before archiving and recorded with any explicit build-setting override. Actual normal/private photo-save Allow/Don't Allow interactions, endurance and full spoken VoiceOver are not claimed by these checks.
 
