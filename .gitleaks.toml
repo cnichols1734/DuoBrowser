@@ -1,0 +1,10 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public upstream commit SHA comments in the licensed EasyList snapshot; not credentials"
+condition = "AND"
+targetRules = ["sourcegraph-access-token"]
+paths = ['''^DuoBrowser/FilterLists/easylist\.txt$''']
+regexTarget = "line"
+regexes = ['''(?m)^! (Commit: [0-9a-f]{40}|https://github\.com/AdguardTeam/AdguardFilters/commit/[0-9a-f]{40})$''']

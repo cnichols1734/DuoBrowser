@@ -17,16 +17,17 @@ Keep the page central, controls reachable, and browsing dependable. Safari-level
 - Full-width browsing with camera-aware adjustments based on actual system geometry. Page options includes **Time, Signal & Battery**, a remembered on/off control.
 - Stable text while scrolling, followed by a gentle sideways adjustment to fit beside the camera after scrolling stops.
 - Bottom Liquid Glass controls that shrink into a domain pill while scrolling.
-- Normal and private tabs, previews, lazy restoration and a bounded preview cache.
+- Normal and private tabs, previews, lazy restoration and a bounded preview cache. Normal tabs include Undo and a 20-item Recently Closed list; reopening restores the saved address and best-effort reading position, not page input or navigation history. Swipe the address capsule to switch tabs, or use the Tabs context menu. Hold Back for previous pages in the current tab.
 - Unified local search across tabs, bookmarks and history, with private-search isolation.
 - Named workspaces and pinned tabs, with normal-session restoration. The start page shows bookmarks and recent visits, with a separate private start page.
 - A shared start-page/tab-switcher wallpaper and locally saved background tint.
 - Start-page shortcuts show site icons with a letter fallback. Icons prefer high-resolution touch icons discovered from each site’s public home page, with `/favicon.ico` as a fallback (including secure CDN redirects). Saved browsing paths, cookies and credentials are excluded; bounded downloads and the icon cache stay in memory. Private start pages do not load these shortcuts.
 - Native floating link previews that can become tabs without reloading.
 - Full-width, camera-aware Reader with ordered article photos, captions, typography and appearance controls.
-- Basic bundled ad/tracker blocking with clear protection status and per-site exception management.
-- Local history, bookmarks, find on page and native sharing.
-- Downloads to Files, WebKit file/photo selection, guarded external links and JavaScript dialogs.
+- Maintained EasyList/EasyPrivacy ad and tracker filters, supported cosmetic ad hiding, optional cookie-notice filtering, automatic updates with a working fallback, and per-site exceptions. Filter credits and licenses are available in the app.
+- Local history, editable bookmarks and folders, Favorites, and a Reading List with read/unread filtering. Save readable articles for offline use with bounded local image copies; Reader remembers text size, spacing and appearance.
+- Find on page and native sharing.
+- Downloads panel with progress, individual cancel/retry, native preview and Save to Files. Completed normal downloads survive tab closure and relaunch; private downloads remain temporary until explicitly exported. WebKit file/photo selection, guarded external links and JavaScript dialogs.
 - Settings includes a global **Block Ads & Trackers** switch and a **Reddit** link preference. Tapped Reddit content links can open in an installed Apollo Reborn, with a remembered first choice, Ask Every Time, browser fallback, and confirmation in private tabs. Artemis is pending a verified deep-link contract. See [coverage and verification](docs/REDDIT_LINKS_AND_BLOCKING.md).
 - Per-site layout and desktop/mobile preferences, system appearance and accessible native controls.
 
@@ -110,4 +111,4 @@ Project-owned code, documentation and artwork are available under the [MIT Licen
 
 ### Address suggestions
 
-Searches from the start page and address bar use Google. Typing a known website prefix completes the address inline with the remaining suffix selected (`g` → `www.google.com`); continuing to type replaces that suffix, while Backspace dismisses it. The top website match remains above Google keyword predictions, local tabs, bookmarks and history. Predictions use the keyword you typed, not the completed domain. Plain search text is sent to Google as you type; URLs, private-tab input and unfinished keyboard composition are excluded. Requests use an ephemeral session without shared cookies or a disk cache. Website matches remain available offline. The bundled website list is curated, not a live popularity chart.
+Searches from the start page and address bar use your chosen engine: Google (default), DuckDuckGo, Bing or Brave Search in Settings. Settings also contains appearance, system status, setup, privacy and link preferences. Clear Browsing Data offers separately confirmed history, cookies/site data and cache removal; Website Data removes actual WebKit domain groups from the normal profile while preserving bookmarks and downloaded files. Typing a known website prefix completes the address inline with the remaining suffix selected (`g` → `www.google.com`); continuing to type replaces that suffix, while Backspace dismisses it. The top website match remains above Google keyword predictions, local tabs, bookmarks and history. Predictions use the keyword you typed, not the completed domain. When Google is selected and Online Search Suggestions is enabled in Settings, plain search text is sent to Google as you type; URLs, private-tab input and unfinished keyboard composition are excluded. Requests use an ephemeral session without shared cookies or a disk cache. Website matches remain available offline. The bundled website list is curated, not a live popularity chart.

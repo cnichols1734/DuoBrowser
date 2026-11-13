@@ -7,6 +7,7 @@ struct ReaderArticle: Identifiable {
     let title: String
     let source: URL
     let blocks: [Block]
+    var offlineImages: [Int: Data]? = nil
     struct Block: Identifiable {
         let id = UUID()
         let kind: String
@@ -47,7 +48,11 @@ struct ReaderArticle: Identifiable {
 
     /// Only escaped text and validated HTTP(S) image attributes enter this fixed app-owned template.
     var readerHTML: String {
-        let content = blocks.map { block -> String in
+        let content = blocks.enumerated().map { index, block -> String in
+            if let images = offlineImages, block.kind == "image" {
+                guard let data = images[index] else { return "<p class=\"caption\">Image not saved for offline reading.</p>" }
+                return "<img src=\"data:image/jpeg;base64,\(data.base64EncodedString())\" alt=\"\(Self.escape(block.text))\">"
+            }
             if let url = block.imageURL {
                 return "<img src=\"\(Self.escape(url.absoluteString))\" alt=\"\(Self.escape(block.text))\" width=\"\(block.width)\" height=\"\(block.height)\" loading=\"lazy\" decoding=\"async\" referrerpolicy=\"no-referrer\">"
             }
@@ -57,7 +62,7 @@ struct ReaderArticle: Identifiable {
         return """
         <!doctype html><html><head><meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: http:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src \(offlineImages == nil ? "https: http:" : "data:"); style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
         <meta name="referrer" content="no-referrer"><title>\(Self.escape(title))</title>
         <style>
         :root{color-scheme:light dark;--reader-size:19px;--reader-spacing:7px;--reader-paper:#fff;--reader-ink:#171717}
@@ -130,7 +135,7 @@ final class ReaderRenderer: ObservableObject {
     init(article: ReaderArticle, sourceBrowser: BrowserModel) {
         self.article = article
         let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = sourceBrowser.webView.configuration.websiteDataStore
+        configuration.websiteDataStore = article.offlineImages == nil ? sourceBrowser.webView.configuration.websiteDataStore : .nonPersistent()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         browser = BrowserModel(isPrivate: sourceBrowser.isPrivate, configuration: configuration)
         let blocking = sourceBrowser.blockAds
@@ -148,7 +153,7 @@ final class ReaderRenderer: ObservableObject {
         guard !loaded else { return }
         loaded = true
         isLoading = true
-        browser.webView.loadHTMLString(article.readerHTML, baseURL: article.source)
+        browser.webView.loadHTMLString(article.readerHTML, baseURL: article.offlineImages == nil ? article.source : nil)
     }
     func update(size: Double, spacing: Double, theme: String) {
         self.size = min(96, max(15, size))
@@ -170,9 +175,9 @@ struct ReaderView: View {
     let article: ReaderArticle
     @StateObject private var renderer: ReaderRenderer
     @Environment(\.dismiss) private var dismiss
-    @State private var size = 19.0
-    @State private var spacing = 7.0
-    @State private var theme = "System"
+    @AppStorage("reader.textSize") private var size = 19.0
+    @AppStorage("reader.lineSpacing") private var spacing = 7.0
+    @AppStorage("reader.theme") private var theme = "System"
     @AppStorage("browser.showSystemStatus") private var showSystemStatus = false
     @ScaledMetric(relativeTo: .body) private var scale = 1.0
 
@@ -190,7 +195,7 @@ struct ReaderView: View {
                             .padding(12).background(.regularMaterial, in: Capsule()).padding(.top, 12)
                     }
                 }
-                .navigationTitle("Reader").navigationBarTitleDisplayMode(.inline)
+                .navigationTitle(article.offlineImages == nil ? "Reader" : "Offline Article").navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         HStack(spacing: 12) {

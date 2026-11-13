@@ -1,0 +1,22 @@
+November 12 Undo follow-up validation
+Native runtime source: ba78f5b30a918367069eb52b9fd26d8c01f1bf98
+Xcode 27.2; iOS 27.1 disposable iPhone Duo simulator
+Command: bash scripts/native-checks.sh
+Exit status: 0
+
+DownloadChecks.txt: 49 checks passed
+SettingsChecks.txt: 49 checks passed
+SetupChecks.txt: 37 checks passed
+RedditChecks.txt: 29 checks passed
+TabStackChecks.txt: 40 checks passed
+NativeBrowserChecks.txt: 93 checks passed
+UpgradeChecks.txt: 160 checks passed
+CameraSettlingChecks.txt: 42 checks passed
+PersistentCookieChecks.txt: 2 checks passed
+PersistentCookieChecks.txt: 3 checks passed
+MemoryChecks.txt: 13 checks passed
+
+Total: 517 assertions across 11 batches
+Persistence writer observed application background before termination.
+Full local log: work/undo-full-native.log in the complete setup worktree.
+All fixtures and receipts are synthetic; no personal browsing data was used.

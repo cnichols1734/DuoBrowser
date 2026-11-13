@@ -124,6 +124,12 @@ final class TabStackCell: UICollectionViewCell {
         if origin != geometry.closeOrigin { geometry.closeOrigin = origin }
     }
 
+    func resetMotion() {
+        motionView.layer.removeAnimation(forKey: "DuoBrowser.dismiss")
+        motionView.transform = .identity
+        motionView.alpha = 1
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         titleObservation = nil
@@ -202,10 +208,10 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
                         Task { @MainActor [weak self] in self?.finishDismissal(previous) }
                     }
                 }
-                cell.motionView.layer.removeAnimation(forKey: "DuoBrowser.dismiss")
-                cell.motionView.transform = .identity
-                cell.motionView.alpha = 1
+                cell.resetMotion()
                 cell.representedID = id
+            } else {
+                self.restoreIdleMotion(cell)
             }
             cell.configure(AnyView((self.makeCard?(tab, { [weak self] in self?.dismiss(id, velocity: 0) }) ?? AnyView(EmptyView()))
                 .environmentObject(cell.geometry)), parent: self)
@@ -249,6 +255,11 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
             stackLayout.invalidateLayout()
         }
         let oldIDs = self.tabs.map(\.id), ids = tabs.map(\.id)
+        // Undo retains the tab's identity. SwiftUI can coalesce close/reopen while the
+        // overview is offscreen, so restore idle cards even when the IDs are unchanged.
+        for case let cell as TabStackCell in collectionView.visibleCells {
+            if let id = cell.representedID, ids.contains(id) { restoreIdleMotion(cell) }
+        }
         let selectionChanged = self.selectedID != selectedID
         self.selectedID = selectedID
         guard oldIDs != ids || selectionChanged else { return }
@@ -264,6 +275,12 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
         snapshot.appendItems(ids)
         if selectionChanged { snapshot.reconfigureItems(ids.filter(oldIDs.contains)) }
         dataSource.apply(snapshot, animatingDifferences: !reduceMotion && !oldIDs.isEmpty)
+    }
+
+    private func restoreIdleMotion(_ cell: TabStackCell) {
+        guard let id = cell.representedID, draggedID != id,
+              !closingIDs.contains(id), animators[id] == nil else { return }
+        cell.resetMotion()
     }
 
     func zoomSource(for id: UUID, centered: Bool) -> UIView? {

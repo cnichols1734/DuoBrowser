@@ -12,6 +12,8 @@ final class BrowserSession: ObservableObject {
     @Published var bookmarks: [LibraryEntry] = []
     @Published var bookmarkFolders: [BookmarkFolder] = []
     @Published var readingList: [LibraryEntry] = []
+    @Published private(set) var recentlyClosed: [ClosedTabRecord] = []
+    @Published var closedTabNotice: UUID?
     @Published var showingSetup = false
     @Published var adBlockingEnabled: Bool {
         didSet {
@@ -19,7 +21,19 @@ final class BrowserSession: ObservableObject {
             tabs.forEach { $0.setAdBlockingEnabled(adBlockingEnabled) }
         }
     }
+    @Published var searchEngine: BrowserSearchEngine {
+        didSet {
+            settingsStorage.set(searchEngine.rawValue, forKey: "browser.searchEngine")
+            tabs.forEach { $0.searchEngine = searchEngine }
+        }
+    }
+    @Published var appearance: BrowserAppearance {
+        didSet { settingsStorage.set(appearance.rawValue, forKey: "browser.appearance") }
+    }
+    let websiteData: WebsiteDataController
     let setup: BrowserSetupModel
+    let normalDownloads: BrowserDownloads
+    private var privateDownloads: BrowserDownloads?
     let redditLinks: RedditLinkRouting
     var favorites: [LibraryEntry] { bookmarks.filter { $0.isFavorite != false } }
     @Published var showingLibrary = false
@@ -37,10 +51,14 @@ final class BrowserSession: ObservableObject {
     private let privacyCurtain = PrivacyCurtain()
     private let settingsStorage: UserDefaults
     private let normalStore: WKWebsiteDataStore
-    private let archiveStore: BrowserArchiveStore
+    let offlineStore: OfflineArticleStore
+    let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
+    private var filterRefreshObserver: AnyCancellable?
     private var compactTask: Task<Void, Never>?
+    private var retainedClosedTab: (recordID: UUID, tab: BrowserModel, index: Int)?
+    private var closedTabExpiry: Task<Void, Never>?
     private var lastNormalID: UUID?
     private var lastPrivateID: UUID?
 
@@ -51,15 +69,20 @@ final class BrowserSession: ObservableObject {
     var workspaceName: String { workspaces.first { $0.id == workspaceID }?.name ?? "Personal" }
     var selected: BrowserModel { tabs.first { $0.id == selectedID } ?? tabs[0] }
 
-    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
+    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
+        self.searchEngine = storage.string(forKey: "browser.searchEngine").flatMap(BrowserSearchEngine.init(rawValue:)) ?? .google
+        self.appearance = storage.string(forKey: "browser.appearance").flatMap(BrowserAppearance.init(rawValue:)) ?? .system
+        self.websiteData = WebsiteDataController(store: WebKitWebsiteDataAccess(store: dataStore))
         self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
         self.redditLinks = RedditLinkRouting(storage: storage)
         self.setup = BrowserSetupModel(storage: storage)
         self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
         self.archiveStore = archiveStore
-        BrowserDownloads.cleanPreviousSession()
+        self.offlineStore = offlineStore ?? OfflineArticleStore(directory: archiveStore.directory.appendingPathComponent("OfflineArticles", isDirectory: true))
+        normalDownloads = BrowserDownloads(isPrivate: false, dataStore: dataStore,
+            directory: archiveStore.directory.appendingPathComponent("Downloads", isDirectory: true))
         let saved = archiveStore.load()
         let legacy = storage.data(forKey: "browser.tabs.v1").flatMap {
             $0.count <= 8_000_000 ? try? JSONDecoder().decode(TabArchive.self, from: $0) : nil
@@ -78,21 +101,48 @@ final class BrowserSession: ObservableObject {
         bookmarks = saved?.bookmarks ?? []
         bookmarkFolders = saved?.bookmarkFolders ?? []
         readingList = saved?.readingList ?? []
+        recentlyClosed = saved?.recentlyClosed ?? []
+        reconcileOfflineCopies()
         normalSites = saved?.sites ?? [:]
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
         for tab in tabs { connect(tab) }
+        if let warning = normalDownloads.errorMessage { selected.errorMessage = warning }
         selected.activate()
+        startFilterUpdates()
         lastNormalID = selectedID
+        websiteData.onWillRemove = { [weak self] in self?.releaseClosedTab() }
         // Migrate only after a durable write succeeds; normal cookies remain in WebKit's existing store.
         if legacy != nil, saveNow() { storage.removeObject(forKey: "browser.tabs.v1") }
         memoryObserver = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
             .sink { [weak self] _ in
                 Task { @MainActor in
+                    self?.releaseClosedTab()
                     self?.tabs.forEach { $0.clearSnapshot() }
                     self?.compactInactiveTabs(target: 2)
                 }
             }
+    }
+
+    private func startFilterUpdates() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--browser-checks") { return }
+        #endif
+        if adBlockingEnabled { requestFilterRefresh() }
+        filterRefreshObserver = NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .sink { [weak self] _ in
+                guard let self, !self.privateMode, self.adBlockingEnabled else { return }
+                self.requestFilterRefresh()
+            }
+    }
+
+    private func requestFilterRefresh() {
+        Task { [weak self] in
+            await FilterCatalog.shared.refreshIfNeeded {
+                guard let self else { return false }
+                return !self.privateMode && self.adBlockingEnabled && UIApplication.shared.applicationState == .active
+            }
+        }
     }
 
     private func store(isPrivate: Bool) -> WKWebsiteDataStore {
@@ -104,6 +154,15 @@ final class BrowserSession: ObservableObject {
     }
 
     private func connect(_ tab: BrowserModel) {
+        if tab.isPrivate {
+            if privateDownloads == nil {
+                privateDownloads = BrowserDownloads(isPrivate: true, dataStore: store(isPrivate: true),
+                    directory: BrowserDownloads.stagingRoot.appendingPathComponent(UUID().uuidString))
+            }
+            tab.downloads = privateDownloads!
+        } else { tab.downloads = normalDownloads }
+        tab.downloadsOwnedBySession = true
+        tab.searchEngine = searchEngine
         tab.redditLinks = redditLinks
         tab.setAdBlockingEnabled(adBlockingEnabled)
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
@@ -251,8 +310,23 @@ final class BrowserSession: ObservableObject {
 
     func close(_ id: UUID) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        let order = visibleTabs.map(\.id)
+        let visibleIndex = order.firstIndex(of: id)
+        let adjacent = visibleIndex.flatMap { position in
+            position + 1 < order.count ? order[position + 1] : (position > 0 ? order[position - 1] : nil)
+        }
         let tab = tabs.remove(at: index)
-        tab.close()
+        if !tab.isPrivate, let url = WebAddress.valid(tab.restorationURL) {
+            let record = ClosedTabRecord(address: url.absoluteString, title: tab.title,
+                scrollY: tab.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? tab.pendingScrollY,
+                workspaceID: tab.workspaceID, pinned: tab.isPinned)
+            recentlyClosed = ClosedTabRecord.validated([record] + recentlyClosed)
+            closedTabNotice = record.id
+            if let view = tab.loadedWebView, !view.isLoading, !tab.hasWindowRelationships, !tab.hasRequestedWebsitePermission,
+               view.cameraCaptureState == .none, view.microphoneCaptureState == .none {
+                retainForUndo(tab, recordID: record.id, index: index)
+            } else { tab.close() }
+        } else { tab.close() }
         if !tabs.contains(where: \.isPrivate) {
             endPrivateSession()
         }
@@ -261,7 +335,8 @@ final class BrowserSession: ObservableObject {
             connect(replacement); tabs.append(replacement)
         }
         if selectedID == id {
-            let replacement = tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
+            let replacement = tabs.first(where: { $0.id == adjacent })
+                ?? tabs.first(where: { $0.isPrivate == privateMode && (privateMode || $0.workspaceID == workspaceID) })
                 ?? tabs.first(where: { $0.isPrivate == privateMode }) ?? tabs[min(index, tabs.count - 1)]
             selectedID = replacement.id
             privateMode = replacement.isPrivate
@@ -270,6 +345,80 @@ final class BrowserSession: ObservableObject {
         }
         rememberSelection()
         saveNow()
+    }
+
+    @discardableResult
+    func reopenClosedTab(_ id: UUID) -> Bool {
+        guard !privateMode, tabs.count < 200,
+              let record = recentlyClosed.first(where: { $0.id == id }),
+              let url = WebAddress.valid(URL(string: record.address)) else { return false }
+        let targetWorkspace = workspaces.contains { $0.id == record.workspaceID } ? record.workspaceID : Workspace.defaultID
+        if let retained = retainedClosedTab, retained.recordID == id {
+            closedTabExpiry?.cancel(); closedTabExpiry = nil; retainedClosedTab = nil
+            let tab = retained.tab
+            tab.isRetainedForUndo = false
+            tab.workspaceID = targetWorkspace
+            connect(tab)
+            tab.loadedWebView?.setAllMediaPlaybackSuspended(false)
+            tabs.insert(tab, at: min(retained.index, tabs.count))
+            recentlyClosed.removeAll { $0.id == id }
+            if closedTabNotice == id { closedTabNotice = nil }
+            select(tab.id)
+            saveNow()
+            return true
+        }
+        let tab = makeTab(url: url, privateTab: false)
+        tab.restoreClosedTabTitle(record.title)
+        tab.pendingScrollY = record.scrollY
+        tab.workspaceID = targetWorkspace
+        tab.isPinned = record.pinned
+        workspaceID = targetWorkspace
+        recentlyClosed.removeAll { $0.id == id }
+        if closedTabNotice == id { closedTabNotice = nil }
+        tab.activate()
+        saveNow()
+        return true
+    }
+
+    private func retainForUndo(_ tab: BrowserModel, recordID: UUID, index: Int) {
+        releaseClosedTab()
+        tab.isRetainedForUndo = true
+        tab.cancelReader()
+        tab.presentation.cancel()
+        tab.loadedWebView?.setAllMediaPlaybackSuspended(true)
+        tab.loadedWebView?.removeFromSuperview()
+        // A closed page cannot initiate new native UI or mutate the session while retained.
+        tab.onChange = nil; tab.onVisit = nil; tab.onOpenWindow = nil; tab.onOpenLink = nil
+        tab.onCreatePreview = nil; tab.onPromotePreview = nil; tab.onClose = nil; tab.onSnapshot = nil
+        retainedClosedTab = (recordID, tab, index)
+        closedTabExpiry = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.releaseClosedTab()
+        }
+    }
+
+    func releaseClosedTab() {
+        closedTabExpiry?.cancel(); closedTabExpiry = nil
+        retainedClosedTab?.tab.close(); retainedClosedTab = nil
+    }
+
+    @discardableResult
+    func clearRecentlyClosed() -> Bool {
+        guard !privateMode else { return false }
+        releaseClosedTab()
+        let prior = recentlyClosed
+        recentlyClosed.removeAll()
+        closedTabNotice = nil
+        guard saveNow(replaceBackup: true) else { recentlyClosed = prior; return false }
+        return true
+    }
+
+    func switchAdjacentTab(_ direction: Int) {
+        let candidates = visibleTabs
+        guard let index = candidates.firstIndex(where: { $0.id == selectedID }),
+              candidates.indices.contains(index + direction) else { return }
+        select(candidates[index + direction].id)
     }
 
     func closePrivateTabs() {
@@ -287,11 +436,19 @@ final class BrowserSession: ObservableObject {
         saveNow()
     }
     private func endPrivateSession() {
+        let downloads = privateDownloads
         let old = privateStore
-        privateStore = nil
+        privateDownloads = nil; privateStore = nil
+        let cleanup: (String?) -> Void = { [weak self] error in
+            if let error {
+                for tab in self?.tabs ?? [] where !tab.isPrivate { tab.errorMessage = error }
+            }
+            old?.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
+        }
+        if let downloads { downloads.cancelAll(completion: cleanup) }
+        else { cleanup(nil) }
         privateSites.removeAll()
         lastPrivateID = nil
-        old?.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast) {}
     }
     private func compactInactiveTabs(target: Int = 6) {
         compactTask?.cancel()
@@ -417,22 +574,67 @@ final class BrowserSession: ObservableObject {
         bookmarks = Array(bookmarks.prefix(LibraryLimits.bookmarks))
         saveNow()
     }
-    func deleteHistory(ids: Set<UUID>? = nil) {
+    @discardableResult
+    func clearHistoryFromSettings() -> Bool {
+        guard !privateMode else { return false }
+        let priorHistory = history
+        let priorRecovery = recentlyClosed
+        releaseClosedTab()
+        history.removeAll()
+        recentlyClosed.removeAll()
+        closedTabNotice = nil
         WebsiteIconStore.shared.clear()
-        if let ids { history.removeAll { ids.contains($0.id) } } else { history.removeAll() }
-        saveNow(replaceBackup: true)
-    }
-    func deleteBookmarks(ids: Set<UUID>) {
-        WebsiteIconStore.shared.clear()
-        bookmarks.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
-    }
-    func deleteReadingList(ids: Set<UUID>) {
-        readingList.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else {
+            // Restore only retryable records. A released page and Undo notice must stay released.
+            history = priorHistory
+            recentlyClosed = priorRecovery
+            return false
+        }
+        return true
     }
 
-    func deleteBookmarkFolder(_ id: UUID) {
+    func deleteHistory(ids: Set<UUID>? = nil) {
+        WebsiteIconStore.shared.clear()
+        if let ids {
+            let removed = Set(history.filter { ids.contains($0.id) }.map(\.address))
+            recentlyClosed.removeAll { removed.contains($0.address) }
+            history.removeAll { ids.contains($0.id) }
+        } else { history.removeAll(); recentlyClosed.removeAll() }
+        if !recentlyClosed.contains(where: { $0.id == closedTabNotice }) { closedTabNotice = nil }
+        if let retained = retainedClosedTab, !recentlyClosed.contains(where: { $0.id == retained.recordID }) { releaseClosedTab() }
+        saveNow(replaceBackup: true)
+    }
+    @discardableResult
+    func deleteBookmarks(ids: Set<UUID>) -> Bool {
+        let prior = bookmarks
+        bookmarks.removeAll { ids.contains($0.id) }
+        guard saveNow(replaceBackup: true) else { bookmarks = prior; return false }
+        WebsiteIconStore.shared.clear()
+        return true
+    }
+    @discardableResult
+    func deleteReadingList(ids: Set<UUID>) -> Bool {
+        let old = readingList
+        readingList.removeAll { ids.contains($0.id) }
+        guard saveNow(replaceBackup: true) else { readingList = old; return false }
+        var failed = Set<UUID>()
+        for entry in old where ids.contains(entry.id) {
+            if let id = entry.offlineID {
+                do { try offlineStore.remove(id) } catch { failed.insert(entry.id) }
+            }
+        }
+        if !failed.isEmpty {
+            readingList = old.filter { !ids.contains($0.id) || failed.contains($0.id) }
+            _ = saveNow(replaceBackup: true)
+            selected.errorMessage = SavedPageError.removalFailed.localizedDescription
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    func deleteBookmarkFolder(_ id: UUID) -> Bool {
+        let prior = (bookmarkFolders, bookmarks)
         var ids: Set<UUID> = [id]
         for _ in 0..<32 {
             let children = bookmarkFolders.filter { $0.parentID.map(ids.contains) ?? false }.map(\.id)
@@ -442,8 +644,9 @@ final class BrowserSession: ObservableObject {
         }
         bookmarkFolders.removeAll { ids.contains($0.id) }
         bookmarks.removeAll { $0.folderID.map(ids.contains) ?? false }
+        guard saveNow(replaceBackup: true) else { (bookmarkFolders, bookmarks) = prior; return false }
         WebsiteIconStore.shared.clear()
-        saveNow(replaceBackup: true)
+        return true
     }
 
     func applyImport(_ plan: BrowserImportPlan) throws {
@@ -458,6 +661,7 @@ final class BrowserSession: ObservableObject {
     }
 
     func background() {
+        releaseClosedTab()
         tabs.forEach { $0.presentation.cancel(); if $0.isPrivate { $0.clearSnapshot(); $0.cancelReader() } }
         saveNow()
     }
@@ -472,6 +676,7 @@ final class BrowserSession: ObservableObject {
     }
     @discardableResult
     func saveNow(replaceBackup: Bool = false) -> Bool {
+        let saveError = "Your browsing changes could not be saved on this device."
         saveTask?.cancel(); saveTask = nil
         let normal = tabs.filter { !$0.isPrivate }
         guard let first = normal.first else { return false }
@@ -480,10 +685,11 @@ final class BrowserSession: ObservableObject {
                       scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
         }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
         history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces,
-        bookmarkFolders: bookmarkFolders, readingList: readingList)
+        bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
+            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = nil }
             return true
-        } catch { selected.errorMessage = "Your browsing changes could not be saved on this device."; return false }
+        } catch { selected.errorMessage = saveError; return false }
     }
 }

@@ -6,7 +6,7 @@ Run from the repo root:
 mkdir -p work
 swiftc DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/scroll-chrome-tests
 work/scroll-chrome-tests
-swiftc DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
+swiftc DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/tab-archive-tests
 work/tab-archive-tests
 ```
 
@@ -83,6 +83,8 @@ Run `bash scripts/check.sh` for the portable Swift assertions, Swift parsing, Ja
 
 `bash scripts/native-checks.sh` builds Debug, creates an isolated Duo simulator, starts local fixtures, runs native/persistence/memory checks and checks fresh receipts before deleting the test simulator. It fails if the required runtime or ports are unavailable. `--skip-build` uses an already-built Debug app in `DerivedData`; `DUO_DERIVED_DATA` overrides that directory. For a deliberately selected existing test simulator, set `DUO_TEST_DEVICE`; the script leaves that device and its normal browsing data intact and returns to the normal app afterward. Do not point it at a personal device.
 
+Each launch clears its receipt and `NativeCheckProgress.txt`. The Debug harness writes a bounded synthetic last-passed label/count at startup, after the first assertion and every five assertions; the script prints it if a receipt times out. Downloads has a 600-second group receipt allowance for slow hosted startup and multiple deliberately slow transfers. Individual interaction deadlines and functional assertions are unchanged; a progress file is never accepted as a passing receipt.
+
 GitHub CI uses the public-preview `xcode-27` hosted runner and selects Xcode 27.1 explicitly. The published runner inventory currently includes the 27.1 Duo simulator. Runner availability can change; missing SDK/runtime support fails the native job and the required gate rather than silently skipping tests. Portable tests still help diagnose failures, but are not a substitute for the native build. Never fall back to a credential-bearing self-hosted runner.
 
 CI validates workflows with actionlint, checks pinned tool digests, scans full Git history with redacted Gitleaks output, and audits the locked npm graph. No release credentials or browsing artifacts are uploaded. SwiftLint initially enables a narrow set of correctness rules; it does not impose a wholesale format rewrite. Patch whitespace is checked separately.
@@ -92,3 +94,36 @@ CI validates workflows with actionlint, checks pinned tool digests, scans full G
 `npm test` includes the 44-check bounded Reader extraction suite. The native script also runs `--browser-checks --upgrade-checks` and requires 55 passing assertions in `Library/Caches/UpgradeChecks.txt`. This covers workspace/pin restoration, local search and private boundaries, Reader cancellation and untouched forms/scroll, Peek lifetime and same-view promotion, and actual WKContentRuleList blocking/exception/first-party behavior using loopback fixtures. A Debug-only host substitution makes the production rule flags testable without external ad requests. No normal browsing data is used.
 
 Reader follow-up adds synthetic image order/loading, full-width camera fitting and restoration, typed markup validation, CSP, shared/ephemeral profile, and temporary-view cleanup checks. The native settling suite now requires 34 checks, including horizontal-overflow shells and column-flex article flow.
+
+
+## Download management checks
+
+`DownloadStoreTests.swift` adds portable tests for the bounded persistent manifest, safe filenames, path/symlink rejection, retained-file integrity checks and private cleanup. `scripts/check.sh` runs these checks.
+
+`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 49 checks in `DownloadChecks.txt`, including attribution of policy interruptions to the actual download URL, unrelated failures, cancellation and document replacement. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).
+
+
+## Undo overview regression and download CI scope
+
+`--browser-checks --undo-overview-checks` runs 16 native checks for close → Undo →
+overview → close again, covering normal/Reduce Motion and coalesced/applied
+removal snapshots. It verifies retained model/WKWebView/draft, actual card hit
+testing, zoom-source availability and exactly-once repeat closure. The regular
+TabStack batch includes these checks; its minimum is 33 because existing motion
+sampling counts vary.
+
+Downloads now requires 49 assertions. The two unstable authenticated GET retry
+with source-closure scenarios and authentication-only diagnostics were removed
+at the owner's request after device testing. Basic authenticated source-closure
+transfers, authenticated retry of a GET download, progress, cancellation, private teardown and
+storage checks remain. Production download code is unchanged.
+
+Hosted CI sets `DUO_SKIP_DOWNLOAD_CHECKS=1` to omit the entire synthetic Downloads
+batch at the owner's request. A subsequent hosted run failed during an earlier
+gated transfer despite authenticated data and initial progress; the fixture was
+never released before the 60-second transfer timeout. The log does not establish
+why the JavaScript/state wait missed that active-transfer window. All 49 retained
+checks pass locally, and the default local command still runs them. Other native
+batches, including the Undo regression, remain mandatory in hosted CI. Setting
+the same environment variable locally exercises the hosted selection explicitly;
+an omitted batch is printed as omitted and is not counted as passing.

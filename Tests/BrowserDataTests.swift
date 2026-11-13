@@ -16,6 +16,14 @@ import Foundation
         check(WebAddress.resolve("why a&b?")?.query?.contains("q=") == true, "search encoding")
         check(WebAddress.resolve("https://") == nil, "missing host")
         check(WebAddress.resolve("https://exa mple.com") == nil, "bad host")
+        for engine in BrowserSearchEngine.allCases {
+            let phrase = "coffee + tea & 日本語?"
+            let url = WebAddress.resolve(phrase, engine: engine)!
+            check(url.host == URL(string: engine.searchAddress)?.host, "chosen search engine host")
+            check(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == phrase, "engine query round trips symbols and Unicode")
+            check(url.absoluteString.contains("%2B"), "literal plus cannot become a space")
+            check(WebAddress.resolve("example.com/path", engine: engine)?.absoluteString == "https://example.com/path", "engine preference preserves direct navigation")
+        }
         let id = UUID()
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -82,6 +90,33 @@ import Foundation
         try FileManager.default.createDirectory(at: primary, withIntermediateDirectories: false)
         do { try failureStore.write(afterImport); fatalError("primary failure must throw") } catch { checks += 1 }
         check(failureStore.load()?.bookmarks.count == 1, "failed primary commit recovers only pre-import data")
+        let commitDirectory = folder.appendingPathComponent("replace-boundary")
+        let seed = BrowserArchiveStore(directory: commitDirectory)
+        try seed.write(beforeImport)
+        var writes: [String] = []
+        var failingName: String? = "session.backup.json"
+        let injected = BrowserArchiveStore(directory: commitDirectory, writeData: { data, url, options in
+            writes.append(url.lastPathComponent)
+            if url.lastPathComponent == failingName { throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        do { try injected.replace(afterImport); fatalError("replacement backup failure must throw") } catch { checks += 1 }
+        check(writes == ["session.backup.json"] && injected.load()?.bookmarks.count == 1, "replacement backup failure never commits primary")
+        writes = []; failingName = "session.json"
+        do { try injected.replace(afterImport); fatalError("replacement primary failure must throw") } catch { checks += 1 }
+        check(writes == ["session.backup.json", "session.json"] && injected.load()?.bookmarks.count == 1,
+              "failed final primary commit preserves retryable original archive")
+        writes = []; failingName = nil
+        try injected.replace(afterImport)
+        check(writes == ["session.backup.json", "session.json"] && injected.load()?.bookmarks.count == 2,
+              "replacement has no throwing backup operation after primary commit")
+        try Data("broken".utf8).write(to: commitDirectory.appendingPathComponent("session.json"))
+        check(injected.load()?.bookmarks.count == 2, "replacement backup has committed content")
+        let oldOffline = UUID(), newOffline = UUID()
+        beforeImport.readingList = [LibraryEntry(address: "https://example.test/offline", title: "Old", offlineID: oldOffline)]
+        afterImport.readingList = [LibraryEntry(address: "https://example.test/offline", title: "New", offlineID: newOffline)]
+        try seed.write(beforeImport); try seed.write(afterImport)
+        check(seed.offlineReferences() == Set([oldOffline, newOffline]), "both archive generations retain offline ownership")
         print("\(checks) browser data checks passed")
     }
 }

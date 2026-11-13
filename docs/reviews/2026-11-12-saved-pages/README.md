@@ -1,0 +1,42 @@
+# Saved pages and offline reading
+
+November 12, 2026. Feature branch evidence; no merge or release implied.
+
+Page options → Save Page lets readers edit the title and choose Favorites, Bookmarks (including a folder), or Read Later. Library supports folder creation, renaming and moving; bookmark title/destination edits; read/unread state and filtering. Folder moves reject cycles, missing parents and excessive depth. Explicit private saves explain that the result stays in the normal Library after private tabs close.
+
+Read Later optionally captures the current readable article through the existing isolated-world Reader extractor. Saving does not navigate or change the source document. Navigation, a closed source tab, or cancellation invalidates the save. The app stores escaped text and optional raster images, not website scripts or executable HTML. Up to eight same-origin HTTPS image requests use anonymous ephemeral sessions without cookies, credentials, cache or redirects. Image downloads are capped at 1 MiB, dimensions at 20,000 per side and 40 megapixels, downsampled to at most 1,200 pixels, and re-encoded to JPEG. The article image budget is 4 MiB; serialized snapshots are capped at 6 MB and the store at 50 MB. Unsupported, cross-origin, redirected or authenticated images can be absent; the saved article explains missing images. No video or interactive page capture is promised.
+
+Offline Reader loads only local text and embedded JPEGs in a separate nonpersistent WebKit profile. Its CSP denies network images, connections, scripts, frames and forms. Offline content remains readable without a network connection. Removing a copy preserves its Reading List link; deleting an entry removes the copy. New offline copies and Library writes use the primary archive commit as the save boundary, with rollback if that commit fails. Removal retains the copy and reports an error if replacing either archive generation fails; it does not claim success. Reader text size, line spacing and appearance now persist.
+
+Verification is recorded below as checks complete. All fixtures are synthetic. Hardware touch, energy, real authenticated content and full spoken VoiceOver remain unverified.
+
+## Verification
+
+- Debug and Release simulator builds passed with Xcode 27.2 / iOS 27.2 SDK, retaining deployment target iOS 27.1. The final file-deletion failure follow-up is awaiting the combined integration build.
+- Portable suite: 210 assertions passed, including 18 saved-page policy/storage checks. All 186 web assertions passed. Strict SwiftLint: zero violations. Repository and whitespace checks passed.
+- Full isolated native suite passed: setup 24, Reddit 29, tabs 24, core 93, upgrades 88, settling 34, cookie write/read 2 each, memory 13. Offline checks exercise source draft preservation, stale capture rejection, bookmark destination edits, disk snapshot/reload, read status, real embedded JPEG rendering, network-denying CSP, ephemeral rendering, removal, explicit private save vs capture, and failed durable-write rollback. A fixture initially expected four raster pixels from a four-point image on a scaled device; setting the synthetic renderer scale to 1 corrected the test, then the full suite passed.
+- Three additional native deletion-failure assertions are checked in for the integration run (expected upgrade total 91). They require a thrown disk-deletion failure to preserve a retryable Library entry and durable reference. The two corresponding portable failure assertions pass. These final native assertions have not yet run on this feature branch.
+- Final root-agent integration interaction verified Save Page → Read Later with offline capture: focusing the title field captured keyboard input, then Device Hub Command-S dismissed the sheet. Library displayed “A quieter way to browse”, “127.0.0.1” and “Unread · Offline”. This was the preceding `6fbd2d3`-era runtime on DuoBrowser-TabRecovery-QA. The root agent then opened the saved Offline Article and visually verified its contents with the fixture server stopped, at Text Size 11 in Dark appearance. The retained evidence does not establish manual folder creation/rename or the subsequent persisted read-state transition; earlier claims of those completed actions are withdrawn. Native assertions separately verify those operations.
+- Exercised closed, open and partially open poses, rotation, light/dark appearances, maximum text size and Reduce Motion. Restored Light, default text size, Reduce Motion off, portrait/closed pose and keyboard-capture off afterward. The large-text capture exposed crowded inline status metadata; the final layout stacks domain/status and removes the repeated picker label at accessibility sizes. That correction passed Release build and needs the corrected integration screenshot below.
+- Device Hub did not expose Save/Cancel navigation-bar buttons to its accessibility tree and coordinate input returned `noWindowsAvailable`. Initial shortcut attempts also failed; the final root-agent attempt succeeded after explicitly focusing the title field to capture keyboard input. The corrected Reading List was captured at Text Size 11. Full spoken VoiceOver, pinch zoom, live occlusion changes, hardware touch/energy and successful same-origin HTTPS image downloading on real sites remain unverified. Native tests prove local raster rendering and deny-network behavior; they do not establish broad site coverage.
+
+## Captures
+
+- [Bookmark folder in Library](library-folders.png)
+- [Dark appearance after rotation](library-dark-rotation.png)
+- [Reading List before the metadata-stacking correction](reading-list-large-text.png)
+- [Verified Reading List at maximum text size after the correction](reading-list-large-text-verified.png)
+
+Use `--browser-checks --saved-pages-preview` in Debug with the synthetic fixture server for an isolated interactive preview. It uses a temporary archive and nonpersistent website data; it does not read the normal browsing profile.
+
+Final source review follow-up: bookmark and folder deletion now return failure, restore the displayed records, and show a Library alert when the archive cannot be written. Three native assertions cover a blocked backup write, intact durable records and folder descendants, and a successful retry preserving unrelated bookmarks. All 249 portable assertions, source parsing, repository checks and strict SwiftLint passed for this follow-up; the three new native assertions are queued for the final integrated suite.
+
+## Review corrections
+
+Archive replacement writes the new backup before committing the primary, with no throwing operation afterward. Fault-injection checks cover both write boundaries and backup recovery. Reading remains available if marking an article read cannot persist; already-read articles do not rewrite the archive. Bookmark edits prefer stable IDs before URL deduplication. Offline reconciliation preserves snapshots referenced by either archive generation and retries unreferenced UUID files after cleanup failures; entry capacity is checked before writing a new snapshot. Folder destinations share a precomputed child/parent index, including coverage of the full 2,000-folder limit.
+
+260 portable assertions and strict lint passed for these corrections. Six added native assertions cover duplicate-URL editing, failed read-status writes, no-op already-read opens and offline backup recovery; integrated runtime verification is pending.
+
+## Integrated validation status
+
+The combined `6fbd2d3` run passed 440 native checks, including 143 upgrades covering saved-page deletion failure/retry, plus the real saved-article/download preservation checks in Settings. At final Settings source `5aaa842`, Debug/Release builds, 328 portable checks and strict lint pass. The six later review assertions above await the ultimate camera-branch native run. The final screenshot verifies the stacked domain/status layout; it does not establish hardware or spoken VoiceOver behavior.

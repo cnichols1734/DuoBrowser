@@ -2,9 +2,12 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p work/checks
+swiftc -warnings-as-errors DuoBrowser/DownloadStore.swift Tests/DownloadStoreTests.swift -o work/checks/downloads
+work/checks/downloads
+python3 -B Tests/DownloadFixtureGateTests.py
 swiftc -warnings-as-errors DuoBrowser/ScrollChromeState.swift Tests/ScrollChromeStateTests.swift -o work/checks/scroll
 work/checks/scroll
-swiftc -warnings-as-errors DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/checks/archive
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/TabArchiveTests.swift -o work/checks/archive
 work/checks/archive
 swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift Tests/BrowserDataTests.swift -o work/checks/data
 work/checks/data
@@ -14,6 +17,10 @@ swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.sw
 work/checks/import
 swiftc -warnings-as-errors DuoBrowser/RedditLinks.swift Tests/RedditLinksTests.swift -o work/checks/reddit
 work/checks/reddit
+swiftc -warnings-as-errors DuoBrowser/FilterListConverter.swift Tests/FilterListConverterTests.swift -o work/checks/filters
+work/checks/filters
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/SavedPages.swift Tests/SavedPagesTests.swift -o work/checks/saved-pages
+work/checks/saved-pages
 swiftc -frontend -parse DuoBrowser/*.swift Tests/NativeBrowserChecks.swift
 for source in DuoBrowser/*.js Tests/*.cjs; do node --check "$source"; done
 python3 scripts/repository-check.py
