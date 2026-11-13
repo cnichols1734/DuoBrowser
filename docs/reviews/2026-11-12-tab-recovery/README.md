@@ -39,3 +39,36 @@ Three added native checks measure maximum-text notice height, verify a synthetic
 fixed footer clears it, and verify dismissal restores the original inset. These
 runtime checks are pending coordinated simulator access; no new hardware or
 spoken VoiceOver evidence is claimed.
+
+
+## Undo overview card follow-up
+
+The owner reproduced a real-device defect: close a tab, tap Undo, then reopen the
+overview; its page returns but its card is missing and cannot be closed again.
+`BrowserSession` restores the original model and WKWebView correctly. The card's
+completed exit transform (or zero opacity under Reduce Motion) survived because
+its UUID was unchanged. An offscreen overview can also coalesce close and Undo
+into the same ID array and selection, bypassing the old update path entirely.
+
+`TabStackController` now restores idle card motion before that unchanged-ID return
+and when configuring the same ID again. It preserves the card currently being
+dragged, committed exits and active return animations. No page/session restoration
+logic changed.
+
+The new native regression uses the real session close/Undo operations, both motion
+modes and both coalesced/applied removal snapshots. Before the fix, model/view
+identity and draft checks passed but card visibility/hit testing failed. With the
+fix, all 16 checks passed, including a usable zoom source and closing the restored
+tab again exactly once. Existing TabStack checks bring the batch to 40. Local
+receipts: `work/undo-overview-baseline.log`, `work/undo-overview-corrected.txt` and
+`work/tabstack-undo-corrected.txt` in the complete setup worktree. The regression
+undoes immediately after the removal snapshot, keeping decorative animation waits
+outside the live Undo window.
+
+The owner separately requested removal of the unstable download authentication
+retry/source-closure CI scenarios after device testing. Four assertions and their
+authentication-specific diagnostics were removed; Downloads49 remains, and
+production download behavior is unchanged. Authenticated retry after source
+closure is no longer established by CI. Full-stack validation and device
+installation are recorded separately; the simulator checks are not a hardware
+motion or spoken VoiceOver claim.

@@ -1,0 +1,40 @@
+Source: b394999 (same setup source as final integrated run)
+Independent UIKit window-coordinate probes; focused Setup37
+
+PASS: new install begins with welcome
+PASS: interrupted setup restores step and category choices
+PASS: missing transfer token rejected
+PASS: private session rejects incoming transfer
+PASS: unentitled build rejects incoming transfer
+PASS: valid system activity starts direct import
+PASS: received data does not save before review
+PASS: undated Reading List item is retained
+PASS: replayed token cannot replace review
+PASS: confirmed selection commits supported data
+PASS: confirmed transfer survives archive reload
+PASS: double save cannot duplicate data
+PASS: completed setup stays completed after relaunch
+PASS: setup can reopen from Page options
+PASS: new token begins a new transfer
+PASS: canceled stream cannot repopulate review or save late items
+PASS: late return after cancel rejected
+PASS: a new import can retry after cancellation
+PASS: failed streams discard partial data
+PASS: stale request completion cannot overwrite cancellation
+PASS: unexpected files response fails without opening a file picker
+PASS: failed durable save preserves review and rolls back library
+PASS: failed durable save supplies recovery instructions during review
+PASS: discard clears all staged browsing data
+PASS: setup moves only overlapping top controls below the measured camera region
+PASS: an unoccupied camera edge does not inset setup navigation
+PASS: setup clearance handles multiple measured obstructions without moving the horizontal center
+PASS: clearing a lower control cannot move a higher control into a previously skipped taller region
+PASS: setup step 0 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 0.0/92.0
+PASS: setup step 1 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 0.0/92.0
+PASS: setup step 2 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 0.0/92.0
+PASS: setup step 3 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 0.0/92.0
+PASS: setup step 0 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 92.0/0.0
+PASS: setup step 1 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 92.0/0.0
+PASS: setup step 2 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 92.0/0.0
+PASS: setup step 3 centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area 92.0/0.0
+PASS: accessibility setup keeps UIKit-rendered scrolling content and progress centered on the full display

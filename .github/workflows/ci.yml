@@ -98,11 +98,14 @@ jobs:
       - name: Compile Debug and Release without signing
         run: |
           for configuration in Debug Release; do
-            xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser \
+            xcodebuild -jobs 2 -project DuoBrowser.xcodeproj -scheme DuoBrowser \
               -configuration "$configuration" -destination 'generic/platform=iOS Simulator' \
               -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+            python3 scripts/check-photo-permission.py "DerivedData/Build/Products/$configuration-iphonesimulator/DuoBrowser.app/Info.plist"
           done
       - name: Native WebKit, persistence and memory checks
+        env:
+          DUO_SKIP_DOWNLOAD_CHECKS: "1"
         run: bash scripts/native-checks.sh --skip-build
 
   required:

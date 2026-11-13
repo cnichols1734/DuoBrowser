@@ -10,7 +10,7 @@ enum WebAddress {
         return url
     }
 
-    static func resolve(_ input: String) -> URL? {
+    static func resolve(_ input: String, engine: BrowserSearchEngine = .google) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= 8192 else { return nil }
         if text.contains("://") { return valid(URL(string: text)) }
@@ -20,11 +20,11 @@ enum WebAddress {
         if hostLike { return valid(URL(string: "https://" + text)) }
         // Explicit executable schemes are never interpreted as navigation.
         if ["javascript:", "data:", "file:", "about:", "blob:"].contains(where: { text.lowercased().hasPrefix($0) }) { return nil }
-        return searchURL(text)
+        return searchURL(text, engine: engine)
     }
 
-    static func searchURL(_ phrase: String) -> URL {
-        var search = URLComponents(string: "https://www.google.com/search")!
+    static func searchURL(_ phrase: String, engine: BrowserSearchEngine = .google) -> URL {
+        var search = URLComponents(string: engine.searchAddress)!
         search.queryItems = [URLQueryItem(name: "q", value: phrase)]
         // Search servers decode a literal plus as a space unless it is percent-escaped.
         search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
@@ -60,6 +60,8 @@ struct LibraryEntry: Codable, Identifiable {
     var date = Date()
     var folderID: UUID? = nil
     var isFavorite: Bool? = nil
+    var isRead: Bool? = nil
+    var offlineID: UUID? = nil
 }
 
 struct BrowserArchive: Codable {
@@ -128,7 +130,9 @@ struct BrowserArchive: Codable {
 final class BrowserArchiveStore {
     let directory: URL
     private let manager = FileManager.default
-    init(directory: URL? = nil) {
+    private let writeData: (Data, URL, Data.WritingOptions) throws -> Void
+    init(directory: URL? = nil, writeData: @escaping (Data, URL, Data.WritingOptions) throws -> Void = { try $0.write(to: $1, options: $2) }) {
+        self.writeData = writeData
         self.directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("BrowserState", isDirectory: true)
     }
@@ -151,7 +155,7 @@ final class BrowserArchiveStore {
         return archive.validated()
     }
     func load() -> BrowserArchive? { decode(primary) ?? decode(backup) }
-    func write(_ archive: BrowserArchive) throws {
+    private func preparedData(_ archive: BrowserArchive) throws -> Data {
         guard let valid = archive.validated() else { throw CocoaError(.fileWriteInvalidFileName) }
         try manager.createDirectory(at: directory, withIntermediateDirectories: true)
         var folder = directory
@@ -159,15 +163,24 @@ final class BrowserArchiveStore {
         try folder.setResourceValues(values)
         let data = try JSONEncoder().encode(valid)
         guard data.count <= LibraryLimits.archiveBytes else { throw CocoaError(.fileWriteOutOfSpace) }
-        if let old = decode(primary) {
-            try JSONEncoder().encode(old).write(to: backup, options: writeOptions)
-        }
-        try data.write(to: primary, options: writeOptions)
+        return data
     }
-    /// Deletion writes both generations so recovery cannot resurrect deleted history.
+    func write(_ archive: BrowserArchive) throws {
+        let data = try preparedData(archive)
+        if let old = decode(primary) {
+            try writeData(JSONEncoder().encode(old), backup, writeOptions)
+        }
+        try writeData(data, primary, writeOptions)
+    }
+    /// The primary is the final throwing commit. A backup failure never follows a committed deletion.
     func replace(_ archive: BrowserArchive) throws {
-        try write(archive)
-        try Data(contentsOf: primary).write(to: backup, options: writeOptions)
+        let data = try preparedData(archive)
+        try writeData(data, backup, writeOptions)
+        try writeData(data, primary, writeOptions)
+    }
+    /// Both recoverable archive generations own their offline snapshots.
+    func offlineReferences() -> Set<UUID> {
+        Set([decode(primary), decode(backup)].compactMap { $0 }.flatMap { ($0.readingList ?? []).compactMap(\.offlineID) })
     }
 }
 
@@ -204,4 +217,32 @@ enum UnifiedSearch {
             return seen.insert($0.address).inserted
         }.prefix(30))
     }
+}
+
+
+enum BrowserSearchEngine: String, CaseIterable, Codable, Identifiable {
+    case google, duckDuckGo, bing, brave
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .google: return "Google"
+        case .duckDuckGo: return "DuckDuckGo"
+        case .bing: return "Bing"
+        case .brave: return "Brave Search"
+        }
+    }
+    var searchAddress: String {
+        switch self {
+        case .google: return "https://www.google.com/search"
+        case .duckDuckGo: return "https://duckduckgo.com/"
+        case .bing: return "https://www.bing.com/search"
+        case .brave: return "https://search.brave.com/search"
+        }
+    }
+}
+
+enum BrowserAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    var id: String { rawValue }
+    var title: String { rawValue.capitalized }
 }

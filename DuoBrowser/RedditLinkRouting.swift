@@ -52,10 +52,39 @@ struct BrowserLinkSettings: View {
     @ObservedObject var routing: RedditLinkRouting
     @Environment(\.dismiss) private var dismiss
     @State private var apolloAvailable = false
+    @State private var showingPrivacy = false
+    @AppStorage("onlineSearchSuggestions") private var onlineSuggestions = true
+    var onSetup: (() -> Void)? = nil
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker("Search Engine", selection: $session.searchEngine) {
+                        ForEach(BrowserSearchEngine.allCases) { engine in Text(engine.title).tag(engine) }
+                    }
+                    .pickerStyle(.navigationLink)
+                    Toggle("Online Search Suggestions", isOn: $onlineSuggestions)
+                        .disabled(session.searchEngine != .google)
+                } header: { Text("Search") } footer: {
+                    Text(session.searchEngine == .google
+                        ? "When enabled, Google receives plain keywords as you type in normal tabs. Private tabs use local suggestions only."
+                        : "Online suggestions are available with Google. Tabs, bookmarks and history still appear as local suggestions.")
+                }
+                Section("Appearance") {
+                    Picker("Appearance", selection: $session.appearance) {
+                        ForEach(BrowserAppearance.allCases) { value in Text(value.title).tag(value) }
+                    }
+                    Toggle("Time, Signal & Battery", isOn: $session.showSystemStatus)
+                }
+                Section {
+                    NavigationLink("Clear Browsing Data") { ClearBrowsingDataView(session: session, model: session.websiteData) }
+                        .disabled(session.privateMode)
+                    NavigationLink("Website Data") { WebsiteDataView(session: session, model: session.websiteData) }
+                        .disabled(session.privateMode)
+                } header: { Text("Privacy") } footer: {
+                    Text(session.privateMode ? "Return to normal browsing to manage its saved data. Closing all private tabs clears the private session." : "Manage data from normal browsing. Private browsing uses a separate temporary store.")
+                }
                 Section {
                     Toggle("Block Ads & Trackers", isOn: $session.adBlockingEnabled)
                     NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
@@ -80,7 +109,13 @@ struct BrowserLinkSettings: View {
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+                Section("About DuoBrowser") {
+                    if let onSetup { Button("Set Up DuoBrowser", action: onSetup) }
+                    Button("Privacy Policy") { showingPrivacy = true }
+                }
             }
+            .preferredColorScheme(session.appearance == .system ? nil : session.appearance == .dark ? .dark : .light)
+            .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
             .navigationTitle("Settings")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .onAppear { apolloAvailable = routing.apolloAvailable }
