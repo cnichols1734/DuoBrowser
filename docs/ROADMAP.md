@@ -1,5 +1,11 @@
 # Build plan
 
+## Undo card visibility — November 12, 2026
+
+- Fixed the owner-reported close → Undo → tab-switcher failure. Live Undo correctly retained the tab and page, but the same UUID's card could retain its offscreen close transform or Reduce Motion opacity. Idle card motion is now restored even when close/reopen updates coalesce to unchanged IDs, with active gestures and animations preserved.
+- A native regression reproduced the original bug: live model/view identity and draft survived, but the restored overview card was not visible/hittable. The corrected implementation passed 16 Undo checks across normal/Reduce Motion and coalesced/removal snapshots, including a second close. The combined TabStack40, retained Downloads49, 339 portable checks and pinned strict lint also passed. [Evidence](reviews/2026-11-12-tab-recovery/README.md#undo-overview-card-follow-up).
+- At the owner's explicit request after device testing, removed the two unstable authenticated GET retry/source-closure scenarios (four assertions) and their authentication-only diagnostics from native CI. Other download progress, source closure, retry, cancellation, private cleanup and storage checks remain; production download code is unchanged. Full integrated validation and the updated developer-device build follow separately.
+
 ## Handoff validation — November 12, 2026
 
 - Closed the observed native/DOM geometry readiness gap in the Reddit handoff fixture and propagated the correction from PR #23 into PR #24 with an ordinary merge. Production browser behavior and all existing handoff assertions are unchanged. The hosted timeout itself was not reproduced locally; diagnostic runs established stale native dimensions after DOM readiness. [Diagnosis](reviews/2026-11-12-camera-settling/README.md#november-12-handoff-reddit-scroll-readiness).
