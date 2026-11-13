@@ -10,6 +10,8 @@ created=0
 http_pid=""
 tls_pid=""
 cleanup() {
+    local status=$?
+    if [[ "$status" != 0 && -f work/native-ci/http.log ]]; then tail -60 work/native-ci/http.log; fi
     if [[ -n "$http_pid" ]]; then kill "$http_pid" 2>/dev/null || true; fi
     if [[ -n "$tls_pid" ]]; then kill "$tls_pid" 2>/dev/null || true; fi
     if [[ "$created" == 1 ]]; then
@@ -98,7 +100,9 @@ else:
     raise SystemExit('Timed out waiting for '+p.name)
 PY
 }
-run_receipt DownloadChecks.txt 47 --download-checks
+# Loopback conversion checks must not depend on an external reputation service.
+# The suite first asserts ordinary production views still enable fraudulent-site warnings.
+run_receipt DownloadChecks.txt 53 --download-checks --download-checks-no-reputation
 run_receipt SettingsChecks.txt 48 --settings-checks
 run_receipt SetupChecks.txt 37 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks

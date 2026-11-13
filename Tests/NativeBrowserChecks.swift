@@ -208,6 +208,11 @@ final class NativeCheckRunner {
     func mount(_ model: BrowserModel) {
         host.view.subviews.forEach { $0.removeFromSuperview() }
         let view = model.webView
+        if ProcessInfo.processInfo.arguments.contains("--download-checks"),
+           ProcessInfo.processInfo.arguments.contains("--download-checks-no-reputation") {
+            // Opt-in synthetic Downloads harness only; production views retain the configured protection.
+            view.configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        }
         view.frame = host.view.bounds
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.view.addSubview(view)
@@ -1747,18 +1752,43 @@ final class NativeCheckRunner {
         let profile = WKWebsiteDataStore.nonPersistent()
         let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: profile)
         let manager = session.normalDownloads
+        var trace: [String] = []
+        let traceStart = Date()
+        let observe: (String) -> Void = { event in
+            if trace.count == 32 { trace.removeFirst() }
+            trace.append(String(format: "%.3f ", Date().timeIntervalSince(traceStart)) + String(event.prefix(256)))
+        }
+        manager.testDownloadObserver = observe
+        var suiteSucceeded = false
+        var diagnosticModel = session.selected
+        func diagnostic(_ stage: String, model: BrowserModel) -> String {
+            let manager = model.downloads
+            let rows = manager.items.prefix(4).map { item in
+                "state=\(item.state.rawValue), active=\(item.isDownloading), canceling=\(item.isCanceling), bytes=\(item.received)/\(item.expected), fileBytes=\((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1), error=\(String((item.message ?? "none").prefix(256))), request=\(String((item.request?.url?.absoluteString ?? "nil").prefix(256)))"
+            }.joined(separator: "\n")
+            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nTRACE:\n\(trace.joined(separator: "\n"))"
+        }
         defer {
-            manager.cancelAll(); session.closePrivateTabs(); session.tabs.forEach { $0.close() }
-            try? FileManager.default.removeItem(at: directory)
+            if !suiteSucceeded {
+                results.append(diagnostic("suite failure after \(results.filter { $0.hasPrefix("PASS:") }.count) checks", model: diagnosticModel))
+            }
+            manager.testDownloadObserver = nil
+            session.tabs.forEach { $0.testDownloadObserver = nil }
+            manager.cancelAll { _ in try? FileManager.default.removeItem(at: directory) }
+            session.closePrivateTabs(); session.tabs.forEach { $0.close() }
             defaults.removePersistentDomain(forName: "DuoBrowser.DownloadChecks")
         }
         let tab = session.selected
+        tab.testDownloadObserver = observe
+        try check(tab.webView.configuration.preferences.isFraudulentWebsiteWarningEnabled,
+                  "production web view enables fraudulent-site protection before any synthetic override")
         try await load(tab, "")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "duo-download", .value: "synthetic"])!
         await profile.httpCookieStore.setCookie(cookie)
         _ = try await js(tab, "document.querySelector('#kept').value='Preserved download draft'")
         _ = try await js(tab, "document.querySelector('a[download]').click()")
         try await wait(timeout: 30) { manager.completedCount == 1 }
+        tab.testDownloadObserver = nil
         let first = manager.items[0]
         try check(first.name == "browser-fixture.txt", "real navigation download receives the server filename")
         try check(first.file != nil && first.received > 0, "WebKit download persists with its byte size")
@@ -1777,6 +1807,8 @@ final class NativeCheckRunner {
         try check(draft == "Preserved download draft" && tab.webView.url?.path == "/", "download and export dismissal preserve the source page and draft")
 
         let directTab = session.newTab()
+        diagnosticModel = directTab
+        directTab.testDownloadObserver = observe
         mount(directTab)
         directTab.navigate(to: "http://127.0.0.1:8765/download")
         try await wait(timeout: 30) { manager.completedCount == 2 }
@@ -1794,6 +1826,8 @@ final class NativeCheckRunner {
         try downloadInterruptionAttributionChecks()
 
         let secondTab = session.newTab()
+        diagnosticModel = secondTab
+        secondTab.testDownloadObserver = observe
         try await load(secondTab, "")
         let secondGate = UUID().uuidString
         _ = try await js(secondTab, "const a=document.createElement('a');a.href='/download-slow?gate=\(secondGate)&gate-attempts=1';a.download='';document.body.append(a);a.click()")
@@ -1814,6 +1848,7 @@ final class NativeCheckRunner {
         try check(try String(contentsOf: second.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "transfer retains its original WebKit cookie profile")
 
         let retryTab = session.selected
+        diagnosticModel = retryTab
         func start(_ path: String) async {
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/" + path)!)
             await withCheckedContinuation { continuation in
@@ -1832,6 +1867,12 @@ final class NativeCheckRunner {
         let independent = manager.items[0]
         try check(manager.activeCount == 2, "two independent transfers overlap: \(manager.activeCount), \(independent.message ?? "no error")")
         manager.cancel(canceled)
+        let canceledFile = canceled.file, canceledGeneration = canceled.generation
+        manager.retry(canceled); manager.cancel(canceled)
+        try check(canceled.isCanceling && !canceled.canRetry && !canceled.isDownloading &&
+                  canceled.file == canceledFile && canceled.generation == canceledGeneration && manager.activeCount == 2,
+                  "cancel retains ownership and blocks retry/file reuse until WebKit cancellation completes")
+        try await wait { !canceled.isCanceling }
         try check(!canceled.isDownloading && canceled.state == .canceled && canceled.canRetry, "individual cancel retains a safe GET retry")
         try check(manager.activeCount == 1 && independent.isDownloading, "cancel affects only its own transfer")
         manager.retry(canceled)
@@ -1887,13 +1928,23 @@ final class NativeCheckRunner {
 
         await start("download-slow?stale=1")
         let stale = manager.items[0]
-        manager.cancel(stale); manager.retry(stale); manager.remove(stale)
-        try await Task.sleep(for: .milliseconds(250))
+        manager.cancel(stale)
+        try await wait { !stale.isCanceling }
+        stale.resumeData = nil // Exercise pending GET source ownership, not the dedicated resume view.
+        manager.retry(stale)
+        manager.remove(stale)
+        try check(stale.isCanceling && manager.hasWork(for: retryTab.id) && manager.items.contains(where: { $0 === stale }),
+                  "removing pending retry retains source and row until asynchronous cancellation settles")
+        try await wait { !stale.isCanceling }
         try check(!manager.items.contains(where: { $0.id == stale.id }), "removed retry cannot reappear after its asynchronous callback")
         try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
 
         func retryThenCloseSource(afterProgress: Bool) async throws {
+            trace.removeAll()
             let source = session.newTab()
+            diagnosticModel = source
+            source.testDownloadObserver = observe
+            defer { source.testDownloadObserver = nil }
             do { try await load(source, "") }
             catch {
                 throw NSError(domain: "Retry-close source load timed out; afterProgress=\(afterProgress), loading=\(source.webView.isLoading), errorPresent=\(source.errorMessage != nil)", code: 1)
@@ -1908,6 +1959,7 @@ final class NativeCheckRunner {
             let restarted = manager.items[0]
             try await awaitDownloadProgress(restarted, stage: "Retry-close initial progress (afterProgress=\(afterProgress))")
             manager.cancel(restarted)
+            try await wait { !restarted.isCanceling }
             try await releaseDownloadFixture(gate)
             // Exercise the authenticated GET restart path deterministically, not an optional resume token.
             restarted.resumeData = nil
@@ -1921,13 +1973,16 @@ final class NativeCheckRunner {
             try await wait(timeout: 30) { !restarted.isDownloading }
             let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
             try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
-                      "authenticated GET retry completes after source closure (afterProgress=\(afterProgress))")
+                      "authenticated GET retry completes after source closure (afterProgress=\(afterProgress), state=\(restarted.state.rawValue), bytes=\(restarted.received), authenticated=\(content?.hasPrefix("Authenticated synthetic") == true), error=\(restarted.message ?? "none"))")
         }
         try await retryThenCloseSource(afterProgress: false)
         try await retryThenCloseSource(afterProgress: true)
 
         func rejectReplacedDocumentRetry(reload: Bool) async throws {
             let source = session.newTab()
+            diagnosticModel = source
+            source.testDownloadObserver = observe
+            defer { source.testDownloadObserver = nil }
             try await load(source, "")
             let originalURL = source.webView.url, originalDocument = source.documentGeneration
             let gate = UUID().uuidString
@@ -1939,6 +1994,7 @@ final class NativeCheckRunner {
             let staleDocument = manager.items[0]
             try await awaitDownloadProgress(staleDocument, stage: "Replaced-document initial progress")
             manager.cancel(staleDocument)
+            try await wait { !staleDocument.isCanceling }
             try await releaseDownloadFixture(gate)
             if reload {
                 source.webView.reload()
@@ -1970,13 +2026,37 @@ final class NativeCheckRunner {
         try check(lastNormal.state == .completed, "download finishes after last normal tab closes to native Start Page")
 
         let privateTab = session.newTab(privateTab: true)
+        diagnosticModel = privateTab
+        privateTab.testDownloadObserver = observe
         try await load(privateTab, "")
         _ = try await js(privateTab, "document.querySelector('a[download]').click()")
         let privateManager = privateTab.downloads
+        privateManager.testDownloadObserver = observe
         try await wait(timeout: 30) { privateManager.completedCount == 1 }
         let privateFile = privateManager.items[0].file!
         try check(!FileManager.default.fileExists(atPath: privateManager.store.directory.appendingPathComponent("downloads.json").path), "private download metadata never persists")
+        let privateGate = UUID().uuidString
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            privateTab.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?gate=\(privateGate)&gate-attempts=1")!)) { download in
+                privateManager.add(download, owner: privateTab.id, source: privateTab.webView, browser: privateTab)
+                continuation.resume()
+            }
+        }
+        let privateActive = privateManager.items[0]
+        try await awaitDownloadProgress(privateActive, stage: "Private cancellation progress")
+        privateManager.errorMessage = "Synthetic earlier storage warning"
+        var cleanupCallbacks = 0
+        var cleanupReportedError = false
+        privateManager.cancelAll { error in cleanupCallbacks += 1; cleanupReportedError = error != nil }
         session.closePrivateTabs()
+        privateManager.cancelAll()
+        try check(privateActive.isCanceling && privateManager.hasWork && !privateActive.canRetry,
+                  "private teardown retains in-flight ownership until cancellation finishes")
+        try await wait { !privateManager.hasWork && privateManager.items.isEmpty }
+        try check(cleanupCallbacks == 1 && !cleanupReportedError,
+                  "repeated private cancellation preserves completion once and ignores historical warnings")
+        try check(!FileManager.default.fileExists(atPath: privateManager.store.directory.path),
+                  "private cancellation removes staging only after WebKit settles")
         try check(privateManager.items.isEmpty && !FileManager.default.fileExists(atPath: privateFile.path), "last private-tab closure clears private transfers and files")
         try check(FileManager.default.fileExists(atPath: originalFile.path), "private cleanup preserves normal downloads")
         let manifest = try String(contentsOf: manager.store.directory.appendingPathComponent("downloads.json"), encoding: .utf8)
@@ -1990,6 +2070,7 @@ final class NativeCheckRunner {
         manager.remove(first)
         try check(!FileManager.default.fileExists(atPath: originalFile.path), "explicit Remove deletes the retained app copy")
         try check(manager.items.contains(where: { $0.id == second.id }), "removing one retained file leaves other downloads available")
+        suiteSucceeded = true
     }
 
     func settingsPreview() async {
