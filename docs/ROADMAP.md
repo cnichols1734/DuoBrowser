@@ -7,6 +7,12 @@
 - Kept the existing transfer/privacy/persistence model. Maximum accessibility sizes remove decorative images and put actions in the scrollable content. Completed first-run, synthetic import, reentry and skip interactions on the iOS 27.1 Duo simulator, with closed/open/partial poses, rotation, dark appearance and maximum text size.
 - Debug/Release builds, 192 portable assertions, 186 web assertions, SwiftLint, repository checks and the combined native suite passed. A simulator Reduce Motion pass covered forward navigation, Back and Skip; the original setting was restored. Full spoken VoiceOver, live occlusion, hardware and actual Safari transfer remain unverified. [Screenshots and evidence](reviews/2026-11-11-onboarding/README.md).
 
+## Photo-save permission crash correction — November 12, 2026
+
+- Added `NSPhotoLibraryAddUsageDescription` to the shared app Info.plist after a TestFlight 1.0.1 (12) TCC termination identified the missing add-only purpose string. The matching local archive and exported app both lacked it. This is app metadata; no App Store Connect key or special entitlement approval is required.
+- CI now checks the processed Debug and Release app plists for a nonempty, resolved string. Local Xcode 27.2 Debug/Release simulator builds and both packaged-plist checks passed. The guard rejected the original build 12 archive and synthetic empty, whitespace, wrong-type and unresolved values. Portable checks (192 assertions), browser/layout checks (186 assertions), pinned strict SwiftLint, repository policy and actionlint passed.
+- All 292 existing native assertions passed across nine batches on an isolated iOS 27.1 Duo simulator. Device photo-save Allow/Don't Allow behavior, normal/private save interactions and the final signed release archive remain to verify before distribution. No device installation, merge or TestFlight upload is included. The fix is independent of the active feature stack.
+
 ## Reddit app links and ad-blocking controls — November 11, 2026
 
 - Added native Apollo Reborn handoff for trusted Reddit content-link taps and supported Google wrappers, a remembered first choice, Ask Every Time, browser fallback, private-tab confirmation and Settings controls. A fixed isolated-world click gate prevents scripted clicks from launching apps; URLs are not persisted or logged. Artemis was researched but is not exposed until its deep-link contract and actual post/comment behavior can be verified.
