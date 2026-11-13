@@ -223,27 +223,47 @@ final class NativeCheckRunner {
     }
     func load(_ model: BrowserModel, _ path: String) async throws {
         mount(model)
-        model.navigate(to: "http://127.0.0.1:8765/" + path)
-        var lastReadyState = "not evaluated"
+        let expected = URL(string: "http://127.0.0.1:8765/" + path)!.absoluteString
+        let marker = UUID().uuidString
+        let world = WKContentWorld.world(name: "DuoBrowser.NativeLoadCheck")
+        var lastDocument = "not evaluated"
         var lastScriptError = "none"
         let clock = ContinuousClock()
         let started = clock.now
         do {
+            // An optimistic WK URL and an old complete document cannot acknowledge a new load,
+            // including a second navigation to exactly the same address. This world is test-only.
+            if model.webView.url != nil {
+                let marked = try await model.webView.callAsyncJavaScript(
+                    "globalThis.__duoLoadDocument = marker; return globalThis.__duoLoadDocument === marker;",
+                    arguments: ["marker": marker], in: nil, contentWorld: world)
+                guard marked as? Bool == true else { throw NSError(domain: "Could not mark the preceding synthetic document", code: 1) }
+            } else {
+                // A newly created WKWebView has no preceding document in which to install a marker.
+                // Its first load must still acknowledge the actual expected document below.
+                lastDocument = "no preceding document (WKURL nil)"
+            }
+            model.navigate(to: expected)
             // A fresh hosted simulator may need to launch WebKit's network/render processes.
-            // Loading has its own bound; interaction checks retain their shorter deadline.
+            // Loading retains its existing bound; interaction checks retain their shorter deadline.
             try await wait(timeout: 60) {
-                guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
+                guard !model.webView.isLoading else { return false }
                 do {
-                    lastReadyState = try await self.js(model, "document.readyState") as? String ?? "not a string"
+                    let value = try await model.webView.callAsyncJavaScript(
+                        "return {oldDocument:globalThis.__duoLoadDocument === marker,href:location.href,ready:document.readyState};",
+                        arguments: ["marker": marker], in: nil, contentWorld: world)
+                    let document = value as? [String: Any]
+                    lastDocument = String(String(describing: document).prefix(1024))
                     lastScriptError = "none"
-                    return lastReadyState == "complete"
+                    return document?["oldDocument"] as? Bool == false && document?["href"] as? String == expected &&
+                        document?["ready"] as? String == "complete" && !model.webView.isLoading
                 } catch {
                     lastScriptError = String(describing: error)
                     return false
                 }
             }
         } catch {
-            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none") readyState=\(lastReadyState) scriptError=\(lastScriptError) elapsed=\(started.duration(to: clock.now))")
+            results.append("LOAD: expected=\(expected) actual=\(model.webView.url?.absoluteString ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none") document=\(lastDocument) scriptError=\(lastScriptError) elapsed=\(started.duration(to: clock.now))")
             throw error
         }
     }
@@ -407,10 +427,10 @@ final class NativeCheckRunner {
         let model = BrowserModel(dataStore: .nonPersistent())
         defer { model.close() }
         func camera(_ regions: [[String: Double]], enabled: Bool = true, reduceMotion: Bool = false, voiceOver: Bool = false) async throws {
-            let _: Any = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
+            _ = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
                 "enabled": enabled, "width": model.webView.bounds.width, "height": model.webView.bounds.height,
                 "regions": regions, "reduceMotion": reduceMotion, "voiceOver": voiceOver
-            ]], in: nil, in: PageLayoutAdapter.world)
+            ]], in: nil, contentWorld: PageLayoutAdapter.world)
         }
         func measure(_ property: String, _ id: String = "reading") async throws -> Double {
             try await js(model, "document.getElementById('\(id)').getBoundingClientRect().\(property)") as? Double ?? -9999
@@ -632,7 +652,7 @@ final class NativeCheckRunner {
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
     }
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
-        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page) ?? NSNull()
     }
     func maintainedFilterChecks(_ browser: BrowserModel) async throws {
         let ready = await FilterCatalog.shared.awaitMaintainedForTesting()
@@ -1716,10 +1736,40 @@ final class NativeCheckRunner {
         let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: profile)
         let manager = session.normalDownloads
         var trace: [String] = []
+        var authenticationSnapshots: [String] = []
         let traceStart = Date()
         let observe: (String) -> Void = { event in
             if trace.count == 32 { trace.removeFirst() }
             trace.append(String(format: "%.3f ", Date().timeIntervalSince(traceStart)) + String(event.prefix(256)))
+        }
+        let authenticationDiagnostics = ProcessInfo.processInfo.arguments.contains("--download-auth-diagnostics")
+        func recordAuthenticationState(_ stage: String, source: BrowserModel, request: URLRequest? = nil) {
+            let view = source.loadedWebView
+            let entry = String(format: "%.3f ", Date().timeIntervalSince(traceStart)) +
+                "AUTH SYNC \(stage): WKURL=\(String((view?.url?.absoluteString ?? "nil").prefix(256))) WKLoading=\(view?.isLoading ?? false) modelLoading=\(source.isLoading) startPage=\(source.showingStartPage) sameProfile=\(view?.configuration.websiteDataStore === profile) mainDocument=\(String((request?.mainDocumentURL?.absoluteString ?? "nil").prefix(256))) handleCookies=\(request?.httpShouldHandleCookies ?? true)"
+            if authenticationSnapshots.count == 24 { authenticationSnapshots.removeFirst() }
+            authenticationSnapshots.append(entry)
+        }
+        func authenticationSnapshot(_ stage: String, source: BrowserModel, request: URLRequest? = nil) async {
+            guard let view = source.loadedWebView else {
+                authenticationSnapshots.append("AUTH \(stage): no loaded view")
+                return
+            }
+            let before = "WKURL=\(String((view.url?.absoluteString ?? "nil").prefix(256))) WKLoading=\(view.isLoading) modelLoading=\(source.isLoading) startPage=\(source.showingStartPage) address=\(String(source.address.prefix(256)))"
+            let document: String
+            do {
+                let value = try await view.evaluateJavaScript("JSON.stringify({href:String(location.href).slice(0,256),origin:String(location.origin).slice(0,256),ready:document.readyState,cookiePresent:document.cookie.split(';').some(v=>v.trim()==='duo-download=synthetic')})")
+                document = value as? String ?? "no document result"
+            } catch { document = "script error \((error as NSError).domain):\((error as NSError).code)" }
+            let cookies = await withCheckedContinuation { continuation in
+                profile.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
+            }
+            let cookie = cookies.first { $0.name == "duo-download" && $0.value == "synthetic" }
+            let expiry = cookie?.expiresDate.map { String(Int($0.timeIntervalSinceNow)) } ?? "nil"
+            let entry = String(format: "%.3f ", Date().timeIntervalSince(traceStart)) +
+                "AUTH \(stage): before[\(before)] document=\(document) nativeCookie=\(cookie != nil) sessionOnly=\(cookie?.isSessionOnly ?? false) expirySeconds=\(expiry) sameProfile=\(view.configuration.websiteDataStore === profile) afterWKLoading=\(view.isLoading) afterStartPage=\(source.showingStartPage) mainDocument=\(String((request?.mainDocumentURL?.absoluteString ?? "nil").prefix(256))) handleCookies=\(request?.httpShouldHandleCookies ?? true)"
+            if authenticationSnapshots.count == 24 { authenticationSnapshots.removeFirst() }
+            authenticationSnapshots.append(entry)
         }
         manager.testDownloadObserver = observe
         var suiteSucceeded = false
@@ -1729,7 +1779,7 @@ final class NativeCheckRunner {
             let rows = manager.items.prefix(4).map { item in
                 "state=\(item.state.rawValue), active=\(item.isDownloading), canceling=\(item.isCanceling), bytes=\(item.received)/\(item.expected), fileBytes=\((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1), error=\(String((item.message ?? "none").prefix(256))), request=\(String((item.request?.url?.absoluteString ?? "nil").prefix(256)))"
             }.joined(separator: "\n")
-            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nTRACE:\n\(trace.joined(separator: "\n"))"
+            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nAUTH CONTEXT:\n\(authenticationSnapshots.joined(separator: "\n"))\nTRACE:\n\(trace.joined(separator: "\n"))"
         }
         defer {
             if !suiteSucceeded {
@@ -1748,6 +1798,8 @@ final class NativeCheckRunner {
         try await load(tab, "")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "duo-download", .value: "synthetic"])!
         await profile.httpCookieStore.setCookie(cookie)
+        recordAuthenticationState("after seed", source: tab)
+        if authenticationDiagnostics { await authenticationSnapshot("after seed", source: tab) }
         _ = try await js(tab, "document.querySelector('#kept').value='Preserved download draft'")
         _ = try await js(tab, "document.querySelector('a[download]').click()")
         try await wait(timeout: 30) { manager.completedCount == 1 }
@@ -1845,6 +1897,8 @@ final class NativeCheckRunner {
         try await wait(timeout: 30) { canceled.state == .completed && independent.state == .completed }
         try check(try String(contentsOf: canceled.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "GET retry uses the same WebKit cookie profile")
         try check(canceled.id != independent.id && canceled.file != independent.file, "identical filenames remain separate downloads")
+        recordAuthenticationState("after authenticated cancel/retry", source: retryTab)
+        if authenticationDiagnostics { await authenticationSnapshot("after authenticated cancel/retry", source: retryTab) }
 
         await start("download-retry?case=" + UUID().uuidString)
         let failed = manager.items[0]
@@ -1853,6 +1907,8 @@ final class NativeCheckRunner {
         manager.retry(failed)
         try await wait(timeout: 30) { failed.state == .completed && !failed.isDownloading }
         try check(failed.file != nil, "retry completes after a synthetic interrupted response")
+        recordAuthenticationState("after network retry", source: retryTab)
+        if authenticationDiagnostics { await authenticationSnapshot("after network retry", source: retryTab) }
 
         let unknownGate = UUID().uuidString
         await start("download-chunked?gate=\(unknownGate)&gate-attempts=1")
@@ -1876,6 +1932,8 @@ final class NativeCheckRunner {
         let untrusted = manager.items[0]
         try await wait(timeout: 30) { untrusted.state == .failed && !untrusted.isDownloading }
         try check(untrusted.file == nil, "download uses platform certificate validation and rejects untrusted TLS")
+        recordAuthenticationState("after TLS rejection", source: retryTab)
+        if authenticationDiagnostics { await authenticationSnapshot("after TLS rejection", source: retryTab) }
 
         var post = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-post")!)
         post.httpMethod = "POST"; post.httpBody = Data("synthetic=download".utf8)
@@ -1888,6 +1946,8 @@ final class NativeCheckRunner {
         try await wait(timeout: 30) { postResult.state == .failed && !postResult.isDownloading }
         try check(!postResult.canRetry && postResult.request == nil && postResult.resumeData == nil,
                   "failed POST download never offers a potentially mutating replay")
+        recordAuthenticationState("after POST rejection", source: retryTab)
+        if authenticationDiagnostics { await authenticationSnapshot("after POST rejection", source: retryTab) }
 
         await start("download-slow?stale=1")
         let stale = manager.items[0]
@@ -1901,6 +1961,8 @@ final class NativeCheckRunner {
         try await wait { !stale.isCanceling }
         try check(!manager.items.contains(where: { $0.id == stale.id }), "removed retry cannot reappear after its asynchronous callback")
         try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
+        recordAuthenticationState("after pending removal", source: retryTab)
+        if authenticationDiagnostics { await authenticationSnapshot("after pending removal", source: retryTab) }
 
         func retryThenCloseSource(afterProgress: Bool) async throws {
             trace.removeAll()
@@ -1914,6 +1976,8 @@ final class NativeCheckRunner {
             }
             let gate = UUID().uuidString
             let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?retry-close=\(afterProgress)&gate=\(gate)")!)
+            recordAuthenticationState("before initial retry-close (progress=\(afterProgress))", source: source, request: request)
+            if authenticationDiagnostics { await authenticationSnapshot("before initial retry-close (progress=\(afterProgress))", source: source, request: request) }
             await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
                 source.webView.startDownload(using: request) { download in
                     manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
@@ -2033,6 +2097,7 @@ final class NativeCheckRunner {
         manager.remove(first)
         try check(!FileManager.default.fileExists(atPath: originalFile.path), "explicit Remove deletes the retained app copy")
         try check(manager.items.contains(where: { $0.id == second.id }), "removing one retained file leaves other downloads available")
+        results.append("AUTH CONTEXT:\n" + authenticationSnapshots.joined(separator: "\n"))
         suiteSucceeded = true
     }
 
@@ -2152,17 +2217,32 @@ final class NativeCheckRunner {
             return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
         }
         try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        // Complete the potentially slow WebKit refresh before starting the user-facing Undo window.
+        let first = data.entries.first { $0.name == "first.example" }!
+        await data.reload()
         let retainedForData = session.newTab()
         try await load(retainedForData, "upgrades")
         session.close(retainedForData.id)
-        let first = data.entries.first { $0.name == "first.example" }!
-        await data.reload()
         try check(!(await data.removeEntry(first.id)), "stale row handle cannot delete refreshed website data")
         try check(retainedForData.loadedWebView != nil, "stale website confirmation does not release live Undo")
         try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "first.example" }, "stale confirmation leaves cookie intact")
         let current = data.entries.first { $0.name == "first.example" }!
-        try check(await data.removeEntry(current.id), "selected WebKit record removes successfully")
-        try check(retainedForData.loadedWebView == nil, "normal website removal releases retained Undo before deleting data")
+        let retainedForRemoval = session.newTab()
+        try await load(retainedForRemoval, "upgrades")
+        session.close(retainedForRemoval.id)
+        do {
+            let originalWillRemove = data.onWillRemove
+            var observedLiveUndo = false, observedReleasedUndo = false
+            data.onWillRemove = {
+                observedLiveUndo = retainedForRemoval.loadedWebView != nil
+                originalWillRemove?()
+                observedReleasedUndo = retainedForRemoval.loadedWebView == nil
+            }
+            defer { data.onWillRemove = originalWillRemove }
+            try check(await data.removeEntry(current.id), "selected WebKit record removes successfully")
+            try check(observedLiveUndo && observedReleasedUndo,
+                      "normal website removal synchronously releases live Undo before deleting data")
+        }
         let remaining = await store.httpCookieStore.allCookies()
         try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
@@ -2435,9 +2515,12 @@ final class NativeCheckRunner {
             try await load(memoryTab, "reading")
             _ = try await js(memoryTab, "window.scrollTo(0,400)")
             try await wait { memoryTab.webView.scrollView.contentOffset.y >= 399 }
+            results.append("RECLAIM SCROLLED: nativeY=\(memoryTab.webView.scrollView.contentOffset.y) loading=\(memoryTab.webView.isLoading)")
             mount(normal)
             weak let reclaimedView = memoryTab.loadedWebView
+            results.append("RECLAIM BEFORE: nativeY=\(memoryTab.loadedWebView?.scrollView.contentOffset.y ?? -1) loading=\(memoryTab.loadedWebView?.isLoading ?? false) pendingY=\(memoryTab.pendingScrollY ?? -1)")
             let suspended = await memoryTab.suspendIfIdle { true }
+            results.append("RECLAIM CAPTURE: suspended=\(suspended) pendingY=\(memoryTab.pendingScrollY ?? -1)")
             try await wait { reclaimedView == nil }
             try check(reclaimedView == nil, "reclaimed WKWebView actually deallocates")
             try check(suspended && memoryTab.loadedWebView == nil, "inactive static reading tab releases its WKWebView")
@@ -2445,7 +2528,12 @@ final class NativeCheckRunner {
             mount(memoryTab)
             try await wait { !memoryTab.webView.isLoading && memoryTab.webView.title == "Reading fixture" }
             results.append("STEP: reading document resumed")
-            try await wait { (try? await self.js(memoryTab, "scrollY") as? Double ?? 0) ?? 0 >= 399 }
+            do { try await wait { (try? await self.js(memoryTab, "scrollY") as? Double ?? 0) ?? 0 >= 399 } }
+            catch {
+                let document = try? await js(memoryTab, "JSON.stringify({url:location.href,y:scrollY,height:document.documentElement.scrollHeight,viewport:innerHeight,ready:document.readyState})")
+                results.append("RECLAIM RESTORE: nativeY=\(memoryTab.webView.scrollView.contentOffset.y) pendingY=\(memoryTab.pendingScrollY ?? -1) document=\(String(describing: document))")
+                throw error
+            }
             try check(true, "static reading tab restores scroll after reclamation")
             memoryTab.close()
             mount(normal)
