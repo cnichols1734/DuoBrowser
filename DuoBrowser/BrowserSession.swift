@@ -21,6 +21,16 @@ final class BrowserSession: ObservableObject {
             tabs.forEach { $0.setAdBlockingEnabled(adBlockingEnabled) }
         }
     }
+    @Published var searchEngine: BrowserSearchEngine {
+        didSet {
+            settingsStorage.set(searchEngine.rawValue, forKey: "browser.searchEngine")
+            tabs.forEach { $0.searchEngine = searchEngine }
+        }
+    }
+    @Published var appearance: BrowserAppearance {
+        didSet { settingsStorage.set(appearance.rawValue, forKey: "browser.appearance") }
+    }
+    let websiteData: WebsiteDataController
     let setup: BrowserSetupModel
     let normalDownloads: BrowserDownloads
     private var privateDownloads: BrowserDownloads?
@@ -61,6 +71,9 @@ final class BrowserSession: ObservableObject {
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
+        self.searchEngine = storage.string(forKey: "browser.searchEngine").flatMap(BrowserSearchEngine.init(rawValue:)) ?? .google
+        self.appearance = storage.string(forKey: "browser.appearance").flatMap(BrowserAppearance.init(rawValue:)) ?? .system
+        self.websiteData = WebsiteDataController(store: WebKitWebsiteDataAccess(store: dataStore))
         self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
         self.redditLinks = RedditLinkRouting(storage: storage)
         self.setup = BrowserSetupModel(storage: storage)
@@ -98,6 +111,7 @@ final class BrowserSession: ObservableObject {
         selected.activate()
         startFilterUpdates()
         lastNormalID = selectedID
+        websiteData.onWillRemove = { [weak self] in self?.releaseClosedTab() }
         // Migrate only after a durable write succeeds; normal cookies remain in WebKit's existing store.
         if legacy != nil, saveNow() { storage.removeObject(forKey: "browser.tabs.v1") }
         memoryObserver = NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)
@@ -148,6 +162,7 @@ final class BrowserSession: ObservableObject {
             tab.downloads = privateDownloads!
         } else { tab.downloads = normalDownloads }
         tab.downloadsOwnedBySession = true
+        tab.searchEngine = searchEngine
         tab.redditLinks = redditLinks
         tab.setAdBlockingEnabled(adBlockingEnabled)
         tab.onSnapshot = { [weak self] in self?.trimSnapshots() }
@@ -559,6 +574,25 @@ final class BrowserSession: ObservableObject {
         bookmarks = Array(bookmarks.prefix(LibraryLimits.bookmarks))
         saveNow()
     }
+    @discardableResult
+    func clearHistoryFromSettings() -> Bool {
+        guard !privateMode else { return false }
+        let priorHistory = history
+        let priorRecovery = recentlyClosed
+        releaseClosedTab()
+        history.removeAll()
+        recentlyClosed.removeAll()
+        closedTabNotice = nil
+        WebsiteIconStore.shared.clear()
+        guard saveNow(replaceBackup: true) else {
+            // Restore only retryable records. A released page and Undo notice must stay released.
+            history = priorHistory
+            recentlyClosed = priorRecovery
+            return false
+        }
+        return true
+    }
+
     func deleteHistory(ids: Set<UUID>? = nil) {
         WebsiteIconStore.shared.clear()
         if let ids {
@@ -642,6 +676,7 @@ final class BrowserSession: ObservableObject {
     }
     @discardableResult
     func saveNow(replaceBackup: Bool = false) -> Bool {
+        let saveError = "Your browsing changes could not be saved on this device."
         saveTask?.cancel(); saveTask = nil
         let normal = tabs.filter { !$0.isPrivate }
         guard let first = normal.first else { return false }
@@ -653,7 +688,8 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
+            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = nil }
             return true
-        } catch { selected.errorMessage = "Your browsing changes could not be saved on this device."; return false }
+        } catch { selected.errorMessage = saveError; return false }
     }
 }

@@ -74,7 +74,7 @@ run_receipt() {
     local receipt="$1" minimum="$2" receipt_timeout=180
     # Expanded download batches and cold filter preparation need a separate hosted budget.
     # Functional interaction deadlines and the 300-second full-protection assertion stay bounded.
-    if [[ "$receipt" == DownloadChecks.txt || "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
+    if [[ "$receipt" == DownloadChecks.txt || "$receipt" == SettingsChecks.txt || "$receipt" == UpgradeChecks.txt ]]; then receipt_timeout=600; fi
     shift 2
     xcrun simctl terminate "$device" dev.local.DuoBrowser >/dev/null 2>&1 || true
     # Remove only this Debug harness's synthetic receipt, never browsing files.
@@ -103,12 +103,24 @@ PY
 # Loopback conversion checks must not depend on an external reputation service.
 # The suite first asserts ordinary production views still enable fraudulent-site warnings.
 run_receipt DownloadChecks.txt 53 --download-checks --download-checks-no-reputation
+run_receipt SettingsChecks.txt 49 --settings-checks
 run_receipt SetupChecks.txt 23 --setup-checks
 run_receipt RedditChecks.txt 25 --reddit-checks
 run_receipt TabStackChecks.txt 17 --tab-stack-checks
 run_receipt NativeBrowserChecks.txt 93
 run_receipt UpgradeChecks.txt 55 --upgrade-checks
 run_receipt CameraSettlingChecks.txt 34 --settling-checks
+rm -f "$container/Library/Caches/PersistentCookieBackground.txt" "$container/Library/Caches/PersistentCookieExpected.txt"
 run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-write
-run_receipt PersistentCookieChecks.txt 2 --persistent-cookie-read
+# Exercise a normal background transition before termination, rather than foreground SIGTERM.
+xcrun simctl launch "$device" com.apple.Preferences
+python3 - "$container/Library/Caches/PersistentCookieBackground.txt" <<'PYMARKER'
+import pathlib,sys,time
+marker=pathlib.Path(sys.argv[1]); deadline=time.monotonic()+30
+while not marker.exists():
+    if time.monotonic() >= deadline: raise SystemExit('App did not observe its background lifecycle within 30 seconds')
+    time.sleep(0.1)
+print('Persistence writer observed application background', flush=True)
+PYMARKER
+run_receipt PersistentCookieChecks.txt 3 --persistent-cookie-read
 run_receipt MemoryChecks.txt 13 --memory-checks

@@ -16,6 +16,14 @@ import Foundation
         check(WebAddress.resolve("why a&b?")?.query?.contains("q=") == true, "search encoding")
         check(WebAddress.resolve("https://") == nil, "missing host")
         check(WebAddress.resolve("https://exa mple.com") == nil, "bad host")
+        for engine in BrowserSearchEngine.allCases {
+            let phrase = "coffee + tea & 日本語?"
+            let url = WebAddress.resolve(phrase, engine: engine)!
+            check(url.host == URL(string: engine.searchAddress)?.host, "chosen search engine host")
+            check(URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.value == phrase, "engine query round trips symbols and Unicode")
+            check(url.absoluteString.contains("%2B"), "literal plus cannot become a space")
+            check(WebAddress.resolve("example.com/path", engine: engine)?.absoluteString == "https://example.com/path", "engine preference preserves direct navigation")
+        }
         let id = UUID()
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }

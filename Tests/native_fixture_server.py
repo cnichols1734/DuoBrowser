@@ -1,4 +1,5 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
+from html import escape
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import struct, zlib, time
@@ -20,6 +21,9 @@ class DownloadGate:
 
 DOWNLOAD_GATES = {}
 DOWNLOAD_GATE_LOCK = Lock()
+# A gate holds test-controlled state until explicit release. Its lifetime matches
+# the native Downloads batch budget; per-interaction deadlines stay in the client.
+DOWNLOAD_GATE_LIFETIME = 600
 
 def download_gate(token):
     with DOWNLOAD_GATE_LOCK:
@@ -42,6 +46,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         path = urlsplit(self.path)
+        if path.path == '/persistent':
+            value = next((part.strip().split('=', 1)[1] for part in self.headers.get('Cookie', '').split(';')
+                          if part.strip().startswith('duo_persistence=')), '')[:64]
+            self.send_header('Content-Type', 'text/html'); self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(('<!doctype html><meta name="viewport" content="width=device-width"><meta name="persistence-cookie" content="' +
+                              escape(value, quote=True) + '"><title>Persistence fixture</title>Persistence fixture').encode())
+            return
         if path.path.startswith('/download'):
             print('Synthetic download request: ' + path.path[:64], flush=True)
         query = parse_qs(path.query)
@@ -95,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
                     if gate_token and offset == 57344:
                         # Preserve an observable in-progress transfer until the harness cancels/releases it.
                         # Expiry interrupts the transfer rather than silently passing the test.
-                        if attempt is None or not attempt.wait(60):
+                        if attempt is None or not attempt.wait(DOWNLOAD_GATE_LIFETIME):
                             expired = True
                             self.close_connection = True; return
                     if not gate_token: time.sleep(0.15)
