@@ -22,6 +22,33 @@ The final Debug app was installed on the isolated iOS 27.1 Duo QA simulator, usi
 
 Get Started, Not Now, Continue and Back were exercised. Back returned from the tour with Reduce Motion enabled. The simulator was restored to closed portrait, Dark appearance, Text Size 3, Reduce Motion off, VoiceOver off and keyboard capture off before the final suite handoff. Full spoken VoiceOver, keyboard/pinch behavior, hardware touch/battery, and real Safari transfer eligibility are not established by these screenshots or synthetic checks.
 
+## Handoff validation
+
+The correction from PR #23 was merged normally into the complete setup branch.
+It waits for committed native/DOM fixture geometry before native scrolling;
+production browser behavior and the existing Reddit handoff assertions are
+unchanged. The [diagnostic record](../2026-11-12-camera-settling/README.md#november-12-handoff-reddit-scroll-readiness)
+distinguishes the observed readiness gap from the unreproduced hosted timeout.
+
+A fresh complete run of `bash scripts/native-checks.sh` on source
+`41a8431f539e11fb02817d5c7870e677207da691` passed **505 assertions in 11 batches**:
+Downloads53, Settings49, Setup37, Reddit29, TabStack24, Core93, Upgrades160,
+Camera42, persistent-cookie write2/read3 and Memory13. The
+[fresh receipt](handoff-native-receipts.txt) supersedes the earlier 494-assertion
+checkpoint below. Individual synthetic receipts are retained locally under
+`work/handoff-native-receipts/`.
+
+Combined Debug and Release simulator builds, all 339 portable checks and pinned strict SwiftLint passed.
+All 197 web assertions passed in the camera branch; `git diff --exit-code`
+confirmed identical JavaScript, web-test and package sources in this combined
+branch. Local verification uses Xcode 27.2 and the iOS 27.1 simulator; hosted CI
+continues to use Xcode 27.1 and must pass independently. CI builds use `-jobs 2`.
+Latest-head CI/review is recorded in PRs #18–24, with final signed-device source,
+signature, installation and launch provenance under ignored `work/final-device/`.
+Installation is gated on those checks, keeps the same bundle/signing identity,
+and leaves the unapproved default-browser entitlement disabled. No merge or
+TestFlight upload is authorized. The hardware/accessibility limits above remain.
+
 ## Combined seven-feature validation
 
 This record is the final integration checkpoint for maintained content filters, tab recovery/navigation, saved pages/offline reading, downloads, Browser/Website Settings, camera settling and full-display setup. Earlier feature reports preserve the checks available at their own checkpoints; their statements that later regressions await integration are historical and are superseded by the final combined receipt recorded here.

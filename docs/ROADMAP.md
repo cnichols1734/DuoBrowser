@@ -1,5 +1,11 @@
 # Build plan
 
+## Handoff validation — November 12, 2026
+
+- Closed the observed native/DOM geometry readiness gap in the Reddit handoff fixture and propagated the correction from PR #23 into PR #24 with an ordinary merge. Production browser behavior and all existing handoff assertions are unchanged. The hosted timeout itself was not reproduced locally; diagnostic runs established stale native dimensions after DOM readiness. [Diagnosis](reviews/2026-11-12-camera-settling/README.md#november-12-handoff-reddit-scroll-readiness).
+- The complete combined native source `41a8431f539e11fb02817d5c7870e677207da691` passed **505 assertions across all 11 batches** on a fresh iOS 27.1 Duo simulator with Xcode 27.2. Combined Debug/Release simulator builds, 339 portable checks and pinned strict lint passed. All 197 web assertions passed on the identical JavaScript/test sources in PR #23. [Fresh receipt and limits](reviews/2026-11-12-setup-centering/README.md#handoff-validation).
+- Latest-head hosted CI/review is tracked in PRs #18–24. Final signing, in-place installation and launch receipts belong under ignored `work/final-device/`; the final corrected combined commit must pass those CI/review gates before installation. The default-browser entitlement remains disabled. This work does not authorize a merge or TestFlight upload; hardware touch/energy and full spoken VoiceOver remain separate checks.
+
 ## Final integrated feature validation — November 12, 2026
 
 - The final source `9f07d1ae3773c650a5b3d2f391e5f484756228d1` combines maintained filters, tab recovery, saved pages/offline reading, downloads, Browser/Website Settings, camera settling and full-display setup. All **494 native assertions across 11 batches passed**: Downloads47, Settings48, Setup37, Reddit29, TabStack21, Core93, Upgrades160, Camera42, cookie write2/read2 and Memory13. Debug, 339 portable checks and pinned strict SwiftLint passed. Product Release passed at `b394999`; later changes affect only test readiness, fixtures and evidence.
