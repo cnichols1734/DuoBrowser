@@ -100,7 +100,7 @@ Reader follow-up adds synthetic image order/loading, full-width camera fitting a
 
 `DownloadStoreTests.swift` adds portable tests for the bounded persistent manifest, safe filenames, path/symlink rejection, retained-file integrity checks and private cleanup. `scripts/check.sh` runs these checks.
 
-`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 47 checks in `DownloadChecks.txt`, including attribution of policy interruptions to the actual download URL, unrelated failures, cancellation and document replacement. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).
+`--browser-checks --download-checks` runs the native download suite against synthetic loopback responses. It verifies WebKit progress, authenticated retries, source-tab closure, normal-file restoration, Files exporter dismissal, individual cancellation, stale retry rejection, private-session cleanup and metadata privacy. `scripts/native-checks.sh` requires 49 checks in `DownloadChecks.txt`, including attribution of policy interruptions to the actual download URL, unrelated failures, cancellation and document replacement. The fixture server keeps only a synthetic failure-once token in memory to exercise the real interrupted-response path. No personal downloads or cookies are used. See [Downloads](../docs/DOWNLOADS.md).
 
 
 ## Undo overview regression and download CI scope
@@ -115,5 +115,5 @@ sampling counts vary.
 Downloads now requires 49 assertions. The two unstable authenticated GET retry
 with source-closure scenarios and authentication-only diagnostics were removed
 at the owner's request after device testing. Basic authenticated source-closure
-transfers, same-source GET retry, progress, cancellation, private teardown and
+transfers, authenticated retry of a GET download, progress, cancellation, private teardown and
 storage checks remain. Production download code is unchanged.

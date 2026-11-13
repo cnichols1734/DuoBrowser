@@ -45,9 +45,41 @@ branch. Local verification uses Xcode 27.2 and the iOS 27.1 simulator; hosted CI
 continues to use Xcode 27.1 and must pass independently. CI builds use `-jobs 2`.
 Latest-head CI/review is recorded in PRs #18–24, with final signed-device source,
 signature, installation and launch provenance under ignored `work/final-device/`.
-Installation is gated on those checks, keeps the same bundle/signing identity,
-and leaves the unapproved default-browser entitlement disabled. No merge or
-TestFlight upload is authorized. The hardware/accessibility limits above remain.
+At this checkpoint installation was gated on those checks. The owner subsequently
+requested installation during CI work and authorized merging after green checks;
+the Undo follow-up below records that change. The same bundle/signing identity
+and disabled default-browser entitlement are retained. TestFlight remains on hold.
+The hardware/accessibility limits above remain.
+
+## Undo follow-up validation
+
+The owner found a missing overview card after closing a tab and using Undo.
+The [tab-recovery report](../2026-11-12-tab-recovery/README.md#undo-overview-card-follow-up)
+records the reproduced defect, bounded card-motion fix and removed download
+authentication retry/source-closure scenarios. Production download code is unchanged.
+
+The complete corrected source `ba78f5b30a918367069eb52b9fd26d8c01f1bf98` passed
+**517 native assertions across 11 batches** on a fresh iOS 27.1 Duo simulator:
+Downloads49, Settings49, Setup37, Reddit29, TabStack40, Core93, Upgrades160,
+Camera42, persistent-cookie write2/read3 and Memory13. The full script exited 0;
+Debug, 339 portable checks and pinned strict SwiftLint passed. The 197 passing web
+assertions remain applicable to identical JavaScript, web-test and package sources.
+The [receipt](undo-native-receipts.txt) supersedes the preceding 505-check checkpoint.
+An independent review found no blocking issue in the Undo patch. Existing Copilot
+threads were rechecked and resolved; those reviews predate this latest patch.
+
+At the owner's request, source `47e02da` was installed over the existing app on
+the connected Duo and verified running while CI investigation continued. The
+Undo-corrected signed build and its installation are tracked under ignored
+`work/final-device/undo-*`. Latest-head hosted CI remains an independent merge
+gate. The owner authorized merging when green, with TestFlight held for device
+review. No physical motion, endurance or spoken VoiceOver pass is inferred from
+the simulator regression or a successful app launch.
+
+The signed Release build from the clean immutable `ba78f5b` checkout passed with
+`-jobs 2`. Strict signature, target provisioning, profile validity, bundle/version
+and bundled filter/license checks passed. Version remains 1.0.1 (12); the
+default-browser entitlement and direct Safari transfer remain disabled.
 
 ## Combined seven-feature validation
 
