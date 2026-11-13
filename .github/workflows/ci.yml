@@ -101,6 +101,7 @@ jobs:
             xcodebuild -jobs 2 -project DuoBrowser.xcodeproj -scheme DuoBrowser \
               -configuration "$configuration" -destination 'generic/platform=iOS Simulator' \
               -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
+            python3 scripts/check-photo-permission.py "DerivedData/Build/Products/$configuration-iphonesimulator/DuoBrowser.app/Info.plist"
           done
       - name: Native WebKit, persistence and memory checks
         env:

@@ -6,6 +6,14 @@
 - PR #24 run `43368911556` failed after 15 download assertions: the first gated transfer had the expected authenticated length and initial progress, then timed out after about 60 seconds before fixture release. The exact JavaScript/state-wait cause is unestablished. This is distinct from the previously removed retry/source-closure scenarios. No production download behavior was changed.
 - The revised hosted command passed locally with **468 assertions across all 10 retained batches** on a fresh iOS 27.1 Duo simulator. Downloads was explicitly reported as omitted. Workflow lint, shell syntax, 339 portable checks and patch checks passed; independent review confirmed all other gates and local default coverage remain intact. Receipt: `work/hosted-selection-native.log` in the setup worktree.
 
+## Combined photo-save fix and beta preparation — November 12, 2026
+
+- The owner tested the Undo-corrected developer build on the connected Duo and accepted it. The owner authorized merging PRs #18–25, including setup centering and the photo-save permission fix, while leaving Playwright #14 open, then building and uploading TestFlight.
+- Authenticated Xcode distribution preflight checked the previous archive against App Store Connect and selected **1.0.1 (13)** as the next valid build. The preflight was canceled before upload. Both project configurations now use build 13 while retaining marketing version 1.0.1; the final archive will be built from merged main.
+- Integrated the photo-save metadata fix with the verified feature stack using an ordinary merge. The only app difference from the accepted developer build is the add-only Photos purpose string. Both combined Debug/Release simulator builds and processed-plist guards passed, as did 339 portable checks and pinned strict SwiftLint. Browser source and native tests match the 517-check Undo validation below; hosted CI validates the integrated head independently.
+- PR #25's earlier failure was three public EasyList commit-annotation hashes matching a secret-scanner rule. The existing narrow filter-list allowlist in #18 resolves those matches without disabling scanning. The photo fix's earlier native/build/layout jobs passed.
+- Final TestFlight archive/export must verify the nonempty Photos purpose string, exact merged source and selected build number, distribution signing and disabled default-browser/Safari-transfer capability. The next build number is checked in App Store Connect before archiving and recorded with any explicit build-setting override. Actual normal/private photo-save Allow/Don't Allow interactions, endurance and full spoken VoiceOver are not claimed by these checks.
+
 ## Undo card visibility — November 12, 2026
 
 - Fixed the owner-reported close → Undo → tab-switcher failure. Live Undo correctly retained the tab and page, but the same UUID's card could retain its offscreen close transform or Reduce Motion opacity. Idle card motion is now restored even when close/reopen updates coalesce to unchanged IDs, with active gestures and animations preserved.
@@ -75,6 +83,12 @@ Earlier integrated checkpoint (superseded by the final validation above): source
 - Rebuilt the four-step setup presentation with system typography, plain surfaces, concise copy, aligned Back/Skip navigation and full-width primary actions. The welcome expansion symbol points horizontally. Transfer review has compact category toggles; extra details are disclosed on demand, and unavailable capabilities do not show unusable switches.
 - Kept the existing transfer/privacy/persistence model. Maximum accessibility sizes remove decorative images and put actions in the scrollable content. Completed first-run, synthetic import, reentry and skip interactions on the iOS 27.1 Duo simulator, with closed/open/partial poses, rotation, dark appearance and maximum text size.
 - Debug/Release builds, 192 portable assertions, 186 web assertions, SwiftLint, repository checks and the combined native suite passed. A simulator Reduce Motion pass covered forward navigation, Back and Skip; the original setting was restored. Full spoken VoiceOver, live occlusion, hardware and actual Safari transfer remain unverified. [Screenshots and evidence](reviews/2026-11-11-onboarding/README.md).
+
+## Photo-save permission crash correction — November 12, 2026
+
+- Added `NSPhotoLibraryAddUsageDescription` to the shared app Info.plist after a TestFlight 1.0.1 (12) TCC termination identified the missing add-only purpose string. The matching local archive and exported app both lacked it. This is app metadata; no App Store Connect key or special entitlement approval is required.
+- CI now checks the processed Debug and Release app plists for a nonempty, resolved string. Local Xcode 27.2 Debug/Release simulator builds and both packaged-plist checks passed. The guard rejected the original build 12 archive and synthetic empty, whitespace, wrong-type and unresolved values. Portable checks (192 assertions), browser/layout checks (186 assertions), pinned strict SwiftLint, repository policy and actionlint passed.
+- All 292 existing native assertions passed across nine batches on an isolated iOS 27.1 Duo simulator. Device photo-save Allow/Don't Allow behavior, normal/private save interactions and the final signed release archive remain to verify before distribution. No device installation, merge or TestFlight upload is included. The fix is independent of the active feature stack.
 
 ## Reddit app links and ad-blocking controls — November 11, 2026
 
