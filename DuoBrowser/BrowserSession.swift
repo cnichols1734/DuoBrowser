@@ -39,7 +39,8 @@ final class BrowserSession: ObservableObject {
     private let privacyCurtain = PrivacyCurtain()
     private let settingsStorage: UserDefaults
     private let normalStore: WKWebsiteDataStore
-    private let archiveStore: BrowserArchiveStore
+    let offlineStore: OfflineArticleStore
+    let archiveStore: BrowserArchiveStore
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
     private var filterRefreshObserver: AnyCancellable?
@@ -56,7 +57,7 @@ final class BrowserSession: ObservableObject {
     var workspaceName: String { workspaces.first { $0.id == workspaceID }?.name ?? "Personal" }
     var selected: BrowserModel { tabs.first { $0.id == selectedID } ?? tabs[0] }
 
-    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default()) {
+    init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
         self.adBlockingEnabled = storage.object(forKey: "browser.adBlockingEnabled") as? Bool ?? true
         self.redditLinks = RedditLinkRouting(storage: storage)
@@ -64,6 +65,7 @@ final class BrowserSession: ObservableObject {
         self.showSystemStatus = storage.bool(forKey: "browser.showSystemStatus")
         self.normalStore = dataStore
         self.archiveStore = archiveStore
+        self.offlineStore = offlineStore ?? OfflineArticleStore(directory: archiveStore.directory.appendingPathComponent("OfflineArticles", isDirectory: true))
         BrowserDownloads.cleanPreviousSession()
         let saved = archiveStore.load()
         let legacy = storage.data(forKey: "browser.tabs.v1").flatMap {
@@ -84,6 +86,7 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders = saved?.bookmarkFolders ?? []
         readingList = saved?.readingList ?? []
         recentlyClosed = saved?.recentlyClosed ?? []
+        reconcileOfflineCopies()
         normalSites = saved?.sites ?? [:]
         workspaces = saved?.workspaces ?? [Workspace.standard]
         workspaceID = selected.workspaceID
@@ -547,17 +550,37 @@ final class BrowserSession: ObservableObject {
         if let retained = retainedClosedTab, !recentlyClosed.contains(where: { $0.id == retained.recordID }) { releaseClosedTab() }
         saveNow(replaceBackup: true)
     }
-    func deleteBookmarks(ids: Set<UUID>) {
-        WebsiteIconStore.shared.clear()
+    @discardableResult
+    func deleteBookmarks(ids: Set<UUID>) -> Bool {
+        let prior = bookmarks
         bookmarks.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else { bookmarks = prior; return false }
+        WebsiteIconStore.shared.clear()
+        return true
     }
-    func deleteReadingList(ids: Set<UUID>) {
+    @discardableResult
+    func deleteReadingList(ids: Set<UUID>) -> Bool {
+        let old = readingList
         readingList.removeAll { ids.contains($0.id) }
-        saveNow(replaceBackup: true)
+        guard saveNow(replaceBackup: true) else { readingList = old; return false }
+        var failed = Set<UUID>()
+        for entry in old where ids.contains(entry.id) {
+            if let id = entry.offlineID {
+                do { try offlineStore.remove(id) } catch { failed.insert(entry.id) }
+            }
+        }
+        if !failed.isEmpty {
+            readingList = old.filter { !ids.contains($0.id) || failed.contains($0.id) }
+            _ = saveNow(replaceBackup: true)
+            selected.errorMessage = SavedPageError.removalFailed.localizedDescription
+            return false
+        }
+        return true
     }
 
-    func deleteBookmarkFolder(_ id: UUID) {
+    @discardableResult
+    func deleteBookmarkFolder(_ id: UUID) -> Bool {
+        let prior = (bookmarkFolders, bookmarks)
         var ids: Set<UUID> = [id]
         for _ in 0..<32 {
             let children = bookmarkFolders.filter { $0.parentID.map(ids.contains) ?? false }.map(\.id)
@@ -567,8 +590,9 @@ final class BrowserSession: ObservableObject {
         }
         bookmarkFolders.removeAll { ids.contains($0.id) }
         bookmarks.removeAll { $0.folderID.map(ids.contains) ?? false }
+        guard saveNow(replaceBackup: true) else { (bookmarkFolders, bookmarks) = prior; return false }
         WebsiteIconStore.shared.clear()
-        saveNow(replaceBackup: true)
+        return true
     }
 
     func applyImport(_ plan: BrowserImportPlan) throws {

@@ -16,7 +16,7 @@ struct NativeBrowserChecks: UIViewControllerRepresentable {
 }
 
 @MainActor
-private final class NativeCheckRunner {
+final class NativeCheckRunner {
     let host: UIViewController
     var results: [String] = []
     init(host: UIViewController) { self.host = host }
@@ -938,6 +938,7 @@ private final class NativeCheckRunner {
         }
         do {
             try await tabRecoveryChecks()
+            try await savedPagesChecks(session)
             let normal = session.selected
             try await load(normal, "upgrades")
             _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
@@ -1566,6 +1567,7 @@ private final class NativeCheckRunner {
     }
 
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--saved-pages-preview") { savedPagesPreview(); return }
         if ProcessInfo.processInfo.arguments.contains("--reddit-preview") {
             let defaults = UserDefaults(suiteName: "DuoBrowser.RedditPreview")!
             defaults.removePersistentDomain(forName: "DuoBrowser.RedditPreview")

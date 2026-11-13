@@ -13,6 +13,7 @@ struct BrowserToolbar: View {
     @State private var showingProtection = false
     @State private var showingPrivacy = false
     @State private var showingSettings = false
+    @State private var savingPage: LibraryEntry?
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -43,6 +44,7 @@ struct BrowserToolbar: View {
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
         .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
+        .sheet(item: $savingPage) { SavePageView(session: session, browser: browser, entry: $0) }
         .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
         .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
@@ -238,7 +240,7 @@ struct BrowserToolbar: View {
                 .disabled(!browser.canGoForward)
             if let url = browser.restorationURL {
                 Button("Share", systemImage: "square.and.arrow.up") { browser.presentation.share(url) }
-                Button("Save Bookmark", systemImage: "bookmark") { session.addBookmark() }
+                Button("Save Page…", systemImage: "bookmark") { savingPage = LibraryEntry(address: url.absoluteString, title: browser.title) }
                 Button("Find on Page", systemImage: "doc.text.magnifyingglass") {
                     browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
                 }
