@@ -21,6 +21,9 @@ class DownloadGate:
 
 DOWNLOAD_GATES = {}
 DOWNLOAD_GATE_LOCK = Lock()
+# A gate holds test-controlled state until explicit release. Its lifetime matches
+# the native Downloads batch budget; per-interaction deadlines stay in the client.
+DOWNLOAD_GATE_LIFETIME = 600
 
 def download_gate(token):
     with DOWNLOAD_GATE_LOCK:
@@ -104,7 +107,7 @@ class Handler(BaseHTTPRequestHandler):
                     if gate_token and offset == 57344:
                         # Preserve an observable in-progress transfer until the harness cancels/releases it.
                         # Expiry interrupts the transfer rather than silently passing the test.
-                        if attempt is None or not attempt.wait(60):
+                        if attempt is None or not attempt.wait(DOWNLOAD_GATE_LIFETIME):
                             expired = True
                             self.close_connection = True; return
                     if not gate_token: time.sleep(0.15)

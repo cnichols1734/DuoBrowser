@@ -1664,9 +1664,15 @@ final class NativeCheckRunner {
     }
 
     func awaitDownloadProgress(_ item: BrowserDownload, stage: String) async throws {
-        do { try await wait { item.received > 0 && item.isDownloading } }
+        let clock = ContinuousClock()
+        let started = clock.now
+        results.append("PROGRESS WAIT: stage=\(stage) id=\(item.id) object=\(ObjectIdentifier(item)) time=\(Date().timeIntervalSince1970) received=\(item.received) active=\(item.isDownloading)")
+        do {
+            try await wait { item.received > 0 && item.isDownloading }
+            results.append("PROGRESS OBSERVED: stage=\(stage) id=\(item.id) received=\(item.received) elapsed=\(started.duration(to: clock.now))")
+        }
         catch {
-            throw NSError(domain: "\(stage) timed out; received=\(item.received), expected=\(item.expected), state=\(item.state.rawValue), active=\(item.isDownloading)", code: 1)
+            throw NSError(domain: "\(stage) timed out; id=\(item.id), elapsed=\(started.duration(to: clock.now)), received=\(item.received), expected=\(item.expected), state=\(item.state.rawValue), active=\(item.isDownloading)", code: 1)
         }
     }
 
@@ -2090,6 +2096,14 @@ final class NativeCheckRunner {
         let defaults = UserDefaults(suiteName: suite)!
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
         let archive = BrowserArchiveStore(directory: directory)
+        // Settings verifies preservation of an existing file. Real transfer conversion,
+        // authentication and cancellation are exercised by the Downloads suite.
+        let downloadStore = DownloadStore(directory: archive.directory.appendingPathComponent("Downloads", isDirectory: true), persistent: true)
+        let downloadBytes = Data("Synthetic browser download.\n".utf8)
+        let downloadRecord = DownloadRecord(id: UUID(), name: "settings-preserved.txt", date: Date(), bytes: Int64(downloadBytes.count), state: .completed)
+        let downloadedFile = try downloadStore.destination(id: downloadRecord.id, name: downloadRecord.name)
+        try downloadBytes.write(to: downloadedFile)
+        try downloadStore.save([downloadRecord])
         let store = WKWebsiteDataStore(forIdentifier: UUID())
         defaults.set("unknown-engine", forKey: "browser.searchEngine")
         defaults.set("unknown-appearance", forKey: "browser.appearance")
@@ -2099,6 +2113,11 @@ final class NativeCheckRunner {
             defaults.removePersistentDomain(forName: suite)
             try? FileManager.default.removeItem(at: directory)
         }
+        let restoredDownload = session.normalDownloads.items.first
+        try check(session.normalDownloads.items.count == 1 && restoredDownload?.id == downloadRecord.id
+                  && restoredDownload?.state == .completed && restoredDownload?.file == downloadedFile
+                  && restoredDownload?.received == downloadRecord.bytes && (try Data(contentsOf: downloadedFile)) == downloadBytes,
+                  "settings fixture restores the completed download identity file and bytes through the production store")
         try check(session.searchEngine == .google && session.appearance == .system, "settings preserve Google and system appearance defaults")
         session.searchEngine = .duckDuckGo; session.appearance = .dark
         try check(defaults.string(forKey: "browser.searchEngine") == "duckDuckGo" && defaults.string(forKey: "browser.appearance") == "dark", "search and appearance preferences persist")
@@ -2125,9 +2144,6 @@ final class NativeCheckRunner {
             blocks: [.init(kind: "paragraph", text: "Synthetic offline reading", jpeg: nil)])
         try session.savePage(LibraryEntry(address: savedArticle.address, title: savedArticle.title), reading: true, offline: savedArticle)
         let offlineID = session.readingList[0].offlineID!
-        _ = try await js(normal, "const a=document.createElement('a');a.href='/download';a.download='';document.body.append(a);a.click();true")
-        try await wait(timeout: 30) { session.normalDownloads.completedCount == 1 }
-        let downloadedFile = session.normalDownloads.items[0].file!
         let bookmarks = session.bookmarks
         try check(!session.history.isEmpty && !bookmarks.isEmpty, "synthetic history and bookmark exist before clear")
         let recoveryTab = session.newTab()
@@ -2198,7 +2214,12 @@ final class NativeCheckRunner {
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
         try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")
-        try check(try String(contentsOf: downloadedFile, encoding: .utf8) == "Synthetic browser download.\n" && session.normalDownloads.completedCount == 1, "clearing history cookies and cache preserves completed download and file contents")
+        try check(try String(contentsOf: downloadedFile, encoding: .utf8) == "Synthetic browser download.\n"
+                  && session.normalDownloads.completedCount == 1 && session.normalDownloads.items.count == 1
+                  && session.normalDownloads.items.first?.id == downloadRecord.id
+                  && session.normalDownloads.items.first?.state == .completed
+                  && session.normalDownloads.items.first?.file == downloadedFile,
+                  "clearing history cookies and cache preserves completed download and file contents")
         let fake = SettingsDataFixture()
         let controlled = WebsiteDataController(store: fake)
         let loading = Task { await controlled.reload() }
