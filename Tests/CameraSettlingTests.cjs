@@ -223,6 +223,48 @@ module.exports = async function runSettlingTests(page, source) {
     const reversed = await box('reading');
     await send(geometry([{...region, y:reversed.y+4, height:Math.min(120,reversed.height-8)}])); await settled();
     assert(JSON.stringify(await box('reading'))===JSON.stringify(reversed), 'reverse flex article order remains conservative');
+    await setup('p{line-height:28.8px}', '<input id="draft" value="kept draft"><div id="ticker"></div>');
+    await p.locator('#reading').evaluate(n=>{
+      n.textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);
+      window.originalLongNode=n;
+    });
+    const longOriginal=await box('reading');
+    assert(longOriginal.height>320,'long article fixture exceeds the former paragraph cutoff');
+    await send(geometry([region],{reduceMotion:true})); await settled();
+    assert((await box('reading')).right<=378 && await p.locator('#reading').evaluate(n=>n.getAnimations().length===0),
+      'long paragraph avoids camera statically under Reduce Motion');
+    assert(await p.evaluate(()=>originalLongNode===document.querySelector('#reading')) && await p.locator('#draft').inputValue()==='kept draft',
+      'long fitting retains original DOM and form values');
+    await send(geometry([], {enabled:false}));
+    assert(JSON.stringify(await box('reading'))===JSON.stringify(longOriginal),'long paragraph restores its original layout');
+    await send(geometry([])); await settled();
+    await p.evaluate(()=>{
+      const animate=Element.prototype.animate;window.longAnimations=[];
+      Element.prototype.animate=function(...args){const a=animate.apply(this,args);if(this.id==='reading')longAnimations.push(a);return a};
+      window.ticks=0;window.tickerTimer=setInterval(()=>document.querySelector('#ticker').className='tick-'+(++ticks),40);
+    });
+    await send(geometry()); await settled();
+    assert((await box('reading')).right<=378 && await p.evaluate(()=>ticks>10),
+      'continuous unrelated mutations cannot starve long paragraph fitting');
+    assert(await p.evaluate(()=>longAnimations.length===1 && longAnimations[0].playState==='finished'),
+      'background mutations do not restart the settling animation');
+    assert(await p.evaluate(()=>{const a=longAnimations[0];a.pause();a.currentTime=100;const progress=a.effect.getComputedTiming().progress;a.finish();return progress>.15&&progress<.6}),
+      'settling moves gradually through its first hundred milliseconds');
+    await p.evaluate(()=>clearInterval(tickerTimer));
+    await send(geometry([], {enabled:false}));
+    await p.evaluate(()=>{window.longAnimations=[]});
+    await send(geometry());
+    await p.waitForFunction(()=>longAnimations.some(a=>a.playState==='running'));
+    await p.evaluate(()=>dispatchEvent(new Event('pointerdown')));
+    const longPaused=await box('reading');await p.waitForTimeout(250);
+    assert(Math.abs((await box('reading')).x-longPaused.x)<.5,'touch freezes long-paragraph presentation without a jump');
+    await p.evaluate(()=>dispatchEvent(new Event('pointerup')));await p.waitForTimeout(100);
+    assert(Math.abs((await box('reading')).x-longPaused.x)<.5,'touch release starts a complete quiet period before long text resumes');
+    await settled();
+    assert((await box('reading')).right<=378 && Math.abs((await box('reading')).y-longOriginal.y)<1,
+      'interrupted long-paragraph settling reaches safe geometry without a downshift');
+    await send(geometry([]));await settled();
+    assert(JSON.stringify(await box('reading'))===JSON.stringify(longOriginal),'long-paragraph reverse settling restores original geometry');
     return {passed:results.length,tests:results};
   } finally { await p.close(); }
 };

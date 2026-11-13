@@ -4,6 +4,8 @@ Project-owned source, documentation and artwork are MIT-licensed, copyright 2026
 
 | Component | Scope | License / treatment |
 | --- | --- | --- |
+| EasyList / EasyPrivacy | Bundled and updated declarative filter data, `DuoBrowser/FilterLists` | CC BY-SA 3.0 Unported, chosen from upstream dual licensing; source headers, full license, attribution and snapshot hashes retained. Converted data keeps this license. |
+| EasyList Cookie List | Optional cookie-notice filters | CC BY 3.0 Unported, as specified in its own header; full license and attribution retained. |
 | SwiftUI, UIKit, WebKit, Foundation, Combine and Darwin | Apple system frameworks; not vendored | Apple SDK/system terms; not relicensed by this repository |
 | Contributor Covenant 2.1 | `CODE_OF_CONDUCT.md`, adapted with reporting contact | CC BY 4.0; original attribution retained, [source](https://www.contributor-covenant.org/version/2/1/code_of_conduct.html), [license](https://creativecommons.org/licenses/by/4.0/) |
 | Playwright 1.64.1 / playwright-core | Development-only browser layout tests | Apache-2.0; npm lockfile pins versions and integrity. Downloaded browser binaries have their own notices and are not distributed with the app. |
@@ -12,7 +14,7 @@ Project-owned source, documentation and artwork are MIT-licensed, copyright 2026
 | actionlint 1.7.12 | Workflow validation | MIT; downloaded release verified by SHA-256 |
 | actions/checkout, actions/setup-node | GitHub-hosted CI actions | MIT; pinned to full commit SHAs |
 
-There are no third-party runtime packages, package-manager dependencies, copied vendor libraries, or remote application services bundled with DuoBrowser. Development tools are downloaded, not vendored into the application. Their original licenses continue to apply. Any future dependency must receive a license/security review and an inventory update before merge.
+There are no third-party runtime code packages, package-manager dependencies, or copied vendor libraries bundled with DuoBrowser. Separately licensed filter data is bundled and may update directly from its three fixed HTTPS source locations without browsing data or cookies. See `DuoBrowser/FilterLists/NOTICE.md`. Development tools are downloaded, not vendored into the application. Their original licenses continue to apply. Any future dependency must receive a license/security review and an inventory update before merge.
 
 The README screenshots in `docs/images/` illustrate browser behavior using Apple.com. Website images, text and trademarks appearing inside those screenshots are not relicensed under MIT. They remain the property of their respective owners. The screenshots show development simulator output, not Apple endorsement or hardware certification.
 

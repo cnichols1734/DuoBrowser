@@ -14,6 +14,7 @@ struct BrowserZoomPresenter: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: BrowserZoomController, context: Context) {
+        controller.applyAppearance(session.appearance)
         controller.update(reduceMotion: reduceMotion || dynamicTypeSize.isAccessibilitySize)
     }
 }
@@ -35,6 +36,7 @@ final class BrowserZoomController: UIViewController {
     private let overview: UIHostingController<TabOverview>
     private let browser: UIHostingController<BrowserScreen>
     private var observation: AnyCancellable?
+    private var appearanceObservation: AnyCancellable?
     private var reduceMotion = false
     private var transitioning = false
     private var appeared = false
@@ -50,6 +52,7 @@ final class BrowserZoomController: UIViewController {
         browser.isModalInPresentation = true
         // The presenting SwiftUI hierarchy can be offscreen beneath the full-screen browser.
         // Observe presentation intent here so its update cycle cannot stall dismissal.
+        appearanceObservation = session.$appearance.sink { [weak self] appearance in self?.applyAppearance(appearance) }
         observation = session.$showingTabs.removeDuplicates().sink { [weak self] _ in
             Task { @MainActor [weak self] in self?.reconcile() }
         }
@@ -73,6 +76,13 @@ final class BrowserZoomController: UIViewController {
         super.viewDidAppear(animated)
         appeared = true
         reconcile()
+    }
+
+    func applyAppearance(_ appearance: BrowserAppearance) {
+        let style: UIUserInterfaceStyle = appearance == .system ? .unspecified : appearance == .dark ? .dark : .light
+        overrideUserInterfaceStyle = style
+        overview.overrideUserInterfaceStyle = style
+        browser.overrideUserInterfaceStyle = style
     }
 
     func update(reduceMotion: Bool) {

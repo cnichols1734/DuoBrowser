@@ -67,7 +67,8 @@ jobs:
   ios:
     name: iOS build and native tests
     runs-on: xcode-27
-    timeout-minutes: 30
+    # Fresh simulator startup, both builds, and the expanded native suite include bounded cold filter compilation.
+    timeout-minutes: 45
     env:
       DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
     steps:
@@ -97,7 +98,7 @@ jobs:
       - name: Compile Debug and Release without signing
         run: |
           for configuration in Debug Release; do
-            xcodebuild -project DuoBrowser.xcodeproj -scheme DuoBrowser \
+            xcodebuild -jobs 2 -project DuoBrowser.xcodeproj -scheme DuoBrowser \
               -configuration "$configuration" -destination 'generic/platform=iOS Simulator' \
               -derivedDataPath DerivedData CODE_SIGNING_ALLOWED=NO build
             python3 scripts/check-photo-permission.py "DerivedData/Build/Products/$configuration-iphonesimulator/DuoBrowser.app/Info.plist"

@@ -1,0 +1,15 @@
+Source: 9f07d1ae3773c650a5b3d2f391e5f484756228d1
+Command: DUO_TEST_DEVICE=A43DD11E-000C-47B4-8353-444C4A86F607 bash scripts/native-checks.sh --skip-build
+Result: exit 0; 494 assertions in 11 batches
+
+DownloadChecks.txt: 47 checks passed
+SettingsChecks.txt: 48 checks passed
+SetupChecks.txt: 37 checks passed
+RedditChecks.txt: 29 checks passed
+TabStackChecks.txt: 21 checks passed
+NativeBrowserChecks.txt: 93 checks passed
+UpgradeChecks.txt: 160 checks passed
+CameraSettlingChecks.txt: 42 checks passed
+PersistentCookieChecks.txt: 2 checks passed
+PersistentCookieChecks.txt: 2 checks passed
+MemoryChecks.txt: 13 checks passed

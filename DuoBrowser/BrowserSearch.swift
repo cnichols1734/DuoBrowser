@@ -28,7 +28,7 @@ struct BrowserSearch: View {
     }
 
     private var remoteQuery: String? {
-        guard appActive else { return nil }
+        guard appActive, session.searchEngine == .google else { return nil }
         return AddressSuggestions.remoteQuery(query, isPrivate: browser.isPrivate,
                                                enabled: onlineSuggestions, composing: composing)
     }
@@ -78,7 +78,7 @@ struct BrowserSearch: View {
             }
             if showsDirectAction {
                 Button { navigate(query) } label: {
-                    searchRow(query, detail: isWebsite ? "Open website" : "Search Google")
+                    searchRow(query, detail: isWebsite ? "Open website" : "Search " + session.searchEngine.title)
                 }.buttonStyle(CommandRowStyle())
             }
             if rowCount > 0 || hasQuery { Divider().padding(.horizontal, 20) }
@@ -168,7 +168,7 @@ struct BrowserSearch: View {
             .contentShape(Rectangle())
     }
     private func search(_ phrase: String) {
-        browser.navigate(to: AddressSuggestions.searchURL(phrase).absoluteString)
+        browser.navigate(to: WebAddress.searchURL(phrase, engine: session.searchEngine).absoluteString)
         dismiss()
     }
     private func displayAddress(_ address: String) -> String {

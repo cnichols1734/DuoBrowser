@@ -16,13 +16,26 @@ struct NativeBrowserChecks: UIViewControllerRepresentable {
 }
 
 @MainActor
-private final class NativeCheckRunner {
+final class NativeCheckRunner {
     let host: UIViewController
     var results: [String] = []
-    init(host: UIViewController) { self.host = host }
+    private var passedChecks = 0
+    init(host: UIViewController) {
+        self.host = host
+        writeProgress(last: "Harness started.")
+    }
+    private func writeProgress(last label: String) {
+        // Only this Debug synthetic harness writes progress; never capture a live page or browsing state.
+        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("NativeCheckProgress.txt")
+        let text = "\(passedChecks) checks passed\nLast: \(label.prefix(512))\n"
+        try? text.write(to: file, atomically: true, encoding: .utf8)
+    }
     func check(_ value: Bool, _ label: String) throws {
         if !value { throw NSError(domain: label, code: 1) }
         results.append("PASS: " + label)
+        passedChecks += 1
+        if passedChecks == 1 || passedChecks.isMultiple(of: 5) { writeProgress(last: label) }
     }
     func tabStackChecks() async throws {
         let models = (0..<6).map { _ in BrowserModel(dataStore: .nonPersistent()) }
@@ -113,6 +126,91 @@ private final class NativeCheckRunner {
         try check(closedIDs.filter { $0 == departingID }.count == 1,
                   "filtering and teardown complete a committed close exactly once")
     }
+    func tabUndoOverviewChecks() async throws {
+        for reduced in [false, true] {
+            for coalesced in [true, false] {
+                let suite = "DuoBrowser.UndoOverview." + UUID().uuidString
+                let defaults = UserDefaults(suiteName: suite)!
+                let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+                let session = BrowserSession(storage: defaults,
+                    archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+                let original = session.selected
+                try await load(original, "")
+                let originalView = original.webView
+                _ = try await js(original, "document.querySelector('#kept').value='Undo keeps this draft'; true")
+                _ = session.newTab()
+                session.select(original.id)
+                let controller = TabStackController()
+                var dismissals: [UUID: () -> Void] = [:]
+                var closed: [UUID] = []
+                func update() {
+                    controller.update(tabs: session.visibleTabs, selectedID: session.selectedID,
+                                      reduceMotion: reduced, close: { id in
+                        closed.append(id)
+                        session.close(id)
+                        // A hidden SwiftUI overview can coalesce close and Undo into the same IDs/selection.
+                        if !coalesced { update() }
+                    }) { tab, dismiss in
+                        dismissals[tab.id] = dismiss
+                        return AnyView(Button(action: dismiss) {
+                            Text("Close synthetic tab").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }.buttonStyle(.plain).background(Color.blue.opacity(0.1)))
+                    }
+                }
+                host.addChild(controller)
+                controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 520)
+                host.view.addSubview(controller.view)
+                controller.didMove(toParent: host)
+                defer {
+                    controller.update(tabs: [], selectedID: original.id, reduceMotion: true, close: { _ in }) { _, _ in AnyView(EmptyView()) }
+                    controller.finishPendingDismissals()
+                    controller.willMove(toParent: nil)
+                    controller.view.removeFromSuperview()
+                    controller.removeFromParent()
+                    session.releaseClosedTab()
+                    session.closePrivateTabs()
+                    session.tabs.forEach { $0.close() }
+                    defaults.removePersistentDomain(forName: suite)
+                    try? FileManager.default.removeItem(at: directory)
+                }
+                update()
+                controller.view.layoutIfNeeded()
+                try await wait { dismissals[original.id] != nil }
+                dismissals[original.id]?()
+                try await wait { !session.tabs.contains(where: { $0.id == original.id }) }
+                if !coalesced {
+                    // Undo as soon as the removal snapshot is applied, within the live Undo window.
+                    try await wait { controller.collectionView.numberOfItems(inSection: 0) == 1 }
+                }
+                guard let record = session.closedTabNotice else { throw NSError(domain: "Undo record missing", code: 1) }
+                let restored = session.reopenClosedTab(record)
+                let label = "Reduce Motion \(reduced), coalesced \(coalesced)"
+                try check(restored && session.selected === original && original.webView === originalView,
+                          "Undo restores the same live tab and web view (\(label))")
+                try check(try await js(original, "document.querySelector('#kept').value") as? String == "Undo keeps this draft",
+                          "Undo preserves the source draft (\(label))")
+                update()
+                controller.collectionView.layoutIfNeeded()
+                func cardIsHittable() -> Bool {
+                    guard let preview = controller.zoomSource(for: original.id, centered: true), preview.window != nil else { return false }
+                    let collection = controller.collectionView
+                    let frame = preview.convert(preview.bounds, to: collection)
+                    guard collection.bounds.intersects(frame), !frame.isEmpty else { return false }
+                    let point = CGPoint(x: frame.midX, y: frame.midY)
+                    guard let target = collection.hitTest(point, with: nil) else { return false }
+                    return target === preview || target.isDescendant(of: preview)
+                }
+                if !coalesced { try await wait { cardIsHittable() } }
+                try check(cardIsHittable(), "restored tab has a visible, hittable overview card and zoom source (\(label))")
+                dismissals[original.id]?()
+                try await wait { closed.filter { $0 == original.id }.count == 2 && !session.tabs.contains(where: { $0.id == original.id }) }
+                try await Task.sleep(for: .milliseconds(350))
+                try check(closed.filter { $0 == original.id }.count == 2,
+                          "restored tab can be closed again exactly once (\(label))")
+            }
+        }
+    }
+
     func wideTabLayoutChecks() throws {
         let models = (0..<40).map { _ in BrowserModel(dataStore: .nonPersistent()) }
         let controller = TabStackController()
@@ -180,7 +278,8 @@ private final class NativeCheckRunner {
         try check(true, "Reduce Motion returns to overview without a slide transition")
     }
 
-    func wait(timeout: Double = 10, _ condition: () async -> Bool) async throws {
+    func wait(timeout: Double = 10, file: StaticString = #fileID, line: UInt = #line,
+              _ condition: () async -> Bool) async throws {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(timeout))
         while clock.now < deadline {
@@ -190,11 +289,16 @@ private final class NativeCheckRunner {
         // Task.sleep can resume late on a busy simulator. Observe the condition once
         // more after waking instead of reporting stale state from before that sleep.
         if await condition() { return }
-        throw NSError(domain: "Timed out waiting for native WebKit", code: 1)
+        throw NSError(domain: "Timed out waiting for native WebKit at \(file):\(line)", code: 1)
     }
     func mount(_ model: BrowserModel) {
         host.view.subviews.forEach { $0.removeFromSuperview() }
         let view = model.webView
+        if ProcessInfo.processInfo.arguments.contains("--download-checks"),
+           ProcessInfo.processInfo.arguments.contains("--download-checks-no-reputation") {
+            // Opt-in synthetic Downloads harness only; production views retain the configured protection.
+            view.configuration.preferences.isFraudulentWebsiteWarningEnabled = false
+        }
         view.frame = host.view.bounds
         view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.view.addSubview(view)
@@ -204,27 +308,47 @@ private final class NativeCheckRunner {
     }
     func load(_ model: BrowserModel, _ path: String) async throws {
         mount(model)
-        model.navigate(to: "http://127.0.0.1:8765/" + path)
-        var lastReadyState = "not evaluated"
+        let expected = URL(string: "http://127.0.0.1:8765/" + path)!.absoluteString
+        let marker = UUID().uuidString
+        let world = WKContentWorld.world(name: "DuoBrowser.NativeLoadCheck")
+        var lastDocument = "not evaluated"
         var lastScriptError = "none"
         let clock = ContinuousClock()
         let started = clock.now
         do {
+            // An optimistic WK URL and an old complete document cannot acknowledge a new load,
+            // including a second navigation to exactly the same address. This world is test-only.
+            if model.webView.url != nil {
+                let marked = try await model.webView.callAsyncJavaScript(
+                    "globalThis.__duoLoadDocument = marker; return globalThis.__duoLoadDocument === marker;",
+                    arguments: ["marker": marker], in: nil, contentWorld: world)
+                guard marked as? Bool == true else { throw NSError(domain: "Could not mark the preceding synthetic document", code: 1) }
+            } else {
+                // A newly created WKWebView has no preceding document in which to install a marker.
+                // Its first load must still acknowledge the actual expected document below.
+                lastDocument = "no preceding document (WKURL nil)"
+            }
+            model.navigate(to: expected)
             // A fresh hosted simulator may need to launch WebKit's network/render processes.
-            // Loading has its own bound; interaction checks retain their shorter deadline.
+            // Loading retains its existing bound; interaction checks retain their shorter deadline.
             try await wait(timeout: 60) {
-                guard !model.webView.isLoading, model.webView.url?.path == "/" + path.components(separatedBy: "?")[0] else { return false }
+                guard !model.webView.isLoading else { return false }
                 do {
-                    lastReadyState = try await self.js(model, "document.readyState") as? String ?? "not a string"
+                    let value = try await model.webView.callAsyncJavaScript(
+                        "return {oldDocument:globalThis.__duoLoadDocument === marker,href:location.href,ready:document.readyState};",
+                        arguments: ["marker": marker], in: nil, contentWorld: world)
+                    let document = value as? [String: Any]
+                    lastDocument = String(String(describing: document).prefix(1024))
                     lastScriptError = "none"
-                    return lastReadyState == "complete"
+                    return document?["oldDocument"] as? Bool == false && document?["href"] as? String == expected &&
+                        document?["ready"] as? String == "complete" && !model.webView.isLoading
                 } catch {
                     lastScriptError = String(describing: error)
                     return false
                 }
             }
         } catch {
-            results.append("LOAD: expected=\(path) actual=\(model.webView.url?.path ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none") readyState=\(lastReadyState) scriptError=\(lastScriptError) elapsed=\(started.duration(to: clock.now))")
+            results.append("LOAD: expected=\(expected) actual=\(model.webView.url?.absoluteString ?? "nil") loading=\(model.webView.isLoading) title=\(model.webView.title ?? "nil") error=\(model.errorMessage ?? "none") document=\(lastDocument) scriptError=\(lastScriptError) elapsed=\(started.duration(to: clock.now))")
             throw error
         }
     }
@@ -263,37 +387,52 @@ private final class NativeCheckRunner {
         // Dedicated test profile cannot change the user's default browser cookies.
         let store = WKWebsiteDataStore(forIdentifier: UUID(uuidString: "D84C5855-2222-4333-8444-1FCFF8366740")!)
         let model = BrowserModel(dataStore: store)
+        let cache = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        let receipt = cache.appendingPathComponent("PersistentCookieChecks.txt")
+        let expectedFile = cache.appendingPathComponent("PersistentCookieExpected.txt")
+        let isWriter = ProcessInfo.processInfo.arguments.contains("--persistent-cookie-write")
         do {
-            try await load(model, "persistent")
-            if ProcessInfo.processInfo.arguments.contains("--persistent-cookie-write") {
-                _ = try await js(model, "document.cookie='duo_persistence=synthetic;max-age=86400;path=/';localStorage.setItem('duo_persistence','synthetic')")
+            let nonce = isWriter ? UUID().uuidString : try String(contentsOf: expectedFile, encoding: .utf8)
+            guard UUID(uuidString: nonce) != nil else { throw NSError(domain: "Invalid synthetic persistence nonce", code: 1) }
+            try await load(model, "persistent?probe=" + UUID().uuidString)
+            if isWriter {
+                _ = try await js(model, "document.cookie='duo_persistence=\(nonce);max-age=86400;path=/';localStorage.setItem('duo_persistence','\(nonce)')")
                 try await wait {
                     let cookies = await withCheckedContinuation { continuation in
                         store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
                     }
-                    return cookies.contains { $0.name == "duo_persistence" && $0.value == "synthetic" &&
+                    return cookies.contains { $0.name == "duo_persistence" && $0.value == nonce &&
                         !$0.isSessionOnly && ($0.expiresDate ?? .distantPast) > Date() }
                 }
-                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true,
-                          "persistent cookie write is visible to WebKit and the document")
+                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=" + nonce) == true,
+                          "fresh persistent cookie write is visible to WebKit and the document")
                 try check(store.isPersistent, "test cookie profile is persistent")
-                // Retain the existing settling interval after confirming the write.
-                try await Task.sleep(for: .seconds(2))
+                try nonce.write(to: expectedFile, atomically: true, encoding: .utf8)
+                // Register before the ready receipt. Retain the view/profile through a real lifecycle transition.
+                let background = NotificationCenter.default.notifications(named: UIApplication.didEnterBackgroundNotification)
+                try results.joined(separator: "\n").write(to: receipt, atomically: true, encoding: .utf8)
+                for await _ in background {
+                    try "background observed".write(to: cache.appendingPathComponent("PersistentCookieBackground.txt"),
+                                                    atomically: true, encoding: .utf8)
+                    break
+                }
             } else {
                 let cookies = await withCheckedContinuation { continuation in
                     store.httpCookieStore.getAllCookies { continuation.resume(returning: $0) }
                 }
-                let retained = cookies.first { $0.name == "duo_persistence" }
-                let storageRetained = try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic"
-                results.append("PERSISTENCE: nativeCookie=\(retained != nil) persistent=\(retained?.isSessionOnly == false) localStorage=\(storageRetained)")
-                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=synthetic") == true, "persistent cookie survives app termination and relaunch")
-                try check(try await js(model, "localStorage.getItem('duo_persistence')") as? String == "synthetic", "persistent localStorage survives app termination and relaunch")
+                let retained = cookies.first { $0.name == "duo_persistence" && $0.value == nonce }
+                let storageRetained = try await js(model, "localStorage.getItem('duo_persistence')") as? String == nonce
+                let firstRequest = try await js(model, "document.querySelector('meta[name=persistence-cookie]')?.content") as? String == nonce
+                results.append("PERSISTENCE: nativeCookie=\(retained != nil) persistent=\(retained?.isSessionOnly == false) localStorage=\(storageRetained) firstRequestAuthenticated=\(firstRequest)")
+                try check(firstRequest, "first request after relaunch carries the fresh persistent cookie")
+                try check((try await js(model, "document.cookie") as? String)?.contains("duo_persistence=" + nonce) == true,
+                          "persistent cookie survives background, termination and relaunch")
+                try check(storageRetained, "fresh persistent localStorage survives background, termination and relaunch")
                 await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
             }
         } catch { results.append("FAIL: \(error)") }
         model.close()
-        let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PersistentCookieChecks.txt")
-        try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+        try? results.joined(separator: "\n").write(to: receipt, atomically: true, encoding: .utf8)
     }
     func memoryChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("MemoryChecks-" + UUID().uuidString)
@@ -373,10 +512,10 @@ private final class NativeCheckRunner {
         let model = BrowserModel(dataStore: .nonPersistent())
         defer { model.close() }
         func camera(_ regions: [[String: Double]], enabled: Bool = true, reduceMotion: Bool = false, voiceOver: Bool = false) async throws {
-            let _: Any = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
+            _ = try await model.webView.callAsyncJavaScript("globalThis.__duoCamera.update(value); return true", arguments: ["value": [
                 "enabled": enabled, "width": model.webView.bounds.width, "height": model.webView.bounds.height,
                 "regions": regions, "reduceMotion": reduceMotion, "voiceOver": voiceOver
-            ]], in: nil, in: PageLayoutAdapter.world)
+            ]], in: nil, contentWorld: PageLayoutAdapter.world)
         }
         func measure(_ property: String, _ id: String = "reading") async throws -> Double {
             try await js(model, "document.getElementById('\(id)').getBoundingClientRect().\(property)") as? Double ?? -9999
@@ -535,13 +674,231 @@ private final class NativeCheckRunner {
             }
 
 
+            try await load(model, "settling")
+            // Navigation reapplies site preferences. Disable adaptation afterward so viewport
+            // mounting cannot begin a correction before the baseline and animation hook exist.
+            model.originalPageLayout = true
+            try await wait {
+                (try? await self.js(model, "![...document.getElementById('reading').attributes].some(a=>a.name.startsWith('data-duo-camera-'))")) as? Bool == true
+            }
+            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');document.getElementById('draft').value='Long article draft'")
+            let longWidth = try await measure("width"), longTop = try await measure("top")
+            try check((try await measure("height")) > 320, "native long article exceeds the previous camera cutoff")
+            // Exercise the production UIKit geometry publisher, not only a synthetic JavaScript update.
+            host.view.subviews.forEach { $0.removeFromSuperview() }
+            let viewport = ViewportView(browser: model)
+            viewport.frame = host.view.bounds; host.view.addSubview(viewport); viewport.layoutIfNeeded()
+            let actualRegions = viewport.reservedRegions(kind: .occlusion).filter(\.isActive).map { region in
+                let r = viewport.convert(region.frame, to: model.webView)
+                return ["x": Double(r.minX), "y": Double(r.minY), "width": Double(r.width), "height": Double(r.height)]
+            }
+            try check(!actualRegions.isEmpty, "production viewport receives active system occlusion geometry")
+            func longTextClear() async throws -> Bool {
+                try await model.webView.callAsyncJavaScript("""
+                const scale=(visualViewport?.width??innerWidth)/width, x=visualViewport?.offsetLeft??0, y=visualViewport?.offsetTop??0;
+                const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));
+                return ![...r.getClientRects()].some(line=>regions.some(o=>line.left<(o.x+o.width)*scale+x&&line.right>o.x*scale+x&&line.top<(o.y+o.height)*scale+y&&line.bottom>o.y*scale+y));
+                """, arguments: ["regions": actualRegions, "width": model.webView.bounds.width], in: nil, contentWorld: .page) as? Bool == true
+            }
+            let initiallyClear = try await longTextClear()
+            try check(!initiallyClear, "long article fixture actually intersects the system camera before adaptation")
+            _ = try await model.webView.evaluateJavaScript("""
+            (()=>{const original=Element.prototype.animate;globalThis.__duoLongMotion=null;
+            Element.prototype.animate=function(...args){const a=original.apply(this,args);if(this.id==='reading'){Element.prototype.animate=original;globalThis.__duoLongMotion=a;a.pause()}return a}})()
+            """, in: nil, contentWorld: PageLayoutAdapter.world)
+            model.originalPageLayout = false
+            try await wait { (try? await model.webView.evaluateJavaScript("Boolean(globalThis.__duoLongMotion)", in: nil, contentWorld: PageLayoutAdapter.world)) as? Bool == true }
+            let interruption = try await model.webView.callAsyncJavaScript("""
+            const a=globalThis.__duoLongMotion;a.currentTime=100;const progress=a.effect.getComputedTiming().progress;
+            a.play();dispatchEvent(new Event('pointerdown'));const x=document.getElementById('reading').getBoundingClientRect().x;
+            await new Promise(resolve=>setTimeout(resolve,150));
+            const stable=a.playState==='paused'&&Math.abs(document.getElementById('reading').getBoundingClientRect().x-x)<1;
+            dispatchEvent(new Event('pointerup'));delete globalThis.__duoLongMotion;return stable&&progress>.15&&progress<.6;
+            """, arguments: [:], in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
+            try check(interruption == true, "native long paragraph uses gradual interpolation and freezes its actual presentation on touch")
+            try await wait { (try? await longTextClear()) == true }
+            let fittedLongTop = try await measure("top"), fittedLongWidth = try await measure("width")
+            try check(abs(fittedLongTop-longTop)<1 && fittedLongWidth < longWidth,
+                      "production geometry bridge fits long article beside actual camera without a downshift")
+            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize==='18px'") as? Bool == true,
+                      "long camera fitting preserves native DOM, draft and font size")
+            model.originalPageLayout = true
+            try await wait { abs(((try? await measure("width")) ?? 0) - longWidth) < 1 }
+            try check(abs((try await measure("width"))-longWidth)<1, "Original Layout reverses long article fitting")
+            try await camera(actualRegions, reduceMotion: true); try await pause()
+            let staticLongClear = try await longTextClear()
+            let staticLongAnimations = try await js(model, "document.getElementById('reading').getAnimations().length") as? Int
+            try check(staticLongClear && staticLongAnimations == 0,
+                      "native Reduce Motion retains static long article avoidance")
+
+
         } catch { results.append("FAIL: \(error)") }
         let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("CameraSettlingChecks.txt")
         try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
     }
     func asyncJS(_ model: BrowserModel, _ script: String) async throws -> Any {
-        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+        try await model.webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page) ?? NSNull()
     }
+    func maintainedFilterChecks(_ browser: BrowserModel) async throws {
+        let ready = await FilterCatalog.shared.awaitMaintainedForTesting()
+        try check(ready, "maintained protection becomes ready within the bounded preparation window" +
+                  (ready ? "" : ": " + FilterCatalog.shared.preparationDiagnosticsForTesting()))
+        try check(!FilterCatalog.shared.usingFallback && FilterCatalog.shared.ruleCount > 10_000,
+                  "bundled maintained sources compile on the deployed iOS runtime without fallback")
+        try check(await FilterCatalog.shared.rejectInvalidUpdateForTesting(), "invalid filter update preserves working compilation")
+        for (name, passed) in await FilterCatalog.shared.compiledCacheChecksForTesting() { try check(passed, name) }
+        try await initialProtectionChecks()
+        let source = """
+        [Adblock Plus 2.0]
+        ||localhost^$third-party,xmlhttprequest
+        @@||localhost:8765/probe?allow$xmlhttprequest
+        ||127.0.0.1:8765/frame-ad^$subdocument
+        ||127.0.0.1:8765/other-only^$other
+        ##.synthetic-ad
+        example.com#@#.synthetic-ad
+        """
+        let converted = try FilterListConverter.convert(source)
+        ContentBlocking.useTestRuleChunks(try converted.chunks(limit: 2).map { String(decoding: $0, as: UTF8.self) })
+        try await load(browser, "upgrades")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?blocked').then(()=>false).catch(()=>true)") as? Bool == true,
+                  "maintained converter blocks matching network request in WebKit")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?allow').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "maintained converter preserves network exceptions")
+        _ = try await js(browser, "var ad=document.createElement('div'); ad.className='synthetic-ad'; ad.textContent='Synthetic advertisement'; document.body.append(ad)")
+        try check(try await js(browser, "getComputedStyle(document.querySelector('.synthetic-ad')).display") as? String == "none",
+                  "maintained cosmetic filter hides an ad element")
+        _ = try await js(browser, "document.querySelector('#kept').value='Keep this site draft'")
+        browser.blockAds = false
+        try await wait { browser.blockingStatus == "Off for this site" }
+        try check(try await js(browser, "document.querySelector('#kept').value") as? String == "Keep this site draft",
+                  "site protection switch preserves live draft without reload")
+        try check(try await asyncJS(browser, "return await fetch('http://localhost:8765/probe?after-off').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "site protection switch removes prior compiled rules")
+        browser.blockAds = true
+        try await wait { browser.blockingStatus == "Protection on" }
+        // The frame rule must not prevent direct top-level navigation to the same URL.
+        try await load(browser, "frame-ad?direct")
+        try check(try await js(browser, "document.querySelector('#kept') != null") as? Bool == true,
+                  "subdocument filter preserves direct top-level navigation")
+        try await load(browser, "upgrades")
+        let frameAllowed = try await asyncJS(browser, "return await new Promise(resolve => { let f=document.createElement('iframe'); f.onload=()=>resolve(!!f.contentDocument?.querySelector('#kept')); setTimeout(()=>resolve(false),5000); f.src='/frame-control?fresh'; document.body.append(f); })") as? Bool
+        try check(frameAllowed == true, "unmatched child document loads normally")
+        // Blocked iframe navigations need not emit load/error. Bound the observation and
+        // verify server-side non-delivery, rather than waiting forever for an absent event.
+        let frameBlocked = try await asyncJS(browser, "const token=crypto.randomUUID(); let f=document.createElement('iframe'); f.src='/frame-ad?token='+token; document.body.append(f); await new Promise(resolve=>setTimeout(resolve,500)); const count=await fetch('/frame-count?token='+token).then(r=>r.text()); return count==='0' && !f.contentDocument?.querySelector('#kept');") as? Bool
+        try check(frameBlocked == true, "subdocument filter blocks matching iframe before it reaches the fixture server")
+        // Use first-party fetch so the broad third-party probe rule does not apply.
+        try check(try await asyncJS(browser, "return await fetch('/other-only?fresh').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "other resource filter does not widen to fetch")
+        try await converterReviewChecks(browser)
+        ContentBlocking.useTestRules(nil)
+        try await staleBlockingChecks(browser)
+    }
+
+    func converterReviewChecks(_ browser: BrowserModel) async throws {
+        let source = """
+        [Adblock Plus 2.0]
+        ||127.0.0.1:8765/badfilter.js$xmlhttprequest
+        ||127.0.0.1:8765/scope-probe$xmlhttprequest,domain=127.0.0.1
+        ||127.0.0.1:8765/scope-negative$xmlhttprequest,domain=~localhost
+        ||localhost:8765/frame-exception^$subdocument
+        @@||localhost:8765/frame-exception^$document,subdocument
+        ||127.0.0.1:8765/socket-probe$websocket
+        @@||127.0.0.1:8765/socket-probe?allowed$websocket
+        """
+        let converted = try FilterListConverter.convert(source)
+        ContentBlocking.useTestRuleChunks(try converted.chunks().map { String(decoding: $0, as: UTF8.self) })
+        defer { ContentBlocking.useTestRules(nil) }
+        try await load(browser, "upgrades")
+        try check(try await asyncJS(browser, "return await fetch('/badfilter.js').then(()=>false).catch(()=>true)") as? Bool == true,
+                  "ordinary badfilter URL substring remains blocked in WebKit")
+        try check(try await asyncJS(browser, "const token=crypto.randomUUID(); const blocked=await fetch('/scope-probe?token='+token).then(()=>false).catch(()=>true); const count=await fetch('/frame-count?token='+token).then(r=>r.text()); return blocked && count==='0';") as? Bool == true,
+                  "domain-scoped fetch blocks in the matching initiating document before network delivery")
+        for (path, expectedBlocked) in [("scoped-frame", false), ("scoped-parent", true), ("scoped-frame?negative=1", false)] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID(), frame=document.createElement('iframe');
+            const result=await new Promise(resolve=>{
+                const listener=event=>{if(event.source===frame.contentWindow&&event.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);resolve(event.data)}};
+                const timer=setTimeout(()=>{window.removeEventListener('message',listener);resolve({timeout:true})},5000);
+                window.addEventListener('message',listener);
+                frame.src='http://localhost:8765/'+path+(path.includes('?')?'&':'?')+'token='+token;document.body.append(frame);
+            });
+            frame.remove();const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));
+            return !result.timeout && result.blocked===expected && (expected ? count===0 : count>0);
+            """, arguments: ["path": path, "expected": expectedBlocked], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, "requesting-frame scope preserved for \(path), expected blocked=\(expectedBlocked)")
+        }
+        try check(try await asyncJS(browser, "return await new Promise(resolve=>{const token=crypto.randomUUID(),frame=document.createElement('iframe');const listener=e=>{if(e.source===frame.contentWindow&&e.data?.token===token){window.removeEventListener('message',listener);clearTimeout(timer);frame.remove();resolve(e.data.loaded===true)}};const timer=setTimeout(()=>{window.removeEventListener('message',listener);frame.remove();resolve(false)},5000);window.addEventListener('message',listener);frame.src='http://localhost:8765/frame-exception?token='+token;document.body.append(frame)});") as? Bool == true,
+                  "document-plus-subdocument exception allows the embedded page on an unrelated top site")
+        for allowed in [false, true] {
+            let result = try await browser.webView.callAsyncJavaScript("""
+            const token=crypto.randomUUID();
+            await new Promise(resolve=>{const socket=new WebSocket('ws://127.0.0.1:8765/socket-probe?'+(allowed?'allowed':'blocked')+'&token='+token);const timer=setTimeout(()=>{socket.close();resolve()},5000);socket.onopen=()=>{clearTimeout(timer);socket.close();resolve()};socket.onerror=()=>{clearTimeout(timer);resolve()}});
+            const count=Number(await fetch('/frame-count?token='+token).then(r=>r.text()));return allowed ? count>0 : count===0;
+            """, arguments: ["allowed": allowed], in: nil, contentWorld: .page) as? Bool
+            try check(result == true, allowed ? "websocket exception allows the handshake to reach the fixture server" : "domain-anchored websocket rule prevents handshake delivery")
+        }
+    }
+
+    func initialProtectionChecks() async throws {
+        let catalog = FilterCatalog.startupTestCatalog()
+        var refreshAllowed = true, networkAttempts = 0
+        catalog.testDownloadSources = { networkAttempts += 1; throw CocoaError(.fileReadUnknown) }
+        let pendingRefresh = Task { await catalog.update(isAllowed: { refreshAllowed }) }
+        let browser = BrowserModel(dataStore: .nonPersistent())
+        browser.testBlockingRules = { await catalog.rules() }
+        defer { catalog.testHoldInitialPreparation = false; browser.close() }
+        try await load(browser, "upgrades")
+        try await wait { catalog.updating }
+        try check(catalog.preparing && catalog.usingFallback && browser.webView.url?.path == "/upgrades",
+                  "first navigation proceeds under bundled protection while maintained preparation is held")
+        _ = try await js(browser, "document.querySelector('#kept').value='Keep initial draft'")
+        let page = browser.webView.url
+        refreshAllowed = false
+        catalog.testHoldInitialPreparation = false
+        try check(await catalog.awaitMaintainedForTesting(), "background preparation promotes baseline to maintained protection")
+        await pendingRefresh.value
+        try check(networkAttempts == 0 && !catalog.updating, "refresh permission is rechecked after preparation before any source network request")
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        let draft = try await js(browser, "document.querySelector('#kept').value") as? String
+        try check(browser.webView.url == page && draft == "Keep initial draft", "automatic maintained promotion preserves the current page and draft")
+    }
+
+    func staleBlockingChecks(_ browser: BrowserModel) async throws {
+        let store = WKContentRuleListStore.default()!
+        let old = try await store.compileContentRuleList(forIdentifier: "DuoBrowser.Synthetic.StaleOld",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":"/stale-old"},"action":{"type":"block"}}]"#)!
+        let current = try await store.compileContentRuleList(forIdentifier: "DuoBrowser.Synthetic.StaleCurrent",
+            encodedContentRuleList: #"[{"trigger":{"url-filter":"/stale-current"},"action":{"type":"block"}}]"#)!
+        var delayed: CheckedContinuation<[WKContentRuleList], Never>?
+        var calls = 0
+        browser.testBlockingRules = {
+            calls += 1
+            if calls == 1 { return await withCheckedContinuation { delayed = $0 } }
+            return [current]
+        }
+        defer { delayed?.resume(returning: []); browser.testBlockingRules = nil; browser.setAdBlockingEnabled(true) }
+        browser.setAdBlockingEnabled(true)
+        try await wait { delayed != nil }
+        browser.setAdBlockingEnabled(true)
+        try await wait {
+            (try? await self.asyncJS(browser, "return await fetch('/stale-current').then(()=>false).catch(()=>true)")) as? Bool == true
+        }
+        delayed?.resume(returning: [old]); delayed = nil
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        try check(try await asyncJS(browser, "return await fetch('/stale-current').then(()=>false).catch(()=>true) && await fetch('/stale-old').then(()=>true).catch(()=>false)") as? Bool == true,
+                  "late older filter completion cannot replace the newest protection")
+        calls = 0
+        browser.setAdBlockingEnabled(true)
+        try await wait { delayed != nil }
+        browser.setAdBlockingEnabled(false)
+        delayed?.resume(returning: [old]); delayed = nil
+        _ = try await asyncJS(browser, "return await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))")
+        let disabledAllows = try await asyncJS(browser, "return await fetch('/stale-old').then(()=>true).catch(()=>false)") as? Bool
+        try check(browser.blockingStatus == "Off in Settings" && disabledAllows == true,
+                  "late filter completion cannot reenable protection after explicit disable")
+    }
+
     func readerBlockingChecks(_ session: BrowserSession) async throws {
         let originalPreference = session.adBlockingEnabled
         let selectedID = session.selectedID
@@ -647,6 +1004,125 @@ private final class NativeCheckRunner {
                   "Private Reader preserves the ephemeral source profile")
         privateReader.close(); privateSource.close()
     }
+    func closedNoticeGeometryChecks(_ session: BrowserSession) async throws {
+        let browser = session.selected
+        _ = try await js(browser, "const footer=document.createElement('footer');footer.id='notice-footer';footer.style.cssText='position:fixed;bottom:0;height:30px';footer.textContent='Synthetic fixed action';document.body.append(footer)")
+        host.view.subviews.forEach { $0.removeFromSuperview() }
+        let viewport = ViewportView(browser: browser)
+        viewport.frame = host.view.bounds
+        host.view.addSubview(viewport)
+        viewport.layoutIfNeeded()
+        let baseline = browser.webView.obscuredContentInsets.bottom
+        var measured: CGFloat = 0
+        let notice = UIHostingController(rootView: VStack {
+            Spacer()
+            ClosedTabNotice(session: session) { height in
+                measured = height
+                viewport.additionalBottomObstruction = height > 0 ? height + 8 : 0
+                viewport.setNeedsLayout(); viewport.layoutIfNeeded()
+            }
+        }.environment(\.dynamicTypeSize, .accessibility5))
+        host.addChild(notice); notice.view.frame = host.view.bounds
+        notice.view.backgroundColor = .clear
+        host.view.addSubview(notice.view); notice.didMove(toParent: host)
+        defer {
+            notice.willMove(toParent: nil); notice.view.removeFromSuperview(); notice.removeFromParent()
+            viewport.removeFromSuperview(); mount(browser)
+        }
+        try await wait { measured > 52 }
+        try check(abs(browser.webView.obscuredContentInsets.bottom - baseline - measured - 8) < 1,
+                  "measured accessibility Undo notice and spacing reserve additional WebKit content space")
+        try await wait {
+            guard let footer = try? await self.js(browser, "document.getElementById('notice-footer').getBoundingClientRect().bottom") as? Double else { return false }
+            return footer <= browser.webView.bounds.height - browser.webView.obscuredContentInsets.bottom + 1
+        }
+        try check(true, "fixed page footer stays above the expanded Undo notice")
+        session.closedTabNotice = nil
+        try await wait { measured == 0 && abs(browser.webView.obscuredContentInsets.bottom - baseline) < 1 }
+        try check(true, "dismissing Undo removes its measured reservation")
+        _ = try await js(browser, "document.getElementById('notice-footer').remove()")
+    }
+    func tabRecoveryChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TabRecovery-" + UUID().uuidString)
+        let store = BrowserArchiveStore(directory: directory)
+        let defaults = UserDefaults(suiteName: "DuoBrowser.TabRecoveryChecks")!
+        let session = BrowserSession(storage: defaults, archiveStore: store, dataStore: .nonPersistent())
+        defer { session.tabs.forEach { $0.close() }; try? FileManager.default.removeItem(at: directory) }
+        let first = session.selected
+        try await load(first, "upgrades")
+        _ = try await js(first, "document.title = 'Recovery first'")
+        let middle = session.newTab()
+        try await load(middle, "upgrades")
+        let last = session.newTab()
+        try await load(last, "upgrades")
+        session.select(middle.id)
+        _ = try await js(middle, "document.title = 'Recovery middle'")
+        try await wait { middle.title == "Recovery middle" }
+        _ = try await js(middle, "window.scrollTo(0,150); document.querySelector('#kept').value='Undo draft'")
+        session.close(middle.id)
+        try check(session.selectedID == last.id, "closing selected middle tab selects its next visible neighbor")
+        try check(middle.isRetainedForUndo && middle.presentation.presenter == nil, "retained Undo page has no native presenter")
+        try check(try await js(middle, "confirm('Closed synthetic tab')") as? Bool == false, "retained Undo page cannot present a JavaScript dialog")
+        _ = try await js(middle, "location.href='/form'")
+        try await Task.sleep(for: .milliseconds(150))
+        try check(middle.webView.url?.path == "/upgrades", "retained Undo page cannot navigate while closed")
+        let record = session.recentlyClosed[0]
+        try check(record.title == "Recovery middle" && record.address.contains("upgrades"), "closed tab keeps title and address")
+        try check(record.scrollY != nil, "closed tab captures reading position")
+        try check(store.load()?.recentlyClosed?.first?.id == record.id, "normal closed tab is durably saved")
+        try check(session.closedTabNotice == record.id, "normal close offers immediate Undo")
+        try await closedNoticeGeometryChecks(session)
+        try check(session.reopenClosedTab(record.id), "Undo reopens a normal tab")
+        try check(!session.reopenClosedTab(record.id), "stale Undo cannot reopen a second copy")
+        try check(session.recentlyClosed.isEmpty && session.closedTabNotice == nil, "reopening consumes recovery entry and notice")
+        let reopened = session.selected
+        try check(reopened === middle, "immediate Undo restores the original live model")
+        try check(try await js(reopened, "document.querySelector('#kept').value") as? String == "Undo draft",
+                  "immediate Undo preserves unsent form input")
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch selects previous visible tab")
+        session.select(first.id)
+        session.switchAdjacentTab(-1)
+        try check(session.selectedID == first.id, "quick switch stops at workspace edge")
+        session.close(last.id)
+        let normalRecords = session.recentlyClosed.map(\.id)
+        let privateTab = session.newTab(privateTab: true)
+        try await load(privateTab, "upgrades")
+        try check(!session.reopenClosedTab(normalRecords[0]), "normal recovery is unavailable while browsing privately")
+        session.close(privateTab.id)
+        try check(session.recentlyClosed.map(\.id) == normalRecords, "closing private tab never enters recovery")
+        try check(store.load()?.recentlyClosed?.map(\.id) == normalRecords, "archive never acquires private closure")
+        let backup = directory.appendingPathComponent("session.backup.json")
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try check(!session.clearRecentlyClosed() && session.recentlyClosed.map(\.id) == normalRecords, "failed recovery clear reports failure and retains retry rows")
+        try FileManager.default.removeItem(at: backup)
+        try check(session.clearRecentlyClosed(), "recovery clear can retry after storage failure")
+        try check(store.load()?.recentlyClosed?.isEmpty == true, "clear removes persisted recovery")
+        session.createWorkspace("Recovery workspace")
+        let workspace = session.workspaceID
+        let workspaceTab = session.selected
+        try await load(workspaceTab, "upgrades")
+        session.togglePin(workspaceTab)
+        session.close(workspaceTab.id)
+        session.releaseClosedTab()
+        let workspaceRecord = session.recentlyClosed[0]
+        try check(session.reopenClosedTab(workspaceRecord.id) && session.workspaceID == workspace && session.selected.isPinned,
+                  "reopening restores workspace and pin")
+        session.close(session.selectedID)
+        let deletedWorkspaceRecord = session.recentlyClosed[0]
+        session.removeWorkspace(workspace)
+        try check(session.reopenClosedTab(deletedWorkspaceRecord.id) && session.workspaceID == Workspace.defaultID,
+                  "reopening from deleted workspace falls back to Personal")
+        session.select(reopened.id)
+        reopened.hasRequestedWebsitePermission = true
+        session.close(reopened.id)
+        try check(reopened.loadedWebView == nil, "pages with a prior website permission request never retain live Undo")
+        session.deleteHistory()
+        try check(session.recentlyClosed.isEmpty && store.load()?.recentlyClosed?.isEmpty == true,
+                  "clearing history also removes closed-page recovery")
+    }
+
     func upgradeChecks() async {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("UpgradeChecks-" + UUID().uuidString)
         let store = BrowserArchiveStore(directory: directory)
@@ -658,6 +1134,8 @@ private final class NativeCheckRunner {
             try? FileManager.default.removeItem(at: directory)
         }
         do {
+            try await tabRecoveryChecks()
+            try await savedPagesChecks(session)
             let normal = session.selected
             try await load(normal, "upgrades")
             _ = try await js(normal, "document.querySelector('#kept').value='Synthetic draft';window.scrollTo(0,250)")
@@ -756,7 +1234,8 @@ private final class NativeCheckRunner {
             try check(session.tabs.allSatisfy { $0.workspaceID == Workspace.defaultID }, "workspace removal keeps and relocates tabs")
             mount(normal)
             try await load(normal, "upgrades")
-            try check(normal.blockingStatus == "Basic protection on", "bundled content rules compile and attach before navigation")
+            try check(["Preparing full protection", "Protection on"].contains(normal.blockingStatus), "bundled initial protection attaches before navigation")
+            try await maintainedFilterChecks(normal)
             // Substitute only the ad host with a loopback host; all rule flags and production installation remain identical.
             let rulesURL = Bundle.main.url(forResource: "BlockingRules", withExtension: "json")!
             let json = try String(contentsOf: rulesURL, encoding: .utf8)
@@ -770,7 +1249,7 @@ private final class NativeCheckRunner {
             try await wait { normal.blockingStatus == "Off for this site" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>true).catch(()=>false)") as? Bool == true, "site exception allows synthetic request after reload")
             normal.blockAds = true
-            try await wait { normal.blockingStatus == "Basic protection on" && !normal.isLoading }
+            try await wait { normal.blockingStatus == "Protection on" && !normal.isLoading }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "reenabling protection blocks again")
             _ = try await js(normal, "document.querySelector('#kept').value='Keep blocker draft'")
             session.adBlockingEnabled = false
@@ -791,7 +1270,7 @@ private final class NativeCheckRunner {
             try await load(globallyOffTab, "global-off-private")
             try check(globallyOffTab.blockingStatus == "Off in Settings", "new private tab honors global switch")
             session.adBlockingEnabled = true
-            try await wait { normal.blockingStatus == "Basic protection on" && globallyOffTab.blockingStatus == "Basic protection on" }
+            try await wait { normal.blockingStatus == "Protection on" && globallyOffTab.blockingStatus == "Protection on" }
             try check(try await asyncJS(normal, "return await fetch('http://localhost:8765/probe?global-on').then(()=>false).catch(()=>true)") as? Bool == true, "global reenabling restores actual blocking in existing tabs")
             session.close(globallyOffTab.id)
             session.select(normal.id)
@@ -823,7 +1302,7 @@ private final class NativeCheckRunner {
             try check(popup.webView.configuration.userContentController.userScripts.filter {
                 $0.source.hasPrefix("/* DuoBrowser Reddit tap */")
             }.count == 1, "popup inherits exactly one Reddit tap authorization script")
-            try check(opener.blockAds && opener.blockingStatus == "Basic protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
+            try check(opener.blockAds && opener.blockingStatus == "Protection on" && !popup.blockAds, "new-window exception leaves opener protection enabled")
             try check(try await asyncJS(opener, "return await fetch('http://localhost:8765/probe').then(()=>false).catch(()=>true)") as? Bool == true, "opener rules remain effective after opening an excepted child")
             session.restoreBlocking(host: "localhost", isPrivate: false)
             try check(!session.blockingExceptions(isPrivate: false).contains("localhost"), "restoring protection removes the saved site exception")
@@ -860,12 +1339,17 @@ private final class NativeCheckRunner {
                 <h2>A little room to explore.</h2><p>A synthetic page for checking tabs, gestures and smooth transitions.</p>
                 <p>Keep your place as you move between pages and open the display.</p><input value="Unsent test note">
                 <p style="height:700px">Scroll, return, and continue reading.</p></main></body></html>
-                """, baseURL: nil)
+                """, baseURL: URL(string: "https://fixture.example/\(index)"))
             try? await wait { !model.webView.isLoading && model.title == page.0 }
             model.captureSnapshot()
             try? await wait { model.snapshot != nil }
         }
         session.select(session.visibleTabs[0].id)
+        if ProcessInfo.processInfo.arguments.contains("--recovery-preview") {
+            session.close(session.selectedID)
+            host.present(UIHostingController(rootView: RecentlyClosedView(session: session)), animated: false)
+            return
+        }
         let controller = BrowserZoomController(session: session)
         host.addChild(controller)
         controller.view.frame = host.view.bounds
@@ -1113,6 +1597,59 @@ private final class NativeCheckRunner {
         try check(model.message == BrowserImportError.saveFailed.localizedDescription, "failed durable save supplies recovery instructions during review")
         model.cancel()
         try check(model.batch == nil && model.folders.isEmpty, "discard clears all staged browsing data")
+        try await setupLayoutChecks(session: session, model: model)
+    }
+
+    private func setupLayoutChecks(session: BrowserSession, model: BrowserSetupModel) async throws {
+        let controls = [CGRect(x: 190, y: 8, width: 80, height: 44), CGRect(x: 402, y: 8, width: 44, height: 44)]
+        let camera = CGRect(x: 400, y: 0, width: 66, height: 80)
+        let clearance = SetupLayout.clearance(below: [camera], controls: controls)
+        try check(clearance == 80 && controls.allSatisfy { !$0.offsetBy(dx: 0, dy: clearance).intersects(camera) }, "setup moves only overlapping top controls below the measured camera region")
+        try check(SetupLayout.clearance(below: [CGRect(x: 0, y: 0, width: 40, height: 80)], controls: controls) == 0, "an unoccupied camera edge does not inset setup navigation")
+        let expanded = CGRect(x: 180, y: 90, width: 286, height: 40)
+        let stacked = SetupLayout.clearance(below: [expanded, camera], controls: controls)
+        try check(controls.allSatisfy { frame in [camera, expanded].allSatisfy { !frame.offsetBy(dx: 0, dy: stacked).intersects($0) } }, "setup clearance handles multiple measured obstructions without moving the horizontal center")
+        let staggered = [CGRect(x: 100, y: 0, width: 20, height: 10), CGRect(x: 0, y: 80, width: 20, height: 10)]
+        let overlapping = [CGRect(x: 100, y: 20, width: 20, height: 100), CGRect(x: 0, y: 80, width: 20, height: 20)]
+        let staggeredClearance = SetupLayout.clearance(below: overlapping, controls: staggered)
+        try check(staggered.allSatisfy { frame in overlapping.allSatisfy { !frame.offsetBy(dx: 0, dy: staggeredClearance).intersects($0) } },
+                  "clearing a lower control cannot move a higher control into a previously skipped taller region")
+        for safeInsets in [UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92), UIEdgeInsets(top: 12, left: 92, bottom: 18, right: 0)] {
+            var measured: [String: CGRect] = [:]
+            let preview = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { measured = $0 }))
+            preview.additionalSafeAreaInsets = safeInsets
+            host.addChild(preview); preview.view.frame = host.view.bounds; host.view.addSubview(preview.view); preview.didMove(toParent: host)
+            defer { preview.willMove(toParent: nil); preview.view.removeFromSuperview(); preview.removeFromParent() }
+            for step in BrowserSetupModel.Step.allCases {
+                model.step = step
+                try await wait {
+                    measured["step.\(step.rawValue)"] != nil && measured["window.step.\(step.rawValue)"] != nil &&
+                    ["heading", "primary", "canvas", "navigation.progress", "navigation.skip"].allSatisfy { measured["window." + $0] != nil }
+                }
+                let width = preview.view.bounds.width
+                let windowBounds = preview.view.convert(preview.view.bounds, to: preview.view.window)
+                let centered = ["heading", "primary", "navigation.progress"].allSatisfy { key in
+                    abs((measured[key]?.midX ?? -1) - (measured["canvas"]?.midX ?? -2)) < 1 &&
+                    abs((measured["window." + key]?.midX ?? -1) - windowBounds.midX) < 1
+                }
+                let correct = abs((measured["canvas"]?.width ?? 0) - width) < 1 && centered &&
+                    abs(measured["canvas"]?.minX ?? -1) < 1 &&
+                    abs((measured["window.canvas"]?.midX ?? -1) - windowBounds.midX) < 1 &&
+                    (measured["window.primary"]?.maxY ?? .infinity) <= windowBounds.maxY - preview.view.safeAreaInsets.bottom + 1 &&
+                    (measured["window.navigation.skip"]?.minY ?? -.infinity) >= windowBounds.minY + preview.view.safeAreaInsets.top - 1
+                try check(correct, "setup step \(step.rawValue) centers UIKit-rendered heading, action and progress on full window bounds with asymmetric safe area \(safeInsets.left)/\(safeInsets.right)" +
+                          (correct ? "" : "; window=\(windowBounds) frames=\(measured)"))
+            }
+        }
+        var largeFrames: [String: CGRect] = [:]
+        model.step = .welcome
+        let large = UIHostingController(rootView: BrowserSetup(session: session, model: model, layoutDidChange: { largeFrames = $0 }).environment(\.dynamicTypeSize, .accessibility5))
+        large.additionalSafeAreaInsets = UIEdgeInsets(top: 12, left: 0, bottom: 18, right: 92)
+        host.addChild(large); large.view.frame = host.view.bounds; host.view.addSubview(large.view); large.didMove(toParent: host)
+        defer { large.willMove(toParent: nil); large.view.removeFromSuperview(); large.removeFromParent() }
+        try await wait { largeFrames["window.primary"] != nil && largeFrames["window.heading"] != nil && largeFrames["window.navigation.progress"] != nil }
+        let largeBounds = large.view.convert(large.view.bounds, to: large.view.window)
+        try check(["heading", "primary", "navigation.progress"].allSatisfy { abs((largeFrames["window." + $0]?.midX ?? -1) - largeBounds.midX) < 1 }, "accessibility setup keeps UIKit-rendered scrolling content and progress centered on the full display")
     }
 
     func setupPreview() throws {
@@ -1214,8 +1751,38 @@ private final class NativeCheckRunner {
         try await load(model, "reddit-routing")
         let page = model.webView.url
         let initialCount = opened.count
-        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; window.scrollTo(0,200); true")
-        try await wait { abs(((try? await self.js(model, "window.scrollY")) as? Double ?? 0) - 200) < 2 }
+        _ = try await js(model, "document.querySelector('#kept').value='Keep this draft'; true")
+        let scrollView = model.webView.scrollView
+        var scrollStage = "native viewport readiness"
+        do {
+            // DOM readiness and animation frames do not acknowledge UIKit's first content-size commit.
+            // This fixture declares initial-scale=1; wait for both coordinate spaces before scrolling.
+            try await wait {
+                let scrollDocument = (try? await self.js(model,
+                    "({width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale})")) as? [String: Any] ?? [:]
+                guard model.webView.window != nil, scrollView.bounds.height > 0,
+                      let width = scrollDocument["width"] as? Double,
+                      let height = scrollDocument["height"] as? Double,
+                      let viewport = scrollDocument["viewport"] as? Double,
+                      let scale = scrollDocument["scale"] as? Double else { return false }
+                return abs(scale - 1) < 0.01 && abs(scrollView.zoomScale - 1) < 0.01 &&
+                    abs(scrollView.bounds.height - viewport) < 2 &&
+                    abs(scrollView.contentSize.width - width) < 2 &&
+                    abs(scrollView.contentSize.height - height) < 2 && height > viewport + 200
+            }
+            scrollStage = "native scroll acknowledgement"
+            // Drive the same native scroll view as a gesture, after its range is committed.
+            scrollView.setContentOffset(CGPoint(x: 0, y: 200), animated: false)
+            try await wait {
+                let documentY = (try? await self.js(model, "window.scrollY")) as? Double
+                return documentY.map { abs($0 - 200) < 2 } == true && abs(scrollView.contentOffset.y - 200) < 2
+            }
+        } catch {
+            let document = try? await js(model,
+                "JSON.stringify({y:scrollY,width:document.documentElement.scrollWidth,height:document.documentElement.scrollHeight,viewport:innerHeight,scale:visualViewport.scale,pageTop:visualViewport.pageTop,offsetTop:visualViewport.offsetTop})")
+            results.append("SCROLL: \(scrollStage) nativeY=\(scrollView.contentOffset.y) size=\(scrollView.contentSize) bounds=\(scrollView.bounds) zoom=\(scrollView.zoomScale) insets=\(scrollView.adjustedContentInset) attached=\(model.webView.window != nil) document=\(String(describing: document))")
+            throw error
+        }
         let position = try await js(model, "window.scrollY") as? Double
         _ = try await js(model, "var a=document.createElement('a');a.href='https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2Fr%2Fswift%2Fcomments%2Fabc123%2Ftitle%2Fdef456%2F%3Fcontext%3D3';document.body.append(a);a.click();true")
         try await wait { opened.count == initialCount + 1 }
@@ -1223,6 +1790,10 @@ private final class NativeCheckRunner {
         try check(model.webView.url == page, "successful handoff preserves source URL")
         try check(try await js(model, "document.querySelector('#kept').value") as? String == "Keep this draft", "handoff preserves form draft")
         let afterHandoff = try await js(model, "window.scrollY") as? Double
+        if abs((afterHandoff ?? -1000) - (position ?? 1000)) >= 2 {
+            let layout = try await js(model, "JSON.stringify({height:document.documentElement.scrollHeight,viewport:innerHeight,main:getComputedStyle(document.querySelector('main')).display,focus:document.activeElement?.tagName})")
+            results.append("LAYOUT: synthetic handoff \(layout)")
+        }
         try check(abs((afterHandoff ?? -1000) - (position ?? 1000)) < 2,
                   "handoff preserves scroll position (\(position ?? -1) → \(afterHandoff ?? -1))")
         _ = try await js(model, "a.target='_blank';a.click();true")
@@ -1271,7 +1842,562 @@ private final class NativeCheckRunner {
                   "non-Reddit link preserves original web navigation without app launch")
     }
 
+    func downloadInterruptionAttributionChecks() throws {
+        let model = BrowserModel(isPrivate: true, dataStore: .nonPersistent())
+        defer { model.close() }
+        let expected = URL(string: "http://127.0.0.1:8765/download-attribution")!
+        let matching = NSError(domain: "WebKitErrorDomain", code: 102,
+                               userInfo: [NSURLErrorFailingURLErrorKey: expected])
+        func report(_ error: NSError) {
+            model.webView(model.webView, didFailProvisionalNavigation: nil, withError: error)
+        }
+        model.expectDownloadInterruption(for: expected)
+        report(NSError(domain: "WebKitErrorDomain", code: 102))
+        let missingVisible = model.errorMessage != nil
+        model.errorMessage = nil
+        report(NSError(domain: "WebKitErrorDomain", code: 102,
+                       userInfo: [NSURLErrorFailingURLErrorKey: URL(string: "http://127.0.0.1:8765/unrelated")!]))
+        try check(missingVisible && model.errorMessage != nil,
+                  "pending download never hides missing-URL or mismatched policy failures")
+        model.errorMessage = nil
+        report(NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled))
+        report(matching)
+        try check(model.errorMessage == nil, "unrelated cancellation preserves the matching download interruption")
+        report(matching)
+        try check(model.errorMessage != nil, "a matching download interruption is consumed only once")
+        model.errorMessage = nil
+        model.expectDownloadInterruption(for: expected)
+        model.webView(model.webView, didStartProvisionalNavigation: nil)
+        report(matching)
+        try check(model.errorMessage != nil, "a new document invalidates pending download interruptions")
+    }
+
+    func releaseDownloadFixture(_ gate: String, attempt: Int = 1) async throws {
+        // Only the synthetic control request uses URLSession; authenticated file transfers stay in WebKit.
+        let controls = URLSession(configuration: .ephemeral)
+        defer { controls.invalidateAndCancel() }
+        // The unqualified loopback name uses the local ATS scope, without changing app transport policy.
+        var request = URLRequest(url: URL(string: "http://localhost:8765/download-release?gate=\(gate)&attempt=\(attempt)")!)
+        request.timeoutInterval = 10
+        let (data, _) = try await controls.data(for: request)
+        guard String(decoding: data, as: UTF8.self) == "released" else {
+            throw NSError(domain: "Synthetic download gate rejected release", code: 1)
+        }
+    }
+
+    func awaitDownloadProgress(_ item: BrowserDownload, stage: String) async throws {
+        let clock = ContinuousClock()
+        let started = clock.now
+        results.append("PROGRESS WAIT: stage=\(stage) id=\(item.id) object=\(ObjectIdentifier(item)) time=\(Date().timeIntervalSince1970) received=\(item.received) active=\(item.isDownloading)")
+        do {
+            try await wait { item.received > 0 && item.isDownloading }
+            results.append("PROGRESS OBSERVED: stage=\(stage) id=\(item.id) received=\(item.received) elapsed=\(started.duration(to: clock.now))")
+        }
+        catch {
+            throw NSError(domain: "\(stage) timed out; id=\(item.id), elapsed=\(started.duration(to: clock.now)), received=\(item.received), expected=\(item.expected), state=\(item.state.rawValue), active=\(item.isDownloading)", code: 1)
+        }
+    }
+
+    func downloadsChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("DownloadChecks-" + UUID().uuidString)
+        let defaults = UserDefaults(suiteName: "DuoBrowser.DownloadChecks")!
+        defaults.removePersistentDomain(forName: "DuoBrowser.DownloadChecks")
+        let profile = WKWebsiteDataStore.nonPersistent()
+        let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: profile)
+        let manager = session.normalDownloads
+        var trace: [String] = []
+        let traceStart = Date()
+        let observe: (String) -> Void = { event in
+            if trace.count == 32 { trace.removeFirst() }
+            trace.append(String(format: "%.3f ", Date().timeIntervalSince(traceStart)) + String(event.prefix(256)))
+        }
+        manager.testDownloadObserver = observe
+        var suiteSucceeded = false
+        var diagnosticModel = session.selected
+        func diagnostic(_ stage: String, model: BrowserModel) -> String {
+            let manager = model.downloads
+            let rows = manager.items.prefix(4).map { item in
+                "state=\(item.state.rawValue), active=\(item.isDownloading), canceling=\(item.isCanceling), bytes=\(item.received)/\(item.expected), fileBytes=\((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1), error=\(String((item.message ?? "none").prefix(256))), request=\(String((item.request?.url?.absoluteString ?? "nil").prefix(256)))"
+            }.joined(separator: "\n")
+            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), appState=\(UIApplication.shared.applicationState.rawValue), mounted=\(model.loadedWebView?.window != nil), delegateCurrent=\(model.loadedWebView?.navigationDelegate === model), fraudWarning=\(model.loadedWebView?.configuration.preferences.isFraudulentWebsiteWarningEnabled ?? false), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nTRACE:\n\(trace.joined(separator: "\n"))"
+        }
+        defer {
+            if !suiteSucceeded {
+                results.append(diagnostic("suite failure after \(results.filter { $0.hasPrefix("PASS:") }.count) checks", model: diagnosticModel))
+            }
+            manager.testDownloadObserver = nil
+            session.tabs.forEach { $0.testDownloadObserver = nil }
+            manager.cancelAll { _ in try? FileManager.default.removeItem(at: directory) }
+            session.closePrivateTabs(); session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: "DuoBrowser.DownloadChecks")
+        }
+        let tab = session.selected
+        tab.testDownloadObserver = observe
+        try check(tab.webView.configuration.preferences.isFraudulentWebsiteWarningEnabled,
+                  "production web view enables fraudulent-site protection before any synthetic override")
+        try await load(tab, "")
+        let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "duo-download", .value: "synthetic"])!
+        await profile.httpCookieStore.setCookie(cookie)
+        _ = try await js(tab, "document.querySelector('#kept').value='Preserved download draft'")
+        _ = try await js(tab, "document.querySelector('a[download]').click()")
+        try await wait(timeout: 30) { manager.completedCount == 1 }
+        tab.testDownloadObserver = nil
+        let first = manager.items[0]
+        try check(first.name == "browser-fixture.txt", "real navigation download receives the server filename")
+        try check(first.file != nil && first.received > 0, "WebKit download persists with its byte size")
+        try check(host.presentedViewController == nil, "completion does not interrupt browsing with an exporter")
+        let originalFile = first.file!
+        let restored = BrowserDownloads(isPrivate: false, dataStore: profile, directory: manager.store.directory)
+        try check(restored.items.count == 1 && restored.items[0].file == originalFile, "normal completed download restores from disk")
+        try check(try String(contentsOf: originalFile, encoding: .utf8) == "Synthetic browser download.\n", "restored file retains its contents")
+        let exporter = UIDocumentPickerViewController(forExporting: [originalFile], asCopy: true)
+        host.present(exporter, animated: false)
+        try await wait { host.presentedViewController === exporter && !exporter.isBeingPresented }
+        exporter.dismiss(animated: false)
+        try await wait { host.presentedViewController == nil }
+        try check(FileManager.default.fileExists(atPath: originalFile.path) && first.file == originalFile, "dismissing Files export keeps the downloaded file")
+        let draft = try await js(tab, "document.querySelector('#kept').value") as? String
+        try check(draft == "Preserved download draft" && tab.webView.url?.path == "/", "download and export dismissal preserve the source page and draft")
+
+        let directTab = session.newTab()
+        diagnosticModel = directTab
+        directTab.testDownloadObserver = observe
+        mount(directTab)
+        directTab.navigate(to: "http://127.0.0.1:8765/download")
+        try await wait(timeout: 30) { manager.completedCount == 2 }
+        let attachment = manager.items[0]
+        let noDownloadError = tab.errorMessage == nil && directTab.errorMessage == nil
+        directTab.webView(directTab.webView, didFailProvisionalNavigation: nil,
+            withError: NSError(domain: "WebKitErrorDomain", code: 102))
+        try check(noDownloadError && directTab.errorMessage != nil,
+                  "download conversion suppresses only its expected policy interruption, not unrelated failures (conversionClear=\(noDownloadError), unrelatedVisible=\(directTab.errorMessage != nil))")
+        directTab.errorMessage = nil
+        try check(attachment.name == "browser-fixture.txt", "direct attachment navigation downloads even when WebKit can display its MIME type")
+        try await load(directTab, "download-inline")
+        try check(manager.items.count == 2 && directTab.webView.url?.path == "/download-inline", "inline disposition remains a webpage without creating a download")
+        manager.remove(attachment); session.close(directTab.id); session.releaseClosedTab(); mount(tab)
+        try downloadInterruptionAttributionChecks()
+
+        let secondTab = session.newTab()
+        diagnosticModel = secondTab
+        secondTab.testDownloadObserver = observe
+        try await load(secondTab, "")
+        let secondGate = UUID().uuidString
+        _ = try await js(secondTab, "const a=document.createElement('a');a.href='/download-slow?gate=\(secondGate)&gate-attempts=1';a.download='';document.body.append(a);a.click()")
+        try await wait { manager.items.count == 2 && manager.items[0].isDownloading }
+        let second = manager.items[0]
+        try await awaitDownloadProgress(second, stage: "Source-close initial progress")
+        try check(second.received > 0 && second.expected > second.received, "native WebKit progress exposes actual transferred bytes")
+        session.close(secondTab.id)
+        mount(session.selected)
+        try check(manager.activeCount == 1, "closing originating normal tab leaves the session transfer active")
+        try await releaseDownloadFixture(secondGate)
+        do { try await wait(timeout: 30) { !second.isDownloading } }
+        catch {
+            results.append("TRANSFER: received=\(second.received), expected=\(second.expected), state=\(second.state.rawValue), fileBytes=\((try? second.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1)")
+            throw error
+        }
+        try check(second.state == .completed, "closed-tab download completed: \(second.state.rawValue), \(second.message ?? "no error")")
+        try check(try String(contentsOf: second.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "transfer retains its original WebKit cookie profile")
+
+        let retryTab = session.selected
+        diagnosticModel = retryTab
+        func start(_ path: String) async {
+            let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/" + path)!)
+            await withCheckedContinuation { continuation in
+                retryTab.webView.startDownload(using: request) { download in
+                    manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
+                }
+            }
+        }
+        let canceledGate = UUID().uuidString, independentGate = UUID().uuidString
+        await start("download-slow?cancel=1&gate=\(canceledGate)")
+        try await wait { manager.items[0].received > 0 || !manager.items[0].isDownloading }
+        let canceled = manager.items[0]
+        try check(canceled.isDownloading, "first cancel fixture remains active: \(canceled.state.rawValue), \(canceled.message ?? "no error")")
+        await start("download-slow?cancel=2&gate=\(independentGate)&gate-attempts=1")
+        try await wait { manager.activeCount == 2 || !canceled.isDownloading || !manager.items[0].isDownloading }
+        let independent = manager.items[0]
+        try check(manager.activeCount == 2, "two independent transfers overlap: \(manager.activeCount), \(independent.message ?? "no error")")
+        manager.cancel(canceled)
+        let canceledFile = canceled.file, canceledGeneration = canceled.generation
+        manager.retry(canceled); manager.cancel(canceled)
+        try check(canceled.isCanceling && !canceled.canRetry && !canceled.isDownloading &&
+                  canceled.file == canceledFile && canceled.generation == canceledGeneration && manager.activeCount == 2,
+                  "cancel retains ownership and blocks retry/file reuse until WebKit cancellation completes")
+        try await wait { !canceled.isCanceling }
+        try check(!canceled.isDownloading && canceled.state == .canceled && canceled.canRetry, "individual cancel retains a safe GET retry")
+        try check(manager.activeCount == 1 && independent.isDownloading, "cancel affects only its own transfer")
+        manager.retry(canceled)
+        try await releaseDownloadFixture(canceledGate)
+        try await releaseDownloadFixture(canceledGate, attempt: 2)
+        try await releaseDownloadFixture(independentGate)
+        try await wait(timeout: 30) { canceled.state == .completed && independent.state == .completed }
+        try check(try String(contentsOf: canceled.file!, encoding: .utf8).hasPrefix("Authenticated synthetic"), "GET retry uses the same WebKit cookie profile")
+        try check(canceled.id != independent.id && canceled.file != independent.file, "identical filenames remain separate downloads")
+
+        await start("download-retry?case=" + UUID().uuidString)
+        let failed = manager.items[0]
+        try await wait(timeout: 30) { failed.state == .failed && !failed.isDownloading }
+        try check(failed.canRetry, "network failure offers a bounded WebKit retry")
+        manager.retry(failed)
+        try await wait(timeout: 30) { failed.state == .completed && !failed.isDownloading }
+        try check(failed.file != nil, "retry completes after a synthetic interrupted response")
+
+        let unknownGate = UUID().uuidString
+        await start("download-chunked?gate=\(unknownGate)&gate-attempts=1")
+        let unknownLength = manager.items[0]
+        try await awaitDownloadProgress(unknownLength, stage: "Unknown-length progress")
+        try check(unknownLength.expected == 0, "unknown-length transfer still reports actual bytes without inventing a percentage")
+        try await releaseDownloadFixture(unknownGate)
+        try await wait(timeout: 30) { unknownLength.state == .completed }
+
+        await start("download-too-large")
+        let oversized = manager.items[0]
+        try await wait { oversized.state == .failed && !oversized.isDownloading }
+        try check(oversized.file == nil && oversized.message?.contains("1 GB") == true,
+                  "oversized response is rejected before allocating a destination")
+
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            retryTab.webView.startDownload(using: URLRequest(url: URL(string: "https://127.0.0.1:8443/download")!)) { download in
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
+            }
+        }
+        let untrusted = manager.items[0]
+        try await wait(timeout: 30) { untrusted.state == .failed && !untrusted.isDownloading }
+        try check(untrusted.file == nil, "download uses platform certificate validation and rejects untrusted TLS")
+
+        var post = URLRequest(url: URL(string: "http://127.0.0.1:8765/download-post")!)
+        post.httpMethod = "POST"; post.httpBody = Data("synthetic=download".utf8)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            retryTab.webView.startDownload(using: post) { download in
+                manager.add(download, owner: retryTab.id, browser: retryTab); continuation.resume()
+            }
+        }
+        let postResult = manager.items[0]
+        try await wait(timeout: 30) { postResult.state == .failed && !postResult.isDownloading }
+        try check(!postResult.canRetry && postResult.request == nil && postResult.resumeData == nil,
+                  "failed POST download never offers a potentially mutating replay")
+
+        await start("download-slow?stale=1")
+        let stale = manager.items[0]
+        manager.cancel(stale)
+        try await wait { !stale.isCanceling }
+        stale.resumeData = nil // Exercise pending GET source ownership, not the dedicated resume view.
+        manager.retry(stale)
+        manager.remove(stale)
+        try check(stale.isCanceling && manager.hasWork(for: retryTab.id) && manager.items.contains(where: { $0 === stale }),
+                  "removing pending retry retains source and row until asynchronous cancellation settles")
+        try await wait { !stale.isCanceling }
+        try check(!manager.items.contains(where: { $0.id == stale.id }), "removed retry cannot reappear after its asynchronous callback")
+        try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
+
+        func rejectReplacedDocumentRetry(reload: Bool) async throws {
+            let source = session.newTab()
+            diagnosticModel = source
+            source.testDownloadObserver = observe
+            defer { source.testDownloadObserver = nil }
+            try await load(source, "")
+            let originalURL = source.webView.url, originalDocument = source.documentGeneration
+            let gate = UUID().uuidString
+            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+                source.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?stale-document=\(reload)&gate=\(gate)&gate-attempts=1")!)) { download in
+                    manager.add(download, owner: source.id, source: source.webView, browser: source); continuation.resume()
+                }
+            }
+            let staleDocument = manager.items[0]
+            try await awaitDownloadProgress(staleDocument, stage: "Replaced-document initial progress")
+            manager.cancel(staleDocument)
+            try await wait { !staleDocument.isCanceling }
+            try await releaseDownloadFixture(gate)
+            if reload {
+                source.webView.reload()
+                try await wait { source.documentGeneration != originalDocument && !source.webView.isLoading }
+            } else {
+                try await load(source, "next")
+                try await load(source, "")
+            }
+            // Force the no-token GET path even if WebKit supplied an optional cancellation token.
+            staleDocument.resumeData = nil; staleDocument.canRetry = true
+            let activeBefore = manager.activeCount
+            manager.retry(staleDocument)
+            try check(source.webView.url == originalURL && source.documentGeneration != originalDocument &&
+                      !staleDocument.isDownloading && !staleDocument.canRetry && manager.activeCount == activeBefore,
+                      "GET retry rejects a replacement document at the same URL (reload=\(reload))")
+            manager.remove(staleDocument); session.close(source.id); session.releaseClosedTab(); mount(session.selected)
+        }
+        try await rejectReplacedDocumentRetry(reload: true)
+        try await rejectReplacedDocumentRetry(reload: false)
+
+        let lastGate = UUID().uuidString
+        await start("download-slow?last-normal=1&gate=\(lastGate)&gate-attempts=1")
+        let lastNormal = manager.items[0]
+        try await awaitDownloadProgress(lastNormal, stage: "Last-normal-tab initial progress")
+        session.close(retryTab.id)
+        try check(session.selected.loadedWebView == nil, "last normal tab closes to native Start Page without a mounted webpage")
+        try await releaseDownloadFixture(lastGate)
+        try await wait(timeout: 30) { !lastNormal.isDownloading }
+        try check(lastNormal.state == .completed, "download finishes after last normal tab closes to native Start Page")
+
+        let privateTab = session.newTab(privateTab: true)
+        diagnosticModel = privateTab
+        privateTab.testDownloadObserver = observe
+        try await load(privateTab, "")
+        _ = try await js(privateTab, "document.querySelector('a[download]').click()")
+        let privateManager = privateTab.downloads
+        privateManager.testDownloadObserver = observe
+        try await wait(timeout: 30) { privateManager.completedCount == 1 }
+        let privateFile = privateManager.items[0].file!
+        try check(!FileManager.default.fileExists(atPath: privateManager.store.directory.appendingPathComponent("downloads.json").path), "private download metadata never persists")
+        let privateGate = UUID().uuidString
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            privateTab.webView.startDownload(using: URLRequest(url: URL(string: "http://127.0.0.1:8765/download-slow?gate=\(privateGate)&gate-attempts=1")!)) { download in
+                privateManager.add(download, owner: privateTab.id, source: privateTab.webView, browser: privateTab)
+                continuation.resume()
+            }
+        }
+        let privateActive = privateManager.items[0]
+        try await awaitDownloadProgress(privateActive, stage: "Private cancellation progress")
+        privateManager.errorMessage = "Synthetic earlier storage warning"
+        var cleanupCallbacks = 0
+        var cleanupReportedError = false
+        privateManager.cancelAll { error in cleanupCallbacks += 1; cleanupReportedError = error != nil }
+        session.closePrivateTabs()
+        privateManager.cancelAll()
+        try check(privateActive.isCanceling && privateManager.hasWork && !privateActive.canRetry,
+                  "private teardown retains in-flight ownership until cancellation finishes")
+        try await wait { !privateManager.hasWork && privateManager.items.isEmpty }
+        try check(cleanupCallbacks == 1 && !cleanupReportedError,
+                  "repeated private cancellation preserves completion once and ignores historical warnings")
+        try check(!FileManager.default.fileExists(atPath: privateManager.store.directory.path),
+                  "private cancellation removes staging only after WebKit settles")
+        try check(privateManager.items.isEmpty && !FileManager.default.fileExists(atPath: privateFile.path), "last private-tab closure clears private transfers and files")
+        try check(FileManager.default.fileExists(atPath: originalFile.path), "private cleanup preserves normal downloads")
+        let manifest = try String(contentsOf: manager.store.directory.appendingPathComponent("downloads.json"), encoding: .utf8)
+        try check(!manifest.contains("127.0.0.1") && !manifest.contains("duo-download") && !manifest.contains("resumeData"), "normal manifest excludes origins, cookies and resume tokens")
+        let failingDelete = BrowserDownloads(isPrivate: false, dataStore: profile, directory: manager.store.directory,
+            removeFile: { _ in throw CocoaError(.fileWriteNoPermission) })
+        let retainedFirst = failingDelete.items.first { $0.id == first.id }!
+        failingDelete.remove(retainedFirst)
+        try check(failingDelete.items.contains(where: { $0.id == first.id }) && failingDelete.errorMessage != nil && FileManager.default.fileExists(atPath: originalFile.path),
+                  "filesystem deletion failure retains the download row and explains recovery")
+        manager.remove(first)
+        try check(!FileManager.default.fileExists(atPath: originalFile.path), "explicit Remove deletes the retained app copy")
+        try check(manager.items.contains(where: { $0.id == second.id }), "removing one retained file leaves other downloads available")
+        suiteSucceeded = true
+    }
+
+    func settingsPreview() async {
+        let defaults = UserDefaults(suiteName: "DuoBrowser.SettingsPreview")!
+        let session = BrowserSession(storage: defaults,
+            archiveStore: BrowserArchiveStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent("SettingsPreview-" + UUID().uuidString)),
+            dataStore: .nonPersistent())
+        let store = session.selected.webView.configuration.websiteDataStore
+        for domain in ["example.com", "research.example.org"] {
+            await store.httpCookieStore.setCookie(HTTPCookie(properties: [.domain: domain, .path: "/", .name: "preview", .value: "synthetic"])!)
+        }
+        let preview = UIHostingController(rootView: BrowserLinkSettings(session: session, routing: session.redditLinks, onSetup: {}))
+        host.present(preview, animated: false)
+    }
+
+    private func websiteSettingsChecks(session: BrowserSession, normal: BrowserModel, privateTab: BrowserModel) async throws {
+        let scope = WebsiteSettingsScope(browser: normal)
+        try check(scope.matches(normal) && scope.host == "127.0.0.1" && !scope.isPrivate, "website settings capture the exact normal host and tab")
+        try check(scope.set(true, for: \.originalPageLayout, on: normal) && scope.set(false, for: \.fullWidthLayout, on: normal), "website settings update original and full-width controls")
+        let address = normal.restorationURL!
+        let preference = normal.preferenceForURL?(address)
+        try check(preference?.originalLayout == true && preference?.fullWidth == false, "website settings persist through the existing host preference store")
+        try check(normal.preferenceForURL?(URL(string: "https://other.example")!).originalLayout == false, "website settings leave unrelated hosts at their defaults")
+        try await load(privateTab, "upgrades")
+        let privateScope = WebsiteSettingsScope(browser: privateTab)
+        try check(privateScope.isPrivate && !privateTab.originalPageLayout && privateTab.fullWidthLayout, "private website settings do not inherit normal host changes")
+        try check(!scope.set(true, for: \.desktopSite, on: privateTab) && !privateTab.desktopSite, "website settings reject a stale setter targeting another tab or profile")
+        privateScope.set(true, for: \.originalPageLayout, on: privateTab)
+        try check(privateTab.preferenceForURL?(address).originalLayout == true && normal.preferenceForURL?(address).fullWidth == false, "private site changes stay in the private preference store")
+        mount(normal)
+        normal.navigate(to: "http://localhost:8765/upgrades")
+        // WebKit exposes the requested URL before policy/site preferences finish; the
+        // published loading flag can still describe the previous document at that point.
+        try await wait(timeout: 60) {
+            guard !normal.webView.isLoading else { return false }
+            return (try? await self.js(normal, "location.hostname === 'localhost' && document.readyState === 'complete'")) as? Bool == true
+        }
+        try check(!scope.matches(normal) && !scope.set(true, for: \.originalPageLayout, on: normal) && !normal.originalPageLayout,
+                  "navigation to another host invalidates the open settings scope without changing that host")
+        try await load(normal, "upgrades")
+        scope.set(false, for: \.originalPageLayout, on: normal)
+        scope.set(true, for: \.fullWidthLayout, on: normal)
+    }
+
+    func settingsChecks() async throws {
+        let suite = "DuoBrowser.SettingsChecks." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        let archive = BrowserArchiveStore(directory: directory)
+        // Settings verifies preservation of an existing file. Real transfer conversion,
+        // authentication and cancellation are exercised by the Downloads suite.
+        let downloadStore = DownloadStore(directory: archive.directory.appendingPathComponent("Downloads", isDirectory: true), persistent: true)
+        let downloadBytes = Data("Synthetic browser download.\n".utf8)
+        let downloadRecord = DownloadRecord(id: UUID(), name: "settings-preserved.txt", date: Date(), bytes: Int64(downloadBytes.count), state: .completed)
+        let downloadedFile = try downloadStore.destination(id: downloadRecord.id, name: downloadRecord.name)
+        try downloadBytes.write(to: downloadedFile)
+        try downloadStore.save([downloadRecord])
+        let store = WKWebsiteDataStore(forIdentifier: UUID())
+        defaults.set("unknown-engine", forKey: "browser.searchEngine")
+        defaults.set("unknown-appearance", forKey: "browser.appearance")
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: store)
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let restoredDownload = session.normalDownloads.items.first
+        try check(session.normalDownloads.items.count == 1 && restoredDownload?.id == downloadRecord.id
+                  && restoredDownload?.state == .completed && restoredDownload?.file == downloadedFile
+                  && restoredDownload?.received == downloadRecord.bytes && (try Data(contentsOf: downloadedFile)) == downloadBytes,
+                  "settings fixture restores the completed download identity file and bytes through the production store")
+        try check(session.searchEngine == .google && session.appearance == .system, "settings preserve Google and system appearance defaults")
+        session.searchEngine = .duckDuckGo; session.appearance = .dark
+        try check(defaults.string(forKey: "browser.searchEngine") == "duckDuckGo" && defaults.string(forKey: "browser.appearance") == "dark", "search and appearance preferences persist")
+        try check(session.selected.searchEngine == .duckDuckGo, "search preference reaches existing tabs")
+        let sibling = session.newTab()
+        try check(sibling.searchEngine == .duckDuckGo, "search preference reaches new tabs")
+        session.switchMode(true)
+        let privateTab = session.selected
+        try check(privateTab.searchEngine == .duckDuckGo && !privateTab.webView.configuration.websiteDataStore.isPersistent, "private search uses preference with isolated ephemeral store")
+        try check(!session.clearHistoryFromSettings(), "normal history clear is rejected in private mode")
+        session.switchMode(false)
+        let normal = session.selected
+        try await load(normal, "upgrades")
+        try await websiteSettingsChecks(session: session, normal: normal, privateTab: privateTab)
+        _ = try await js(normal, "localStorage.setItem('settings-check','normal'); document.querySelector('#kept').value='Keep this draft'")
+        _ = try await normal.webView.callAsyncJavaScript("const c = await caches.open('settings-cache'); await c.put('/settings-cache-file', new Response('synthetic')); return true", arguments: [:], in: nil, contentWorld: .page)
+        let privateStore = privateTab.webView.configuration.websiteDataStore
+        for (domain, value, target) in [("first.example", "one", store), ("second.example", "two", store), ("first.example", "private", privateStore)] {
+            let cookie = HTTPCookie(properties: [.domain: domain, .path: "/", .name: "settings-check", .value: value, .expires: Date().addingTimeInterval(3600)])!
+            await target.httpCookieStore.setCookie(cookie)
+        }
+        session.addBookmark()
+        let savedArticle = OfflineArticle(title: "Preserved article", address: "https://example.com/saved",
+            blocks: [.init(kind: "paragraph", text: "Synthetic offline reading", jpeg: nil)])
+        try session.savePage(LibraryEntry(address: savedArticle.address, title: savedArticle.title), reading: true, offline: savedArticle)
+        let offlineID = session.readingList[0].offlineID!
+        let bookmarks = session.bookmarks
+        try check(!session.history.isEmpty && !bookmarks.isEmpty, "synthetic history and bookmark exist before clear")
+        let recoveryTab = session.newTab()
+        try await load(recoveryTab, "upgrades")
+        session.close(recoveryTab.id)
+        let recoveryBeforeClear = session.recentlyClosed.map(\.id)
+        try check(recoveryTab.loadedWebView != nil && !recoveryBeforeClear.isEmpty, "history clear fixture has live Undo and recovery records")
+        let historyBeforeClear = session.history.map(\.id)
+        let backup = directory.appendingPathComponent("session.backup.json")
+        try? FileManager.default.removeItem(at: backup)
+        try FileManager.default.createDirectory(at: backup, withIntermediateDirectories: false)
+        try check(!session.clearHistoryFromSettings() && session.history.map(\.id) == historyBeforeClear, "failed history clear preserves retry rows and reports failure")
+        try check(session.recentlyClosed.map(\.id) == recoveryBeforeClear && recoveryTab.loadedWebView == nil && session.closedTabNotice == nil, "failed history clear restores recovery records without resurrecting live Undo")
+        try check(session.selected.errorMessage == "Your browsing changes could not be saved on this device.", "history clear failure surfaces its save error")
+        let failedTab = session.selected
+        let retryTab = session.tabs.first { !$0.isPrivate && $0.id != failedTab.id }!
+        retryTab.errorMessage = "Synthetic unrelated page error"
+        session.select(retryTab.id)
+        try FileManager.default.removeItem(at: backup)
+        try check(session.clearHistoryFromSettings() && archive.load()?.history.isEmpty == true && archive.load()?.recentlyClosed?.isEmpty == true, "history and recovery clear together in both archive generations after retry")
+        try check(failedTab.errorMessage == nil, "successful retry from another tab clears the original tab's persistence error")
+        try check(session.saveNow() && retryTab.errorMessage == "Synthetic unrelated page error", "successful save preserves unrelated errors on the selected tab")
+        session.selected.errorMessage = nil
+        try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
+        try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")
+        let data = session.websiteData
+        try await wait(timeout: 20) {
+            await data.reload()
+            return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
+        }
+        try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        // Complete the potentially slow WebKit refresh before starting the user-facing Undo window.
+        let first = data.entries.first { $0.name == "first.example" }!
+        await data.reload()
+        let retainedForData = session.newTab()
+        try await load(retainedForData, "upgrades")
+        session.close(retainedForData.id)
+        try check(!(await data.removeEntry(first.id)), "stale row handle cannot delete refreshed website data")
+        try check(retainedForData.loadedWebView != nil, "stale website confirmation does not release live Undo")
+        try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "first.example" }, "stale confirmation leaves cookie intact")
+        let current = data.entries.first { $0.name == "first.example" }!
+        let retainedForRemoval = session.newTab()
+        try await load(retainedForRemoval, "upgrades")
+        session.close(retainedForRemoval.id)
+        do {
+            let originalWillRemove = data.onWillRemove
+            var observedLiveUndo = false, observedReleasedUndo = false
+            data.onWillRemove = {
+                observedLiveUndo = retainedForRemoval.loadedWebView != nil
+                originalWillRemove?()
+                observedReleasedUndo = retainedForRemoval.loadedWebView == nil
+            }
+            defer { data.onWillRemove = originalWillRemove }
+            try check(await data.removeEntry(current.id), "selected WebKit record removes successfully")
+            try check(observedLiveUndo && observedReleasedUndo,
+                      "normal website removal synchronously releases live Undo before deleting data")
+        }
+        let remaining = await store.httpCookieStore.allCookies()
+        try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
+        try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
+        try check(await data.clear(BrowsingDataSelection(cache: true)), "cached files can be cleared independently")
+        try check(!(await store.dataRecords(ofTypes: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
+        try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "second.example" }, "cache-only clear preserves cookies")
+        try check(try await js(normal, "localStorage.getItem('settings-check')") as? String == "normal", "cache-only clear preserves website local storage")
+        try check(await data.clear(BrowsingDataSelection(siteData: true)), "cookies and site data can be cleared independently")
+        try check((await store.httpCookieStore.allCookies()).isEmpty, "actual normal WebKit cookies removed")
+        try check((await store.dataRecords(ofTypes: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
+        try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
+        try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
+        try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")
+        try check(try String(contentsOf: downloadedFile, encoding: .utf8) == "Synthetic browser download.\n"
+                  && session.normalDownloads.completedCount == 1 && session.normalDownloads.items.count == 1
+                  && session.normalDownloads.items.first?.id == downloadRecord.id
+                  && session.normalDownloads.items.first?.state == .completed
+                  && session.normalDownloads.items.first?.file == downloadedFile,
+                  "clearing history cookies and cache preserves completed download and file contents")
+        let fake = SettingsDataFixture()
+        let controlled = WebsiteDataController(store: fake)
+        let loading = Task { await controlled.reload() }
+        try await wait { fake.pending != nil }
+        controlled.cancelRefresh()
+        fake.pending?.resume(returning: [current.record]); fake.pending = nil
+        await loading.value
+        try check(controlled.entries.isEmpty && !controlled.isBusy, "cancelled refresh cannot publish late website records")
+        fake.failReads = true
+        await controlled.reload()
+        try check(controlled.message?.contains("couldn’t be loaded") == true && !controlled.isBusy && !controlled.hasLoaded, "failed list load provides retry state")
+        fake.failReads = false; fake.immediate = [current.record]
+        await controlled.reload()
+        fake.failRemove = true
+        try check(!(await controlled.removeEntry(controlled.entries[0].id)) && !controlled.isBusy && !controlled.isRemoving, "failed removal releases busy state")
+        try check(controlled.message?.contains("couldn’t be removed") == true && controlled.entries.count == 1, "failed removal keeps list with retry explanation")
+        try check(fake.removals == 1, "cancelled refresh and stale handle never trigger deletion")
+        await store.removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(), modifiedSince: .distantPast)
+    }
+
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--saved-pages-preview") { savedPagesPreview(); return }
+        if ProcessInfo.processInfo.arguments.contains("--download-checks") {
+            do { try await downloadsChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("DownloadChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--settings-preview") {
+            try? await wait { self.host.view.window != nil }
+            await settingsPreview()
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--settings-checks") {
+            do { try await settingsChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SettingsChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+
         if ProcessInfo.processInfo.arguments.contains("--reddit-preview") {
             let defaults = UserDefaults(suiteName: "DuoBrowser.RedditPreview")!
             defaults.removePersistentDomain(forName: "DuoBrowser.RedditPreview")
@@ -1320,8 +2446,14 @@ private final class NativeCheckRunner {
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--tab-overview-demo") { await overviewDemo(); return }
+        if ProcessInfo.processInfo.arguments.contains("--undo-overview-checks") {
+            do { try await tabUndoOverviewChecks() } catch { results.append("FAIL: \(error)") }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("UndoOverviewChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--tab-stack-checks") {
-            do { try await tabStackChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
+            do { try await tabStackChecks(); try await tabUndoOverviewChecks(); try wideTabLayoutChecks(); try await tabZoomChecks() } catch { results.append("FAIL: \(error)") }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("TabStackChecks.txt")
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
             return
@@ -1380,7 +2512,11 @@ private final class NativeCheckRunner {
             try await wait { normal.showingStartPage && !normal.webView.isLoading }
             try check(normal.showingStartPage, "new tabs show the native start page")
             normal.navigate(to: "http://127.0.0.1:1/unreachable")
-            try await wait { normal.errorMessage != nil }
+            do {
+                try await wait(timeout: 60) { normal.errorMessage != nil }
+            } catch {
+                throw NSError(domain: "Unreachable synthetic navigation did not report failure within 60 seconds; loading=\(normal.webView.isLoading), startPage=\(normal.showingStartPage)", code: 1)
+            }
             try check(normal.showingStartPage, "failed first navigation preserves the native start page")
             try await load(normal, "normal")
             try check(!normal.showingStartPage, "navigation dismisses the start page")
@@ -1486,9 +2622,12 @@ private final class NativeCheckRunner {
             try await load(memoryTab, "reading")
             _ = try await js(memoryTab, "window.scrollTo(0,400)")
             try await wait { memoryTab.webView.scrollView.contentOffset.y >= 399 }
+            results.append("RECLAIM SCROLLED: nativeY=\(memoryTab.webView.scrollView.contentOffset.y) loading=\(memoryTab.webView.isLoading)")
             mount(normal)
             weak let reclaimedView = memoryTab.loadedWebView
+            results.append("RECLAIM BEFORE: nativeY=\(memoryTab.loadedWebView?.scrollView.contentOffset.y ?? -1) loading=\(memoryTab.loadedWebView?.isLoading ?? false) pendingY=\(memoryTab.pendingScrollY ?? -1)")
             let suspended = await memoryTab.suspendIfIdle { true }
+            results.append("RECLAIM CAPTURE: suspended=\(suspended) pendingY=\(memoryTab.pendingScrollY ?? -1)")
             try await wait { reclaimedView == nil }
             try check(reclaimedView == nil, "reclaimed WKWebView actually deallocates")
             try check(suspended && memoryTab.loadedWebView == nil, "inactive static reading tab releases its WKWebView")
@@ -1496,7 +2635,12 @@ private final class NativeCheckRunner {
             mount(memoryTab)
             try await wait { !memoryTab.webView.isLoading && memoryTab.webView.title == "Reading fixture" }
             results.append("STEP: reading document resumed")
-            try await wait { (try? await self.js(memoryTab, "scrollY") as? Double ?? 0) ?? 0 >= 399 }
+            do { try await wait { (try? await self.js(memoryTab, "scrollY") as? Double ?? 0) ?? 0 >= 399 } }
+            catch {
+                let document = try? await js(memoryTab, "JSON.stringify({url:location.href,y:scrollY,height:document.documentElement.scrollHeight,viewport:innerHeight,ready:document.readyState})")
+                results.append("RECLAIM RESTORE: nativeY=\(memoryTab.webView.scrollView.contentOffset.y) pendingY=\(memoryTab.pendingScrollY ?? -1) document=\(String(describing: document))")
+                throw error
+            }
             try check(true, "static reading tab restores scroll after reclamation")
             memoryTab.close()
             mount(normal)
@@ -1539,6 +2683,23 @@ private final class SetupFixtureTransport: BrowserTransferTransport {
     }
     func items(token: UUID) -> AsyncThrowingStream<BEBrowserData, Error> {
         AsyncThrowingStream { continuation = $0 }
+    }
+}
+@MainActor
+private final class SettingsDataFixture: WebsiteDataAccess {
+    var pending: CheckedContinuation<[WKWebsiteDataRecord], Error>?
+    var failReads = false
+    var failRemove = false
+    var immediate: [WKWebsiteDataRecord]?
+    var removals = 0
+    func records() async throws -> [WKWebsiteDataRecord] {
+        if failReads { throw NSError(domain: "Synthetic list failure", code: 1) }
+        if let immediate { return immediate }
+        return try await withCheckedThrowingContinuation { pending = $0 }
+    }
+    func remove(types: Set<String>, records: [WKWebsiteDataRecord]?) async throws {
+        removals += 1
+        if failRemove { throw NSError(domain: "Synthetic removal failure", code: 1) }
     }
 }
 #endif

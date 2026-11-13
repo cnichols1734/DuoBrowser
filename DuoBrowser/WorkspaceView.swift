@@ -58,6 +58,7 @@ struct WorkspaceView: View {
 
 
 struct BrowserProtectionView: View {
+    @ObservedObject private var filters = FilterCatalog.shared
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @Environment(\.dismiss) private var dismiss
@@ -96,18 +97,23 @@ struct BrowserProtectionView: View {
                             Toggle("Block ads & trackers on this site", isOn: $browser.blockAds)
                                 .disabled(!session.adBlockingEnabled)
                                 .font(.body.weight(.semibold))
-                            Text("Changes reload this page. Turn protection off if a website isn't working correctly.")
+                            Text("Changes apply to new requests. Reload when you’re ready; anything you’ve typed stays in place until then.")
                                 .font(.subheadline).foregroundStyle(.secondary)
-                        }.padding(20).background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 24))
+                            Button("Reload This Page", systemImage: "arrow.clockwise") { browser.webView.reload(); dismiss() }
+                        }
                     }
                     VStack(alignment: .leading, spacing: 10) {
                         Text("What’s protected").font(.headline)
                         Text(unavailable ? "The blocking rules couldn't load. Browsing still works. Relaunch DuoBrowser to try again." :
-                             "When enabled, blocks third-party requests to a bundled list of 19 advertising and tracking services. Some ads may still appear.")
+                             filters.usingFallback ? "Basic fallback protection is active. Update filters to restore EasyList and EasyPrivacy." :
+                             "EasyList and EasyPrivacy block supported ad and tracking requests and hide ad elements. Filters update independently of app releases. Some ads may still appear.")
                             .font(.body).foregroundStyle(.secondary)
                         Text("Protection runs on your device. No browsing reports or blocked-request logs are collected.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
+                    NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
+                        .frame(minHeight: 44)
+                    Divider()
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
                             Text("Website exceptions").font(.headline)

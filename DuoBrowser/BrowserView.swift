@@ -43,6 +43,7 @@ struct ActiveBrowserView: View {
     @State private var input = ""
     @State private var keyboardVisible = false
     @State private var showingSearch = false
+    @State private var noticeHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -51,7 +52,8 @@ struct ActiveBrowserView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
-                BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions)
+                BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions,
+                               additionalBottomObstruction: showingSearch || session.privateMode ? 0 : noticeHeight > 0 ? noticeHeight + 8 : 0)
                     .ignoresSafeArea(.container)
                     .blur(radius: showingSearch ? 5 : 0)
                     .accessibilityHidden(showingSearch || browser.showingStartPage)
@@ -63,6 +65,7 @@ struct ActiveBrowserView: View {
                         .allowsHitTesting(!showingSearch)
                 }
                 VStack(spacing: 8) {
+                    ClosedTabNotice(session: session) { noticeHeight = $0 }
                     if let error = browser.errorMessage {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(error).font(.callout)
@@ -123,6 +126,7 @@ struct BrowserSurface: UIViewRepresentable {
     let fullWidth: Bool
     let showRegions: Bool
     var reservesBrowserControls = true
+    var additionalBottomObstruction: CGFloat = 0
 
     func makeUIView(context: Context) -> ViewportView {
         ViewportView(browser: browser)
@@ -132,6 +136,7 @@ struct BrowserSurface: UIViewRepresentable {
         view.fullWidth = fullWidth
         view.showRegions = showRegions
         view.reservesBrowserControls = reservesBrowserControls
+        view.additionalBottomObstruction = additionalBottomObstruction
         view.setNeedsLayout()
     }
 }
@@ -143,6 +148,7 @@ final class ViewportView: UIView {
     var fullWidth = true
     var showRegions = false
     var reservesBrowserControls = true
+    var additionalBottomObstruction: CGFloat = 0
     private let regionsLayer = CAShapeLayer()
     private var chromeObserver: AnyCancellable?
     private var collapse = 0.0
@@ -178,7 +184,7 @@ final class ViewportView: UIView {
         webView.frame = fullWidth ? bounds : safeAreaLayoutGuide.layoutFrame
         // Keep native controls clear of bottom camera/system occlusions in rotated poses.
         let occlusions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
-        let lift = BrowserViewportState.controlLift(in: bounds, height: expandedHeight,
+        let lift = BrowserViewportState.controlLift(in: bounds, height: expandedHeight + additionalBottomObstruction,
                                                     safeBottom: safeAreaInsets.bottom, regions: occlusions)
         if lift != bottomControlLift {
             bottomControlLift = lift
@@ -214,7 +220,7 @@ final class ViewportView: UIView {
 
     private func updateObscuredArea() {
         let expanded = expandedHeight + 8 + (fullWidth ? safeAreaInsets.bottom : 0)
-        let bottom = expanded + (38 - expanded) * collapse + bottomControlLift
+        let bottom = expanded + (38 - expanded) * collapse + bottomControlLift + additionalBottomObstruction
         // This public WebKit API moves fixed/sticky page controls above browser chrome.
         let inset = UIEdgeInsets(top: 0, left: 0, bottom: reservesBrowserControls ? bottom : 0, right: 0)
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }

@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct BrowserToolbar: View {
+    @State private var showingRecentlyClosed = false
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
@@ -10,8 +11,11 @@ struct BrowserToolbar: View {
     let bottomSafeArea: CGFloat
     let accessibilityExpanded: Bool
     @State private var showingProtection = false
-    @State private var showingPrivacy = false
+    @State private var websiteSettings: WebsiteSettingsScope?
     @State private var showingSettings = false
+    @State private var savingPage: LibraryEntry?
+    @State private var showingDownloads = false
+    @State private var setupAfterSettings = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var textLineHeight = 20.0
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
@@ -41,9 +45,18 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
-        .sheet(isPresented: $showingSettings) { BrowserLinkSettings(session: session, routing: session.redditLinks) }
-        .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
+        .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
+        .sheet(item: $savingPage) { SavePageView(session: session, browser: browser, entry: $0) }
+        .sheet(isPresented: $showingDownloads) { DownloadsView(manager: browser.downloads) }
+        .sheet(isPresented: $showingSettings, onDismiss: {
+            if setupAfterSettings { setupAfterSettings = false; session.setup.reopen(); session.showingSetup = true }
+        }) {
+            BrowserLinkSettings(session: session, routing: session.redditLinks, onSetup: {
+                setupAfterSettings = true; showingSettings = false
+            })
+        }
         .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
+        .sheet(item: $websiteSettings) { scope in WebsiteSettingsView(session: session, browser: browser, scope: scope) }
         .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
         .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
 
@@ -73,6 +86,7 @@ struct BrowserToolbar: View {
                         .accessibilityHidden(p > 0.1)
                         .accessibilitySortPriority(5)
                         .accessibilityLabel("Back")
+                        .modifier(BackHistoryMenu(browser: browser))
                         .transition(.opacity.combined(with: .scale(scale: 0.88)))
                     }
 
@@ -89,6 +103,12 @@ struct BrowserToolbar: View {
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
+                            .simultaneousGesture(DragGesture(minimumDistance: 32).onEnded { value in
+                                guard !keepExpanded, abs(value.translation.width) > abs(value.translation.height) * 2 else { return }
+                                session.switchAdjacentTab(value.translation.width < 0 ? 1 : -1)
+                            })
+                            .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
+                            .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
                             .accessibilityFocused($addressFocused)
                             .accessibilitySortPriority(3)
                             .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
@@ -140,8 +160,7 @@ struct BrowserToolbar: View {
                         .accessibilitySortPriority(1)
                         .accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
                         .contextMenu {
-                            Button("New Tab", systemImage: "plus") { session.newTab() }
-                            Button("Close This Tab", systemImage: "xmark") { session.close(browser.id) }
+                            tabActions
                         }
                         .transition(.opacity.combined(with: .scale(scale: 0.88)))
                     }
@@ -186,6 +205,7 @@ struct BrowserToolbar: View {
                 Button { browser.webView.goBack() } label: {
                     Image(systemName: "chevron.backward").frame(width: 52, height: 52)
                 }.disabled(!browser.canGoBack).accessibilityLabel("Back")
+                    .modifier(BackHistoryMenu(browser: browser))
                 Spacer(minLength: 0)
                 pageMenu.frame(width: 52, height: 52)
                 Spacer(minLength: 0)
@@ -196,6 +216,9 @@ struct BrowserToolbar: View {
                 Button { endEditing(); session.showTabs() } label: {
                     Image(systemName: "square.on.square").frame(width: 52, height: 52)
                 }.accessibilityLabel("Tabs, \(session.visibleTabs.count) open")
+                    .contextMenu { tabActions }
+                    .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
+                    .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
             }
             .font(.system(size: 23, weight: .medium))
             .glassEffect(.regular.interactive(), in: Capsule())
@@ -207,44 +230,43 @@ struct BrowserToolbar: View {
         .frame(height: toolbarHeight)
     }
 
+    @ViewBuilder private var tabActions: some View {
+        Button("New Tab", systemImage: "plus") { session.newTab() }
+        Button("Previous Tab", systemImage: "chevron.left") { session.switchAdjacentTab(-1) }
+            .disabled(session.visibleTabs.first?.id == session.selectedID)
+        Button("Next Tab", systemImage: "chevron.right") { session.switchAdjacentTab(1) }
+            .disabled(session.visibleTabs.last?.id == session.selectedID)
+        if !session.privateMode {
+            Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
+        }
+        Button("Close This Tab", systemImage: "xmark") { session.close(browser.id) }
+    }
+
     private var pageMenu: some View {
         Menu {
-            Button("New Tab", systemImage: "plus") { session.newTab() }
-            Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }
-                .disabled(!browser.canGoForward)
-            if let url = browser.restorationURL {
-                Button("Share", systemImage: "square.and.arrow.up") { browser.presentation.share(url) }
-                Button("Save Bookmark", systemImage: "bookmark") { session.addBookmark() }
-                Button("Find on Page", systemImage: "doc.text.magnifyingglass") {
-                    browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
+            Section {
+                if let url = browser.restorationURL {
+                    Button("Share", systemImage: "square.and.arrow.up") { browser.presentation.share(url) }
+                    Button("Save Page…", systemImage: "bookmark") { savingPage = LibraryEntry(address: url.absoluteString, title: browser.title) }
+                    Button("Find on Page", systemImage: "doc.text.magnifyingglass") {
+                        browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
+                    }
                 }
+                Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
+                    .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
+                Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
+                Button("Website Settings", systemImage: "globe") { websiteSettings = WebsiteSettingsScope(browser: browser) }
+                    .disabled(browser.restorationURL?.host == nil)
             }
-            Button(browser.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: browser.isPinned ? "pin.slash" : "pin") { session.togglePin(browser) }
-            Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
-            Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
-                .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
-            Button("Library", systemImage: "book") { session.showingLibrary = true }
-            Button("Set Up DuoBrowser", systemImage: "sparkles") {
-                session.setup.reopen(); session.showingSetup = true
-            }
-            Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
-            Toggle(isOn: $session.showSystemStatus) {
-                Label("Time, Signal & Battery", systemImage: "info.circle")
-            }
-            .accessibilityHint("Shows or hides the system time, signal, Wi-Fi, and battery indicators")
-            Menu("Website Settings", systemImage: "globe") {
-                Toggle("Original Layout", isOn: $browser.originalPageLayout)
-                Toggle("Desktop Website", isOn: $browser.desktopSite)
-                Toggle("Full-width Page", isOn: $browser.fullWidthLayout)
-            }
-            if browser.availableDownloads > 0 {
-                Button("Save Download to Files", systemImage: "arrow.down.doc") { browser.downloads.exportNext() }
-            }
-            if browser.activeDownloads > 0 {
-                Button("Cancel Downloads", systemImage: "xmark.circle") { browser.downloads.cancelAll() }
+            Section {
+                Button("New Tab", systemImage: "plus") { session.newTab() }
+                Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }.disabled(!browser.canGoForward)
+                Button(browser.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: browser.isPinned ? "pin.slash" : "pin") { session.togglePin(browser) }
+                Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
+                Button("Library", systemImage: "book") { session.showingLibrary = true }
+                DownloadMenuAction(manager: browser.downloads) { showingDownloads = true }
             }
             Button("Settings", systemImage: "gearshape") { showingSettings = true }
-            Button("Privacy Policy", systemImage: "hand.raised") { showingPrivacy = true }
             #if DEBUG
             Menu("Developer") {
                 Toggle("Show reserved regions", isOn: $session.showRegions)
@@ -252,27 +274,27 @@ struct BrowserToolbar: View {
             }
             #endif
         } label: {
-            Image(systemName: "line.3.horizontal.decrease").frame(width: 44, height: 44)
+            DownloadPageOptionsSymbol(manager: browser.downloads)
         }
         .accessibilityLabel("Page options")
     }
 }
 
 
-private struct BrowserPrivacyView: View {
+struct BrowserPrivacyView: View {
     @Environment(\.dismiss) private var dismiss
     var body: some View {
         NavigationStack {
             List {
                 Section("Your browsing data") {
                     Text("DuoBrowser has no app analytics, advertising SDKs or tracking service. History, bookmarks, settings and normal tabs are stored in the app on your device and may be included in system backups.")
-                    Text("Delete history, bookmarks, folders, and Reading List items in Library. Clearing history does not clear cookies. To remove normal website cookies and caches, delete DuoBrowser in iOS Settings. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
+                    Text("Delete history, bookmarks, folders, and Reading List items in Library. Clearing history does not clear cookies. Manage normal website cookies, storage and caches in Settings → Clear Browsing Data or Website Data. Remove a wallpaper in Tabs → Tab options → Tab Appearance.")
                 }
                 Section("Private browsing") {
-                    Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Private mode does not hide your network traffic.")
+                    Text("Private tabs use a separate temporary website-data store. Private history, tabs and previews are not saved to the normal browsing archive. Closing all private tabs clears that session. Bookmarks you explicitly save and files you export remain until you delete them. Normal downloads are kept on this device until you remove them from Downloads; private downloads are removed when all private tabs close. Private mode does not hide your network traffic.")
                 }
                 Section("Websites and search") {
-                    Text("Websites receive normal browsing requests. Google receives searches and plain keywords typed for suggestions in normal tabs. Private tabs do not request typing suggestions. Shortcut icons load from site home pages and their icon hosts without your saved page paths, cookies or credentials. These services have their own privacy policies.")
+                    Text("Websites receive normal browsing requests. Your chosen search engine receives searches. With Google selected and online suggestions enabled, Google receives plain keywords typed in normal tabs. Private tabs do not request typing suggestions. Shortcut icons load from site home pages and their icon hosts without your saved page paths, cookies or credentials. These services have their own privacy policies.")
                 }
                 Section("Photos and permissions") {
                     Text("Only a wallpaper photo you choose is imported, resized and saved locally. Website camera, microphone and location requests use system permission prompts. No page content is sent to an AI service.")
