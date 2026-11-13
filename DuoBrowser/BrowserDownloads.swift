@@ -155,7 +155,7 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         active[key] = Transfer(item: item, download: download, source: source ?? download.webView, owner: owner)
         download.delegate = self
         #if DEBUG
-        testDownloadObserver?("transfer delegate attached owner=\(owner != nil) request=\(item.request?.url?.absoluteString ?? "nil")")
+        testDownloadObserver?("transfer delegate attached id=\(item.id) object=\(ObjectIdentifier(item)) owner=\(owner != nil) request=\(item.request?.url?.absoluteString ?? "nil")")
         #endif
         let receivedObservation = download.progress.observe(\.completedUnitCount, options: [.initial, .new]) { [weak self] progress, _ in
             let received = progress.completedUnitCount, expected = progress.totalUnitCount
@@ -172,7 +172,7 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     private func updateProgress(_ key: ObjectIdentifier, generation: UUID, received: Int64, expected: Int64) {
         guard let transfer = active[key], transfer.item.generation == generation, !transfer.item.isCanceling else { return }
         #if DEBUG
-        if transfer.item.received == 0 && received > 0 { testDownloadObserver?("first progress received=\(received) expected=\(expected)") }
+        if transfer.item.received == 0 && received > 0 { testDownloadObserver?("first progress id=\(transfer.item.id) object=\(ObjectIdentifier(transfer.item)) received=\(received) expected=\(expected)") }
         #endif
         transfer.item.received = max(transfer.item.received, max(0, received))
         transfer.item.expected = max(transfer.item.expected, max(0, expected))
@@ -248,7 +248,7 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         #if DEBUG
-        testDownloadObserver?("failure callback active=\(active[ObjectIdentifier(download)] != nil) domain=\((error as NSError).domain) code=\((error as NSError).code) resumeBytes=\(resumeData?.count ?? 0)")
+        testDownloadObserver?("failure callback id=\(active[ObjectIdentifier(download)]?.item.id.uuidString ?? "none") active=\(active[ObjectIdentifier(download)] != nil) domain=\((error as NSError).domain) code=\((error as NSError).code) resumeBytes=\(resumeData?.count ?? 0)")
         #endif
         guard let transfer = active[ObjectIdentifier(download)], !transfer.item.isCanceling else { return }
         active.removeValue(forKey: ObjectIdentifier(download))
