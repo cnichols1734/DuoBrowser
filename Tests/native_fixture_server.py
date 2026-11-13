@@ -1,4 +1,5 @@
 """Loopback-only, synthetic browser integration fixtures. Never stores submitted data."""
+from html import escape
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 import struct, zlib, time
@@ -42,6 +43,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         path = urlsplit(self.path)
+        if path.path == '/persistent':
+            value = next((part.strip().split('=', 1)[1] for part in self.headers.get('Cookie', '').split(';')
+                          if part.strip().startswith('duo_persistence=')), '')[:64]
+            self.send_header('Content-Type', 'text/html'); self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            self.wfile.write(('<!doctype html><meta name="viewport" content="width=device-width"><meta name="persistence-cookie" content="' +
+                              escape(value, quote=True) + '"><title>Persistence fixture</title>Persistence fixture').encode())
+            return
         if path.path.startswith('/download'):
             print('Synthetic download request: ' + path.path[:64], flush=True)
         query = parse_qs(path.query)
