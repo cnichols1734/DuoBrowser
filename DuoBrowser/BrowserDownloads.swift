@@ -38,6 +38,10 @@ final class BrowserDownload: ObservableObject, Identifiable {
 /// Session-owned transfers keep WebKit's profile, and survive closing their originating normal tab.
 @MainActor
 final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
+    #if DEBUG
+    // Opt-in synthetic harness observer; normal browsing never installs a sink.
+    var testDownloadObserver: ((String) -> Void)?
+    #endif
     @Published private(set) var items: [BrowserDownload] = []
     @Published var errorMessage: String?
     @Published var hasUnseenDownloads = false
@@ -87,6 +91,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     }
     var completedCount: Int { items.filter { $0.state == .completed }.count }
     func sourceClosed(_ owner: UUID) {
+        #if DEBUG
+        testDownloadObserver?("source closed work=\(hasWork(for: owner)) active=\(active.count) pending=\(pendingRetries.count)")
+        #endif
         // Also clear stopped jobs whose weak source may still be retained by another transfer.
         for item in items where item.retryOwner == owner { item.retrySource = nil }
         for transfer in active.values where transfer.owner == owner { closeSource(transfer.source) }
@@ -108,6 +115,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
 
     func add(_ download: WKDownload, owner: UUID? = nil, source: WKWebView? = nil, browser: BrowserModel? = nil) {
+        #if DEBUG
+        testDownloadObserver?("transfer add invalidated=\(invalidated) active=\(activeCount) items=\(items.count)")
+        #endif
         guard !invalidated, activeCount < 10, items.count < DownloadStore.itemLimit else {
             download.cancel { _ in }
             errorMessage = "Remove a download or wait for a transfer to finish before starting another."
@@ -138,6 +148,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         let key = ObjectIdentifier(download), generation = item.generation
         active[key] = Transfer(item: item, download: download, source: source ?? download.webView, owner: owner)
         download.delegate = self
+        #if DEBUG
+        testDownloadObserver?("transfer delegate attached owner=\(owner != nil) request=\(item.request?.url?.absoluteString ?? "nil")")
+        #endif
         let receivedObservation = download.progress.observe(\.completedUnitCount, options: [.initial, .new]) { [weak self] progress, _ in
             let received = progress.completedUnitCount, expected = progress.totalUnitCount
             Task { @MainActor [weak self] in self?.updateProgress(key, generation: generation, received: received, expected: expected) }
@@ -152,6 +165,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
     private func updateProgress(_ key: ObjectIdentifier, generation: UUID, received: Int64, expected: Int64) {
         guard let transfer = active[key], transfer.item.generation == generation else { return }
+        #if DEBUG
+        if transfer.item.received == 0 && received > 0 { testDownloadObserver?("first progress received=\(received) expected=\(expected)") }
+        #endif
         transfer.item.received = max(transfer.item.received, max(0, received))
         transfer.item.expected = max(transfer.item.expected, max(0, expected))
         let total = items.reduce(Int64(0)) { $0 + min(DownloadStore.fileLimit + 1, max(0, $1.received)) }
@@ -162,6 +178,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse,
                   suggestedFilename: String, completionHandler: @escaping @MainActor (URL?) -> Void) {
+        #if DEBUG
+        testDownloadObserver?("destination callback active=\(active[ObjectIdentifier(download)] != nil) length=\(response.expectedContentLength)")
+        #endif
         guard let transfer = active[ObjectIdentifier(download)] else { completionHandler(nil); return }
         let item = transfer.item
         guard store.acceptsResponse(length: response.expectedContentLength, excluding: item.id) else {
@@ -176,8 +195,14 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
             item.file = try store.destination(id: item.id, name: item.name)
             item.expected = max(0, response.expectedContentLength)
             persist()
+            #if DEBUG
+            testDownloadObserver?("destination provided name=\(item.name)")
+            #endif
             completionHandler(item.file)
         } catch {
+            #if DEBUG
+            testDownloadObserver?("destination failed domain=\((error as NSError).domain) code=\((error as NSError).code)")
+            #endif
             completionHandler(nil)
             failLimit(item, message: "The file could not be saved. Check available device storage and try again.")
         }
@@ -190,22 +215,34 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     }
 
     func downloadDidFinish(_ download: WKDownload) {
+        #if DEBUG
+        testDownloadObserver?("finish callback active=\(active[ObjectIdentifier(download)] != nil)")
+        #endif
         guard let transfer = active.removeValue(forKey: ObjectIdentifier(download)) else { return }
         let item = transfer.item
         hasUnseenDownloads = true
         item.isDownloading = false; item.state = .completed; item.resumeData = nil
         item.received = Int64((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+        #if DEBUG
+        testDownloadObserver?("finish measured fileBytes=\(item.received)")
+        #endif
         if store.file(for: item.record) == nil || store.diskUsage() > DownloadStore.storageLimit {
             item.state = .failed; item.message = "The downloaded file is unavailable or exceeds the storage limit."
             item.canRetry = item.request != nil && item.hasRetryContext
             _ = discardFile(item)
         } else { item.request = nil }
+        #if DEBUG
+        testDownloadObserver?("finish validated state=\(item.state.rawValue) bytes=\(item.received)")
+        #endif
 
         download.delegate = nil
         objectWillChange.send(); persist()
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        #if DEBUG
+        testDownloadObserver?("failure callback active=\(active[ObjectIdentifier(download)] != nil) domain=\((error as NSError).domain) code=\((error as NSError).code) resumeBytes=\(resumeData?.count ?? 0)")
+        #endif
         guard let transfer = active.removeValue(forKey: ObjectIdentifier(download)) else { return }
         let item = transfer.item
         hasUnseenDownloads = true
@@ -228,12 +265,18 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
 
     @discardableResult
     func cancel(_ item: BrowserDownload) -> Bool {
+        #if DEBUG
+        testDownloadObserver?("cancel invoked state=\(item.state.rawValue) received=\(item.received)")
+        #endif
         item.generation = UUID(); pendingRetries.removeValue(forKey: item.id)
         if let entry = active.first(where: { $0.value.item.id == item.id }) {
             active.removeValue(forKey: entry.key)
             entry.value.download.delegate = nil
             let generation = item.generation
             entry.value.download.cancel { [weak self, weak item] data in
+                #if DEBUG
+                self?.testDownloadObserver?("cancel completed currentGeneration=\(item?.generation == generation) resumeBytes=\(data?.count ?? 0)")
+                #endif
                 guard let self, let item, !self.invalidated, item.generation == generation,
                       self.items.contains(where: { $0 === item }), item.request != nil,
                       let data, data.count <= 16_000_000 else { return }
@@ -247,6 +290,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
     }
 
     func retry(_ item: BrowserDownload) {
+        #if DEBUG
+        testDownloadObserver?("retry requested state=\(item.state.rawValue) eligible=\(item.canRetry) context=\(item.hasRetryContext) resume=\(item.resumeData != nil)")
+        #endif
         guard !invalidated, items.contains(where: { $0 === item }), !item.isDownloading,
               item.canRetry, item.resumeData != nil || item.request != nil else { return }
         guard activeCount < 10 else {
@@ -271,6 +317,9 @@ final class BrowserDownloads: NSObject, ObservableObject, WKDownloadDelegate {
         // Keep the original view alive and owned while WebKit asynchronously creates the download.
         pendingRetries[item.id] = PendingRetry(source: view, owner: owner); objectWillChange.send()
         let completion: @MainActor @Sendable (WKDownload) -> Void = { [weak self, weak item] download in
+            #if DEBUG
+            self?.testDownloadObserver?("retry callback currentGeneration=\(item?.generation == token)")
+            #endif
             guard let self, let item, !self.invalidated, item.generation == token,
                   self.items.contains(where: { $0 === item }),
                   let pending = self.pendingRetries.removeValue(forKey: item.id) else {

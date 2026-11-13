@@ -1636,18 +1636,36 @@ final class NativeCheckRunner {
         let profile = WKWebsiteDataStore.nonPersistent()
         let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: profile)
         let manager = session.normalDownloads
+        var trace: [String] = []
+        let traceStart = Date()
+        let observe: (String) -> Void = { event in
+            if trace.count == 32 { trace.removeFirst() }
+            trace.append(String(format: "%.3f ", Date().timeIntervalSince(traceStart)) + String(event.prefix(256)))
+        }
+        manager.testDownloadObserver = observe
+        func diagnostic(_ stage: String, model: BrowserModel) -> String {
+            let rows = manager.items.prefix(4).map { item in
+                "state=\(item.state.rawValue), active=\(item.isDownloading), bytes=\(item.received)/\(item.expected), fileBytes=\((try? item.file?.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? -1), error=\(String((item.message ?? "none").prefix(256))), request=\(String((item.request?.url?.absoluteString ?? "nil").prefix(256)))"
+            }.joined(separator: "\n")
+            return "DOWNLOAD DIAGNOSTIC \(stage): items=\(manager.items.count), completed=\(manager.completedCount), active=\(manager.activeCount), managerError=\(String((manager.errorMessage ?? "none").prefix(256))), tabError=\(String((model.errorMessage ?? "none").prefix(256))), WKLoading=\(model.loadedWebView?.isLoading ?? false), modelLoading=\(model.isLoading), WKURL=\(String((model.loadedWebView?.url?.absoluteString ?? "nil").prefix(256)))\n\(rows)\nTRACE:\n\(trace.joined(separator: "\n"))"
+        }
         defer {
+            manager.testDownloadObserver = nil
+            session.tabs.forEach { $0.testDownloadObserver = nil }
             manager.cancelAll(); session.closePrivateTabs(); session.tabs.forEach { $0.close() }
             try? FileManager.default.removeItem(at: directory)
             defaults.removePersistentDomain(forName: "DuoBrowser.DownloadChecks")
         }
         let tab = session.selected
+        tab.testDownloadObserver = observe
         try await load(tab, "")
         let cookie = HTTPCookie(properties: [.domain: "127.0.0.1", .path: "/", .name: "duo-download", .value: "synthetic"])!
         await profile.httpCookieStore.setCookie(cookie)
         _ = try await js(tab, "document.querySelector('#kept').value='Preserved download draft'")
         _ = try await js(tab, "document.querySelector('a[download]').click()")
-        try await wait(timeout: 30) { manager.completedCount == 1 }
+        do { try await wait(timeout: 30) { manager.completedCount == 1 } }
+        catch { results.append(diagnostic("initial completion", model: tab)); throw error }
+        tab.testDownloadObserver = nil
         let first = manager.items[0]
         try check(first.name == "browser-fixture.txt", "real navigation download receives the server filename")
         try check(first.file != nil && first.received > 0, "WebKit download persists with its byte size")
@@ -1782,7 +1800,10 @@ final class NativeCheckRunner {
         try check(!FileManager.default.fileExists(atPath: manager.store.directory.appendingPathComponent(stale.id.uuidString).path), "stale retry does not recreate deleted download files")
 
         func retryThenCloseSource(afterProgress: Bool) async throws {
+            trace.removeAll()
             let source = session.newTab()
+            source.testDownloadObserver = observe
+            defer { source.testDownloadObserver = nil }
             do { try await load(source, "") }
             catch {
                 throw NSError(domain: "Retry-close source load timed out; afterProgress=\(afterProgress), loading=\(source.webView.isLoading), errorPresent=\(source.errorMessage != nil)", code: 1)
@@ -1807,10 +1828,12 @@ final class NativeCheckRunner {
             session.releaseClosedTab() // Expire Undo now: this must work without its eight-second retention.
             mount(session.selected)
             try await releaseDownloadFixture(gate, attempt: 2)
-            try await wait(timeout: 30) { !restarted.isDownloading }
-            let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
-            try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
-                      "authenticated GET retry completes after source closure (afterProgress=\(afterProgress))")
+            do {
+                try await wait(timeout: 30) { !restarted.isDownloading }
+                let content = try restarted.file.map { try String(contentsOf: $0, encoding: .utf8) }
+                try check(restarted.state == .completed && content?.hasPrefix("Authenticated synthetic") == true,
+                          "authenticated GET retry completes after source closure (afterProgress=\(afterProgress), state=\(restarted.state.rawValue), bytes=\(restarted.received), authenticated=\(content?.hasPrefix("Authenticated synthetic") == true), error=\(restarted.message ?? "none"))")
+            } catch { results.append(diagnostic("retry-close afterProgress=\(afterProgress)", model: source)); throw error }
         }
         try await retryThenCloseSource(afterProgress: false)
         try await retryThenCloseSource(afterProgress: true)

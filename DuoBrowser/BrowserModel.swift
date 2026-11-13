@@ -7,6 +7,7 @@ import WebKit
 final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigationDelegate, UIScrollViewDelegate {
     #if DEBUG
     var testNavigationObserver: ((String) -> Void)?
+    var testDownloadObserver: ((String) -> Void)?
     var testRedditTapAuthorization: ((URL) -> Bool)?
     var testBlockingRules: (@MainActor () async -> [WKContentRuleList])?
     #endif
@@ -353,6 +354,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        #if DEBUG
+        testDownloadObserver?("page provisional start url=\(webView.url?.absoluteString ?? "nil")")
+        #endif
         expectedDownloadInterruptions.removeAll()
         presentation.cancel()
         documentGeneration = UUID()
@@ -402,6 +406,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
 
     private func report(_ error: Error) {
         let failure = error as NSError
+        #if DEBUG
+        testDownloadObserver?("page failure domain=\(failure.domain) code=\(failure.code)")
+        #endif
         let failingURL = failure.userInfo[NSURLErrorFailingURLErrorKey] as? URL ??
             (failure.userInfo[NSURLErrorFailingURLStringErrorKey] as? String).flatMap(URL.init(string:))
         // Conversion may omit this callback or deliver it after the file completes. Attribute
@@ -518,6 +525,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  preferences: WKWebpagePreferences,
                  decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
+        #if DEBUG
+        testDownloadObserver?("action entry url=\(navigationAction.request.url?.absoluteString ?? "nil") download=\(navigationAction.shouldPerformDownload) type=\(navigationAction.navigationType.rawValue) undo=\(isRetainedForUndo)")
+        #endif
         guard !isRetainedForUndo else { decisionHandler(.cancel, preferences); return }
         guard navigationAction.navigationType == .linkActivated, let url = navigationAction.request.url else {
             decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: false, decisionHandler: decisionHandler)
@@ -529,6 +539,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         // Consume every link action before URL, frame, or download eligibility. Even an
         // ineligible or rewritten link must not leave a token for another navigation.
         authorizeRedditTap(url) { [weak self] trusted in
+            #if DEBUG
+            self?.testDownloadObserver?("action authorization trusted=\(trusted) currentPolicy=\(self?.policyGeneration == generation) currentInteraction=\(self?.presentation.interactionID == interaction)")
+            #endif
             guard let self, !self.closed, self.policyGeneration == generation,
                   self.presentation.interactionID == interaction else { decisionHandler(.cancel, preferences); return }
             self.decideNavigation(webView, action: navigationAction, preferences: preferences, trustedTap: trusted, decisionHandler: decisionHandler)
@@ -589,6 +602,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     private func actionPolicy(for action: WKNavigationAction) -> WKNavigationActionPolicy {
+        #if DEBUG
+        testDownloadObserver?("action decision download=\(action.shouldPerformDownload)")
+        #endif
         if action.shouldPerformDownload {
             expectDownloadInterruption(for: action.request.url)
             return .download
@@ -633,12 +649,18 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
             policyGeneration = generation
             Task { @MainActor [weak self] in
                 guard let self else { decisionHandler(.cancel, preferences); return }
+                #if DEBUG
+                self.testDownloadObserver?("action awaiting protection")
+                #endif
                 // Initial compilation or a setting change may supersede an awaited catalog.
                 // Resolve current protection before the first request; never proceed with stale rules.
                 for _ in 0..<4 {
                     let blockingGeneration = self.blockingGeneration
                     let rules = await self.currentBlockingRules()
                     guard !self.closed, !self.isRetainedForUndo, self.loadedWebView === webView, self.policyGeneration == generation else {
+                        #if DEBUG
+                        self.testDownloadObserver?("action canceled closed=\(self.closed) undo=\(self.isRetainedForUndo) currentView=\(self.loadedWebView === webView) currentPolicy=\(self.policyGeneration == generation)")
+                        #endif
                         decisionHandler(.cancel, preferences); return
                     }
                     guard self.blockingGeneration == blockingGeneration else { continue }
@@ -659,15 +681,24 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         let disposition = (navigationResponse.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")?
             .split(separator: ";", maxSplits: 1).first?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let shouldDownload = disposition == "attachment" || !navigationResponse.canShowMIMEType
+        #if DEBUG
+        testDownloadObserver?("response decision url=\(navigationResponse.response.url?.absoluteString ?? "nil") download=\(shouldDownload) length=\(navigationResponse.response.expectedContentLength)")
+        #endif
         if shouldDownload { expectDownloadInterruption(for: navigationResponse.response.url) }
         decisionHandler(shouldDownload ? .download : .allow)
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
+        #if DEBUG
+        testDownloadObserver?("action became download")
+        #endif
         downloads.add(download, owner: id, source: webView, browser: self)
         if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
+        #if DEBUG
+        testDownloadObserver?("response became download")
+        #endif
         downloads.add(download, owner: id, source: webView, browser: self)
         if let message = downloads.errorMessage { errorMessage = message; downloads.errorMessage = nil }
     }
