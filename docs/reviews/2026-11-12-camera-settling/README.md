@@ -51,3 +51,28 @@ claim a manual scroll gesture or motion recording. Web and native interpolation
 checks establish bounded motion behavior; they do not establish frame rate,
 physical-device performance, battery behavior, universal site adaptation or a
 full spoken VoiceOver pass. Final combined-stack validation is tracked separately.
+
+## November 12 handoff: Reddit scroll readiness
+
+Hosted PR #23 at `ba26e98` timed out before the synthetic Reddit handoff, while
+waiting for the native scroll offset to match an earlier DOM value. The unchanged
+local baseline passed all 29 Reddit assertions. Three diagnostic runs also passed
+29 assertions each, but consistently exposed stale native geometry after document
+readiness: content size was initially 980 × 1426 with a 466 × 678 viewport, then
+became 466 × 2238 after two animation frames. These runs establish a readiness
+gap; they do not reproduce or establish the complete cause of the hosted timeout.
+Local receipts are `work/reddit-diagnostic-{1,2,3}.txt`.
+
+The test now waits for matching native and DOM content dimensions and viewport
+geometry at the fixture's declared scale of 1, then scrolls the native scroll view
+to 200 and requires both native and DOM offsets to acknowledge that position.
+All handoff assertions and the original 10-second interaction waits remain;
+failure diagnostics report synthetic viewport and scroll geometry. This follow-up
+changes no production browser behavior. CI compilation now uses `-jobs 2`.
+The corrected Debug build passed on Xcode 27.2 / the iOS 27.1 simulator. Three
+fresh app launches each passed Reddit29, followed by Camera42; all 339 portable
+checks, all 197 web assertions and pinned strict SwiftLint passed. Receipts are in
+`work/reddit-corrected-{1,2,3}.txt`, `work/camera-corrected.txt`,
+`work/corrected-portable.log`, `work/corrected-web.log` and `work/corrected-lint.log`.
+Final combined validation and hosted CI/review are tracked in the setup branch;
+installation uses a newly signed build of its final commit after those gates pass.
