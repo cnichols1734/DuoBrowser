@@ -91,6 +91,60 @@ extension NativeCheckRunner {
         _ = session.newTab(privateTab: true)
         try check(try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) == nil,
                   "a saved-copy action captured before private browsing cannot expose the normal library")
+        try await recoveryReadStatusFailureChecks()
+    }
+
+    private func recoveryReadStatusFailureChecks() async throws {
+        let suite = "DuoBrowser.RecoveryReadStatus." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        var rejectWrites = false
+        var rejectedWrites = 0
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if rejectWrites { rejectedWrites += 1; throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        try await load(source, "upgrades?recovery-read-status=1")
+        let webView = source.webView
+        _ = try await js(source, "window.__recoveryCopyRetryMarker=true")
+        let address = source.restorationURL!.absoluteString
+        let offline = OfflineArticle(title: "Unread recovery copy", address: address,
+                                     blocks: [.init(kind: "paragraph", text: "Synthetic unread offline article", jpeg: nil)])
+        try session.savePage(LibraryEntry(address: address, title: offline.title, isRead: false), reading: true, offline: offline)
+        let unread = session.readingList.first!
+        source.webViewWebContentProcessDidTerminate(webView)
+        let failure = source.loadFailure!
+        rejectWrites = true
+        try check(try session.openSavedCopyForRecovery(unread, browser: source, failure: failure)
+                  && source.readerArticle != nil && rejectedWrites > 0,
+                  "a valid unread saved copy opens despite an injected read-status archive failure")
+        try check(session.readingList.first?.isRead == false && archive.load()?.readingList?.first?.isRead == false,
+                  "failed recovery read-status persistence rolls back both the live and durable unread state")
+        try check(source.loadFailure?.id == failure.id && source.errorMessage == failure.message,
+                  "best-effort read-status failure cannot replace the critical source navigation failure")
+        source.readerArticle = nil
+        try check(source.failureCoversPage && source.loadFailure?.id == failure.id
+                  && source.errorMessage == failure.message && source.loadedWebView === webView,
+                  "closing that saved copy retains the original failure and retry surface")
+        try check(source.retryLoadFailure(failure),
+                  "original recovery retry remains actionable after a failed unread-copy status update")
+        try await wait {
+            guard !source.isLoading, source.loadFailure == nil else { return false }
+            return (try? await self.js(source, "document.readyState==='complete' && location.search==='?recovery-read-status=1' && typeof window.__recoveryCopyRetryMarker==='undefined'")) as? Bool == true
+        }
+        var ordinarySaveFailed = false
+        var read = unread; read.isRead = true
+        do { try session.savePage(read, reading: true) } catch { ordinarySaveFailed = true }
+        try check(ordinarySaveFailed && source.errorMessage == "Your browsing changes could not be saved on this device."
+                  && session.readingList.first?.isRead == false,
+                  "ordinary saved-page writes still report persistence errors and roll back read state")
     }
 }
 #endif

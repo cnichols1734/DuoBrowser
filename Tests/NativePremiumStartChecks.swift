@@ -86,18 +86,19 @@ extension NativeCheckRunner {
 
         let bounds = CGRect(x: 0, y: 0, width: 400, height: 120)
         let trailing = CGRect(x: 350, y: 30, width: 50, height: 50)
-        let side = StartPageLayout.clearance(in: bounds, applied: .zero, regions: [trailing])
+        let fixedMeasurement: (CGFloat) -> CGSize = { CGSize(width: $0, height: bounds.height) }
+        let side = StartPageLayout.placement(width: bounds.width, regions: [trailing], measure: fixedMeasurement).insets
         try check(side.right == 58 && side.left == 0 && side.top == 0,
                   "Start: local section clears measured trailing occlusion without a full-height rail")
         let bottom = CGRect(x: 0, y: 100, width: 400, height: 20)
-        let first = StartPageLayout.clearance(in: bounds, applied: .zero, regions: [bottom])
-        let grown = CGRect(x: 0, y: 0, width: 400, height: bounds.height + first.top + first.bottom)
-        try check(first.top == 128 && first.bottom == 0 && StartPageLayout.clearance(in: grown, applied: first, regions: [bottom]) == first,
+        let first = StartPageLayout.placement(width: bounds.width, regions: [bottom], measure: fixedMeasurement).insets
+        try check(first.top == 128 && first.bottom == 0 &&
+                  StartPageLayout.placement(width: bounds.width, regions: [bottom], measure: fixedMeasurement).insets == first,
                   "Start: low full-width occlusion moves actual content below it with stable top clearance")
-        try check(StartPageLayout.clearance(in: bounds, applied: side, regions: []).right == 0,
+        try check(StartPageLayout.placement(width: bounds.width, regions: [], measure: fixedMeasurement).insets.right == 0,
                   "Start: section returns to full width when system occlusion disappears")
         let top = CGRect(x: 0, y: 0, width: 400, height: 22)
-        try check(StartPageLayout.clearance(in: bounds, applied: .zero, regions: [top]).top == 30,
+        try check(StartPageLayout.placement(width: bounds.width, regions: [top], measure: fixedMeasurement).insets.top == 30,
                   "Start: full-width top island is cleared vertically from actual geometry")
 
         let start = session.selected
@@ -128,6 +129,78 @@ extension NativeCheckRunner {
                   "Start: rendered private start omits normal favorite/history/tab/customization surfaces")
         try check(session.bookmarks.contains { $0.id == b.id }, "Start: private presentation leaves normal saved pages intact")
         try await premiumStartRenderedClearanceChecks()
+        try await premiumStartWrappingClearanceChecks()
+        try await premiumStartIntrinsicAlignmentChecks()
+    }
+
+    private func premiumStartIntrinsicAlignmentChecks() async throws {
+        for direction in [LayoutDirection.leftToRight, .rightToLeft] {
+            let regions = PremiumStartFixtureRegions([])
+            var probes: [String: UIView] = [:]
+            func frame(_ key: String) -> CGRect? {
+                guard let probe = probes[key], let window = probe.window else { return nil }
+                return probe.convert(probe.bounds, to: window)
+            }
+            let controller = UIHostingController(rootView: PremiumStartClearanceFixture(regions: regions, direction: direction,
+                intrinsicMaximumWidth: 240) { probes[$0] = $1 })
+            host.addChild(controller); controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+            host.view.addSubview(controller.view); controller.didMove(toParent: host)
+            defer { controller.willMove(toParent: nil); controller.view.removeFromSuperview(); controller.removeFromParent() }
+            try await wait {
+                guard let outer = frame("outer"), let content = frame("content") else { return false }
+                let x = direction == .rightToLeft ? outer.maxX - 240 : outer.minX
+                return abs(content.minX - x) < 1 && abs(content.width - 240) < 1 && abs(content.height - 120) < 1
+            }
+            try check(true, "Start: actual intrinsic-width content preserves logical-leading alignment in \(direction)")
+        }
+    }
+
+    private func premiumStartWrappingClearanceChecks() async throws {
+        let regions = PremiumStartFixtureRegions([])
+        var probes: [String: UIView] = [:]
+        func frame(_ key: String) -> CGRect? {
+            guard let probe = probes[key], let window = probe.window else { return nil }
+            return probe.convert(probe.bounds, to: window)
+        }
+        let controller = UIHostingController(rootView: PremiumStartClearanceFixture(regions: regions, direction: .leftToRight,
+            wrapping: true) { probes[$0] = $1 })
+        host.addChild(controller); controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+        host.view.addSubview(controller.view); controller.didMove(toParent: host)
+        defer { controller.willMove(toParent: nil); controller.view.removeFromSuperview(); controller.removeFromParent() }
+        try await wait { frame("content")?.width == 400 && (frame("content")?.height ?? 0) > 0 }
+        let fullHeight = frame("content")!.height
+        let side = CGRect(x: 300, y: 0, width: 100, height: 20)
+        regions.value = [side]
+        try await wait { abs((frame("content")?.width ?? 0) - 292) < 1 && (frame("content")?.height ?? 0) > fullHeight + 1 }
+        try check(true, "Start: actual text wraps to a greater measured height in the side-clearance lane")
+
+        // The second region is below the independent full-width height, but within the actual
+        // narrower wrapped height. Reusing that wrapped height as a baseline would oscillate.
+        let lower = CGRect(x: 0, y: fullHeight + 1, width: 400, height: 20)
+        regions.value = [side, lower]
+        func clearAndContained() -> Bool {
+            guard let outer = frame("outer"), let content = frame("content") else { return false }
+            return abs(content.width - 400) < 1 && abs(content.height - fullHeight) < 1 &&
+                content.minY >= outer.minY + lower.maxY + 8 - 1 && content.maxY <= outer.maxY + 1 &&
+                ![side, lower].contains { content.intersects($0.offsetBy(dx: outer.minX, dy: outer.minY)) }
+        }
+        try await wait { clearAndContained() }
+        try check(clearAndContained(), "Start: actual wrapped two-region layout falls back to independently measured full-width content without intersections")
+        let settledContent = frame("content")!, settledOuter = frame("outer")!
+        var stable = true
+        for _ in 0..<6 {
+            controller.view.setNeedsLayout(); controller.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(30))
+            stable = stable && clearAndContained() && frame("content") == settledContent && frame("outer") == settledOuter
+        }
+        try check(stable, "Start: wrapped two-region content and outer bounds remain converged across six rendered layout passes")
+        regions.value = []
+        try await wait {
+            guard let outer = frame("outer"), let content = frame("content") else { return false }
+            return abs(content.width - 400) < 1 && abs(content.height - fullHeight) < 1 &&
+                abs(content.minY - outer.minY) < 1 && abs(outer.height - fullHeight) < 1
+        }
+        try check(true, "Start: removing both regions restores the actual unwrapped content height and position")
     }
 
     private func premiumStartRenderedClearanceChecks() async throws {
@@ -230,12 +303,14 @@ private final class PremiumStartFixtureRegions: ObservableObject {
 private struct PremiumStartClearanceFixture: View {
     @ObservedObject var regions: PremiumStartFixtureRegions
     let direction: LayoutDirection
+    var wrapping = false
+    var intrinsicMaximumWidth: CGFloat?
     let register: (String, UIView) -> Void
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
-                Button {} label: { Text("Synthetic start action").frame(maxWidth: .infinity, maxHeight: .infinity) }
-                    .frame(height: 120)
+                action
+                    .frame(maxWidth: intrinsicMaximumWidth ?? .infinity)
                     .background { PremiumStartClearanceProbe(name: "content", register: register) }
                     .modifier(StartPageClearance())
                     .background { PremiumStartClearanceProbe(name: "outer", register: register) }
@@ -245,6 +320,19 @@ private struct PremiumStartClearanceFixture: View {
         .environment(\.layoutDirection, direction)
         .environment(\.startPageTestRegions, regions.value)
         .ignoresSafeArea(.container)
+    }
+
+    @ViewBuilder private var action: some View {
+        if wrapping {
+            Button {} label: {
+                Text(String(repeating: "Wrap safety keeps every start-page action reachable. ", count: 4))
+                    .font(.system(size: 20)).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 8)
+            }.buttonStyle(.plain)
+        } else {
+            Button {} label: { Text("Synthetic start action").frame(maxWidth: .infinity, maxHeight: .infinity) }
+                .frame(height: 120)
+        }
     }
 }
 

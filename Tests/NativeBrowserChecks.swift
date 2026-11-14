@@ -2350,12 +2350,19 @@ final class NativeCheckRunner {
         try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
         try check(await data.clear(BrowsingDataSelection(cache: true)), "cached files can be cleared independently")
-        try check(!(await WebKitWebsiteDataAccess.fetchRecords(in: store, types: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
+        // clear() invalidates every prior record and reloads the full production managed-type set.
+        // Require that refresh to complete before inspecting its actual WebKit records; an empty
+        // snapshot from a failed/canceled refresh must never count as successful deletion.
+        try check(data.hasLoaded && !data.isBusy && !data.isRemoving
+                  && !data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) },
+                  "actual WebKit CacheStorage was removed")
         try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "second.example" }, "cache-only clear preserves cookies")
         try check(try await js(normal, "localStorage.getItem('settings-check')") as? String == "normal", "cache-only clear preserves website local storage")
         try check(await data.clear(BrowsingDataSelection(siteData: true)), "cookies and site data can be cleared independently")
         try check((await store.httpCookieStore.allCookies()).isEmpty, "actual normal WebKit cookies removed")
-        try check((await WebKitWebsiteDataAccess.fetchRecords(in: store, types: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
+        try check(data.hasLoaded && !data.isBusy && !data.isRemoving
+                  && !data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeLocalStorage) },
+                  "actual normal WebKit local storage removed")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
         try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")

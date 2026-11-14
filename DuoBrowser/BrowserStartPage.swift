@@ -360,40 +360,36 @@ private struct StartPageCustomization: View {
     }
 }
 
-/// Clear only a section that actually intersects a current system occlusion. The rest keeps its full width.
+/// One child is measured at full width and at bounded candidate widths; no duplicate view tree is created.
 struct StartPageClearance: ViewModifier {
-    @State private var insets = UIEdgeInsets.zero
+    @State private var regions: [CGRect] = []
     @Environment(\.startPageScrollOffset) private var scrollOffset
-    @Environment(\.layoutDirection) private var layoutDirection
     init() {}
     func body(content: Content) -> some View {
-        content
-            .padding(StartPageLayout.directionalPadding(insets, direction: layoutDirection))
+        StartPageAvoidanceLayout(regions: regions) { content }
             .background {
-                StartPageRegionReader(applied: insets, scrollOffset: scrollOffset) { insets = $0 }
+                StartPageRegionReader(scrollOffset: scrollOffset) { regions = $0 }
                     .allowsHitTesting(false).accessibilityHidden(true)
             }
     }
 }
 
 private struct StartPageRegionReader: UIViewRepresentable {
-    let applied: UIEdgeInsets
     let scrollOffset: CGFloat
-    let update: (UIEdgeInsets) -> Void
+    let update: ([CGRect]) -> Void
     #if DEBUG
     @Environment(\.startPageTestRegions) private var testRegions
     #endif
     func makeUIView(context: Context) -> RegionView { RegionView() }
     func updateUIView(_ view: RegionView, context: Context) {
-        view.applied = applied; view.update = update; view.setNeedsLayout()
+        view.update = update; view.setNeedsLayout()
         #if DEBUG
         view.testRegions = testRegions
         #endif
     }
     final class RegionView: UIView {
-        var applied = UIEdgeInsets.zero
-        var update: ((UIEdgeInsets) -> Void)?
-        private var last = UIEdgeInsets.zero
+        var update: (([CGRect]) -> Void)?
+        private var last: [CGRect] = []
         #if DEBUG
         var testRegions: [CGRect]?
         #endif
@@ -401,11 +397,10 @@ private struct StartPageRegionReader: UIViewRepresentable {
         override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
         override func layoutSubviews() {
             super.layoutSubviews()
-            var regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+            var next = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
             #if DEBUG
-            if let testRegions { regions = testRegions }
+            if let testRegions { next = testRegions }
             #endif
-            let next = StartPageLayout.clearance(in: bounds, applied: applied, regions: regions)
             guard next != last else { return }
             last = next
             DispatchQueue.main.async { [weak self] in
@@ -416,40 +411,85 @@ private struct StartPageRegionReader: UIViewRepresentable {
     }
 }
 
-enum StartPageLayout {
-    static func clearance(in bounds: CGRect, applied: UIEdgeInsets, regions: [CGRect]) -> UIEdgeInsets {
-        // The probe surrounds padding. Reconstruct the content's baseline height so moving it
-        // below a region does not increase the correction on every subsequent layout pass.
-        let baseline = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width,
-                              height: max(0, bounds.height - applied.top - applied.bottom))
-        guard !baseline.isEmpty, !baseline.isInfinite else { return .zero }
-        let active = regions.filter { !$0.isNull && !$0.isInfinite && !$0.isEmpty }
-        let hits = active.filter { $0.intersects(baseline) }
-        var result = UIEdgeInsets.zero
-        for region in hits {
-            // Prefer the larger free side, then verify that the resulting lane is useful.
-            let leftSpace = region.minX - baseline.minX
-            let rightSpace = baseline.maxX - region.maxX
-            if leftSpace >= rightSpace { result.right = max(result.right, baseline.maxX - region.minX + 8) }
-            else { result.left = max(result.left, region.maxX - baseline.minX + 8) }
-        }
-        let minimumWidth = min(220, baseline.width * 0.6)
-        if baseline.width - result.left - result.right < minimumWidth { result = .zero }
-        var content = CGRect(x: baseline.minX + result.left, y: baseline.minY,
-                             width: baseline.width - result.left - result.right, height: baseline.height)
-        // Bottom padding alone leaves low/interior content covered. Move the entire section below
-        // any remaining collision; padding expands the ScrollView's content rather than clipping it.
-        for _ in 0...active.count {
-            guard let bottom = active.filter({ $0.intersects(content) }).map(\.maxY).max() else { break }
-            result.top = max(result.top, bottom - baseline.minY + 8)
-            content.origin.y = baseline.minY + result.top
-        }
-        return result
+private struct StartPageAvoidanceLayout: Layout {
+    let regions: [CGRect]
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        guard let child = subviews.first else { return .zero }
+        let ideal = child.sizeThatFits(.unspecified)
+        let width = proposal.width.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? ideal.width
+        return placement(width: width, child: child, direction: subviews.layoutDirection).size
     }
 
-    static func directionalPadding(_ insets: UIEdgeInsets, direction: LayoutDirection) -> EdgeInsets {
-        EdgeInsets(top: insets.top, leading: direction == .rightToLeft ? insets.right : insets.left,
-                   bottom: insets.bottom, trailing: direction == .rightToLeft ? insets.left : insets.right)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard let child = subviews.first else { return }
+        let plan = placement(width: bounds.width, child: child, direction: subviews.layoutDirection)
+        // SwiftUI mirrors Layout placement coordinates in RTL. Convert the physical UIKit rectangle
+        // to that logical coordinate system while preserving the child's own text/layout direction.
+        let x = subviews.layoutDirection == .rightToLeft ? bounds.width - plan.content.midX : plan.content.midX
+        child.place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + plan.content.midY), anchor: .center,
+                    proposal: ProposedViewSize(width: plan.proposalWidth, height: plan.content.height))
+    }
+
+    private func placement(width: CGFloat, child: LayoutSubview, direction: LayoutDirection) -> StartPageLayout.Placement {
+        StartPageLayout.placement(width: width, regions: regions, direction: direction) { candidate in
+            child.sizeThatFits(ProposedViewSize(width: candidate, height: nil))
+        }
+    }
+}
+
+enum StartPageLayout {
+    struct Placement: Equatable {
+        var size: CGSize
+        var content: CGRect
+        var proposalWidth: CGFloat
+        var insets: UIEdgeInsets {
+            UIEdgeInsets(top: content.minY, left: content.minX, bottom: 0, right: size.width - content.maxX)
+        }
+    }
+
+    static func placement(width: CGFloat, regions: [CGRect], direction: LayoutDirection = .leftToRight,
+                          measure: (CGFloat) -> CGSize) -> Placement {
+        guard width.isFinite, width > 0 else { return Placement(size: .zero, content: .zero, proposalWidth: 0) }
+        let fullSize = measure(width)
+        guard fullSize.width.isFinite, fullSize.width >= 0, fullSize.height.isFinite, fullSize.height >= 0 else {
+            return Placement(size: .zero, content: .zero, proposalWidth: width)
+        }
+        let baseline = CGRect(x: direction == .rightToLeft ? width - fullSize.width : 0, y: 0,
+                              width: fullSize.width, height: fullSize.height)
+        let active = regions.filter { !$0.isNull && !$0.isInfinite && !$0.isEmpty }
+        var hits = active.filter { $0.intersects(baseline) }
+        if hits.isEmpty { return Placement(size: CGSize(width: width, height: fullSize.height), content: baseline, proposalWidth: width) }
+        var left: CGFloat = 0
+        var right: CGFloat = 0
+        let minimumWidth = min(220, width * 0.6)
+        // A later region may collide only after text wraps. Measure that actual height and try at
+        // most three narrower lanes before falling back to the independent full-width measurement.
+        for _ in 0..<3 {
+            let previous = (left, right)
+            for region in hits {
+                if region.minX >= width - region.maxX { right = max(right, width - region.minX + 8) }
+                else { left = max(left, region.maxX + 8) }
+            }
+            let lane = width - left - right
+            guard lane >= minimumWidth, left != previous.0 || right != previous.1 else { break }
+            let fitted = measure(lane)
+            guard fitted.width.isFinite, fitted.height.isFinite, fitted.height >= 0, fitted.width <= lane + 0.5 else { break }
+            let candidateX = left + (direction == .rightToLeft ? lane - fitted.width : 0)
+            let candidate = CGRect(x: candidateX, y: 0, width: fitted.width, height: fitted.height)
+            hits = active.filter { $0.intersects(candidate) }
+            if hits.isEmpty {
+                return Placement(size: CGSize(width: width, height: fitted.height), content: candidate, proposalWidth: lane)
+            }
+        }
+        var content = baseline
+        // Full-width fallback has its own measured height, so candidate wrapping cannot feed back
+        // into the next pass. Moving below a collision expands native scroll content, never clips it.
+        for _ in 0...active.count {
+            guard let bottom = active.filter({ $0.intersects(content) }).map(\.maxY).max() else { break }
+            content.origin.y = bottom + 8
+        }
+        return Placement(size: CGSize(width: width, height: content.maxY), content: content, proposalWidth: width)
     }
 }
 

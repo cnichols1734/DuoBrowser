@@ -132,6 +132,8 @@ extension BrowserSession {
               !privateMode, !browser.isPrivate, selectedID == browser.id,
               let current = readingList.first(where: { $0.id == entry.id && $0.address == failure.targetURL?.absoluteString }),
               current.offlineID != nil else { return nil }
-        return try articleForOpening(current)
+        // Opening the valid copy is independent of its best-effort read status. A failed status
+        // write still rolls back, but must not replace the source page's critical recovery state.
+        return try articleForOpening(current, reportReadStatusFailure: false)
     }
 }
