@@ -37,6 +37,19 @@ struct BrowserToolbar: View {
         [browser.isPrivate ? "Private" : nil, addressIdentity.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
     }
     private var addressIdentity: BrowserAddressIdentity { BrowserAddressIdentity(browser: browser) }
+    private var tabSwipeGesture: TabSwipeGestureModifier {
+        #if DEBUG
+        var gesture = TabSwipeGestureModifier(session: session, enabled: !keepExpanded)
+        let ownerID = browser.id
+        let state = session.tabSwipe
+        gesture.lifecycleDidChangeForTesting = { token, appeared in
+            state.gestureOwnerDidChangeForTesting?(token, ownerID, appeared)
+        }
+        return gesture
+        #else
+        TabSwipeGestureModifier(session: session, enabled: !keepExpanded)
+        #endif
+    }
     private var addressRowHeight: CGFloat {
         max(52, textLineHeight + 16) + (statusText.isEmpty || showingAddress ? 0 : statusLineHeight + 4)
     }
@@ -114,7 +127,7 @@ struct BrowserToolbar: View {
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
-                            .modifier(TabSwipeGestureModifier(session: session, enabled: !keepExpanded))
+                            .modifier(tabSwipeGesture)
                             .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
                             .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
                             .accessibilityFocused($addressFocused)

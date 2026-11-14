@@ -217,6 +217,11 @@ extension NativeCheckRunner {
         let suite = "PremiumSwipeModal-" + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        var mountedGestureOwners: [UUID: UUID] = [:]
+        session.tabSwipe.gestureOwnerDidChangeForTesting = { token, browserID, appeared in
+            if appeared { mountedGestureOwners[token] = browserID }
+            else { mountedGestureOwners.removeValue(forKey: token) }
+        }
         let source = session.selected
         try await load(source, "")
         _ = try await js(source, "document.querySelector('#kept').value='Keep the source behind this dialog'; true")
@@ -232,6 +237,7 @@ extension NativeCheckRunner {
         }
         var zoom: BrowserZoomController?
         defer {
+            session.tabSwipe.gestureOwnerDidChangeForTesting = nil
             session.tabs.forEach { $0.presentation.cancel() }
             session.showingTabs = true
             zoom?.presentedViewController?.dismiss(animated: false)
@@ -313,10 +319,33 @@ extension NativeCheckRunner {
                   "an ordinary swipe still commits after source-dialog and window interruptions")
         let blank = session.newTab()
         session.select(next.id)
-        try await wait { session.selected.showingStartPage && content.view.window != nil }
+        func blankSourceDiagnostics() -> String {
+            let owners = mountedGestureOwners.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+            let modal = swipe.presentedViewController.map { String(describing: type(of: $0)) } ?? "none"
+            let contentModal = content.presentedViewController.map { String(describing: type(of: $0)) } ?? "none"
+            return "selected=\(session.selectedID) source=\(next.id) target=\(blank.id) owners=[\(owners)] active=\(swipe.hasActivePresentation) modal=\(modal) contentModal=\(contentModal) rootAttached=\(swipe.view.window != nil) contentAttached=\(content.view.window != nil) sameWindow=\(content.view.window === swipe.view.window) start=\(session.selected.showingStartPage)"
+        }
+        do {
+            // Model selection can change before SwiftUI replaces the previous toolbar.
+            // Removal is acknowledged only after its existing onDisappear cancellation.
+            try await wait {
+                session.selectedID == next.id && session.selected.showingStartPage
+                    && mountedGestureOwners.count == 1 && mountedGestureOwners.values.first == next.id
+                    && swipe.view.window != nil && content.view.window === swipe.view.window
+                    && swipe.presentedViewController == nil && content.presentedViewController == nil
+                    && !swipe.hasActivePresentation
+            }
+        } catch {
+            results.append("BLANK SWIPE SOURCE READINESS: " + blankSourceDiagnostics())
+            throw error
+        }
         session.tabSwipe.receive?(.changed(-width * 0.3))
         session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
-        try await wait { session.selectedID == blank.id && !swipe.hasActivePresentation }
+        do { try await wait { session.selectedID == blank.id && !swipe.hasActivePresentation } }
+        catch {
+            results.append("BLANK SWIPE COMMIT: " + blankSourceDiagnostics())
+            throw error
+        }
         try check(session.selected === blank && blank.showingStartPage,
                   "native blank start pages remain eligible for ordinary adjacent-tab swipes")
     }

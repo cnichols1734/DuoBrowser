@@ -36,3 +36,7 @@ Swift parsing and scoped whitespace checks pass. Build 14 Debug and Release buil
 ## Remaining acceptance
 
 The native check drives production gesture events and UIKit presentation directly; actual finger recognition and the visual feel of swiping require simulator interaction and owner device testing. Physical touch, energy, long-running many-tab behavior and spoken VoiceOver acceptance are not established by source parsing or synthetic assertions. Cold restoration still restores addresses and best-effort reading positions, not arbitrary page forms or full navigation histories. Explicitly closing multiple tabs discards their unsaved website input after confirmation; Recently Closed remains address-based recovery.
+
+## Native blank-page fixture readiness
+
+The blank-to-blank native swipe fixture now waits for the intended toolbar as the sole mounted gesture owner, in addition to the attached-window and modal checks. Debug-only per-instance lifecycle observations capture each toolbar’s immutable browser ID, and report disappearance only after its existing cancellation has run. This prevents the fixture from injecting a new gesture before SwiftUI replaces the previous toolbar. Both 10-second interaction deadlines and the final selection assertion are unchanged; Release behavior and assertion counts are unchanged. Failure output includes synthetic owner/window/presentation state.

@@ -25,6 +25,9 @@ final class TabSwipeState {
         case cancelled
     }
     var receive: ((Event) -> Void)?
+    #if DEBUG
+    var gestureOwnerDidChangeForTesting: ((UUID, UUID, Bool) -> Void)?
+    #endif
 }
 
 struct TabSwipeGestureModifier: ViewModifier {
@@ -32,8 +35,21 @@ struct TabSwipeGestureModifier: ViewModifier {
     let enabled: Bool
     @GestureState private var touching = false
     @State private var dragging = false
+    #if DEBUG
+    @State private var lifecycleToken = UUID()
+    var lifecycleDidChangeForTesting: ((UUID, Bool) -> Void)?
+    #endif
 
     func body(content: Content) -> some View {
+        #if DEBUG
+        gestureContent(content)
+            .onAppear { lifecycleDidChangeForTesting?(lifecycleToken, true) }
+        #else
+        gestureContent(content)
+        #endif
+    }
+
+    private func gestureContent(_ content: Content) -> some View {
         content.simultaneousGesture(
             DragGesture(minimumDistance: 16)
                 .updating($touching) { _, state, _ in state = true }
@@ -62,7 +78,14 @@ struct TabSwipeGestureModifier: ViewModifier {
         .onChange(of: enabled) { _, value in
             if !value { dragging = false; session.tabSwipe.receive?(.cancelled) }
         }
-        .onDisappear { dragging = false; session.tabSwipe.receive?(.cancelled) }
+        .onDisappear {
+            dragging = false
+            session.tabSwipe.receive?(.cancelled)
+            #if DEBUG
+            // A fixture acknowledges removal only after this owner's stale cancellation ran.
+            lifecycleDidChangeForTesting?(lifecycleToken, false)
+            #endif
+        }
     }
 }
 
