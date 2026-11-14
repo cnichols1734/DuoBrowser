@@ -570,7 +570,9 @@ final class NativeCheckRunner {
             try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
             try check(interpolates == true, "WebKit animation interpolates horizontally without pushing text down")
             let fittedFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
-            try check(fittedFont == "18px", "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
+            // WebKit can autosize the authored 18px font on a larger display; fitting must
+            // preserve the actual computed baseline rather than force the authored CSS size.
+            try check(fittedFont == originalFont, "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
             try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
             try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
             try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")
@@ -683,7 +685,7 @@ final class NativeCheckRunner {
             try await wait {
                 (try? await self.js(model, "![...document.getElementById('reading').attributes].some(a=>a.name.startsWith('data-duo-camera-'))")) as? Bool == true
             }
-            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');document.getElementById('draft').value='Long article draft'")
+            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');window.originalLongFont=getComputedStyle(originalLongNode).fontSize;document.getElementById('draft').value='Long article draft'")
             let longWidth = try await measure("width"), longTop = try await measure("top")
             try check((try await measure("height")) > 320, "native long article exceeds the previous camera cutoff")
             // Exercise the production UIKit geometry publisher, not only a synthetic JavaScript update.
@@ -722,7 +724,7 @@ final class NativeCheckRunner {
             let fittedLongTop = try await measure("top"), fittedLongWidth = try await measure("width")
             try check(abs(fittedLongTop-longTop)<1 && fittedLongWidth < longWidth,
                       "production geometry bridge fits long article beside actual camera without a downshift")
-            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize==='18px'") as? Bool == true,
+            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize===originalLongFont") as? Bool == true,
                       "long camera fitting preserves native DOM, draft and font size")
             model.originalPageLayout = true
             try await wait { abs(((try? await measure("width")) ?? 0) - longWidth) < 1 }
