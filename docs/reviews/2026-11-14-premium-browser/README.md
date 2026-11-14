@@ -21,6 +21,8 @@ The owner specifically named AdBlock Pro, Adblock Plus, AdGuard, 1Blocker and Wi
 
 Initial portable recovery policy checks pass (27). The existing 197 web assertions pass; no Reader or page-layout JavaScript was changed. The first integrated Debug build passed. The initial new native run exposed an ignored quick second swipe during snap-back; production interruption behavior was corrected and an explicit regression added. These are intermediate checkpoints, not final exact-source acceptance.
 
+Source `41b81052d35c0947813468c88042cea66b342388` then passed all **79 new native assertions** and the retained **49 Downloads assertions** on a fresh dedicated iOS 27.1 Duo simulator. All **389 portable checks** and strict SwiftLint 0.65.1 passed. An independent final review found no blocking regression; its small follow-up clears hidden preview-label text when a swipe ends. The older Website Data batch is being investigated after its WebKit record refresh stalled locally; it has not been removed or weakened.
+
 Final Debug/Release builds, full portable/strict-lint/native checks, simulator interaction/capture matrix, latest-head hosted CI/Copilot review and signed phone installation will be recorded here as they complete. Scratch logs, profiles, device identifiers and personal data remain under ignored `work/` and are not uploaded.
 
 Physical touch/frame pacing, battery/endurance, full spoken VoiceOver, signed credentials/passkeys, third-party system-filter installations and real Safari transfer require separate hardware verification. Simulator geometry and synthetic callbacks do not prove those outcomes.

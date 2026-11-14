@@ -265,5 +265,6 @@ final class TabSwipeController: UIViewController {
         preview.transform = .identity
         preview.isHidden = true
         image.image = nil
+        siteTitleLabel.text = nil
     }
 }
