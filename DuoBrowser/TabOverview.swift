@@ -48,17 +48,22 @@ struct TabOverview: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.layoutDirection) private var layoutDirection
+    @ScaledMetric(relativeTo: .body) private var searchRowHeight = 44.0
     #if DEBUG
     private var didRenderTabs: (([UUID]) -> Void)?
+    private var didMeasureHeader: ((UIView) -> Void)?
     #endif
 
     init(session: BrowserSession) { self.session = session }
 
     #if DEBUG
-    init(session: BrowserSession, search: String, didRenderTabs: @escaping ([UUID]) -> Void) {
+    init(session: BrowserSession, search: String, didRenderTabs: @escaping ([UUID]) -> Void,
+         didMeasureHeader: ((UIView) -> Void)? = nil) {
         self.session = session
         _search = State(initialValue: search)
         self.didRenderTabs = didRenderTabs
+        self.didMeasureHeader = didMeasureHeader
     }
     #endif
 
@@ -94,8 +99,14 @@ struct TabOverview: View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 header
-                    .padding(.horizontal, max(20, max(contentInsets.left, contentInsets.right) + 12))
-                    .padding(.top, max(12, contentInsets.top + 8))
+                    .background {
+                        #if DEBUG
+                        CompactTabHeaderProbe(register: didMeasureHeader).allowsHitTesting(false).accessibilityHidden(true)
+                        #endif
+                    }
+                    .modifier(StartPageClearance())
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
                     .padding(.bottom, 12)
                 if filteredTabs.isEmpty {
                     ContentUnavailableView.search(text: search)
@@ -165,33 +176,49 @@ struct TabOverview: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selecting ? "\(selectedTabs.count) Selected" : scope)
-                        .font(.title2.bold()).lineLimit(1).accessibilityAddTraits(.isHeader)
-                    Text("\(session.visibleTabs.count) \(session.visibleTabs.count == 1 ? "tab" : "tabs")")
-                        .font(.subheadline).foregroundStyle(.secondary)
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    HStack {
+                        Text(selecting ? "\(selectedTabs.count) Selected" : "\(session.visibleTabs.count) Tabs")
+                            .font(.headline).accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 8)
+                        selectionButton
+                    }
                 }
-                Spacer(minLength: 12)
-                Button(selecting ? "Cancel" : "Select") {
-                    if selecting { endSelection() }
-                    else { selecting = true; searchFocused = false }
-                }.font(.body.weight(.medium)).frame(minHeight: 44)
-            }
-            HStack(spacing: 10) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
-                TextField("Search Tabs", text: $search)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled().focused($searchFocused)
-                    .accessibilityLabel("Search Tabs")
-                if !search.isEmpty {
-                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44) }
-                        .accessibilityLabel("Clear tab search")
+            } else {
+                HStack(spacing: 12) {
+                    searchField
+                    selectionButton
                 }
             }
-            .padding(.horizontal, 14).frame(minHeight: 46)
-            .background(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.88), in: RoundedRectangle(cornerRadius: 14))
         }
+    }
+
+    private var selectionButton: some View {
+        Button(selecting ? "Cancel" : "Select") {
+            if selecting { endSelection() }
+            else { selecting = true; searchFocused = false }
+        }
+        .font(.body.weight(.medium)).fixedSize()
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityLabel(selecting ? "Cancel tab selection, \(selectedTabs.count) selected" : "Select Tabs")
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField("Search Tabs", text: $search)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().focused($searchFocused)
+                .accessibilityLabel("Search Tabs")
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Clear tab search")
+            }
+        }
+        .padding(.horizontal, 14).frame(minHeight: max(44, searchRowHeight))
+        .background(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.88), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var tabList: some View {
@@ -217,7 +244,8 @@ struct TabOverview: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .environment(\.editMode, .constant(selecting ? .active : .inactive))
         .scrollDismissesKeyboard(.interactively)
-        .padding(.horizontal, max(contentInsets.left, contentInsets.right))
+        .padding(.leading, layoutDirection == .rightToLeft ? contentInsets.right : contentInsets.left)
+        .padding(.trailing, layoutDirection == .rightToLeft ? contentInsets.left : contentInsets.right)
     }
 
     private func listLabel(_ tab: BrowserModel) -> some View {
@@ -294,30 +322,57 @@ struct TabOverview: View {
                 .font(.subheadline.weight(.medium)).padding(.horizontal, 16).padding(.vertical, 8).frame(minHeight: 52)
                 .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
             } else {
-                HStack(spacing: 12) {
-                    Button { session.newTab() } label: { Image(systemName: "plus").frame(width: 48, height: 48) }
-                        .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("New Tab")
-                    Spacer(minLength: 0)
-                    modeMenu
-                    Spacer(minLength: 0)
-                    Menu {
-                        Picker("Tab Layout", selection: $session.tabOverviewStyle) {
-                            ForEach(TabOverviewStyle.allCases, id: \.self) { style in Label(style.title, systemImage: style.symbol).tag(style) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 8) {
+                            modeMenu
+                            HStack(spacing: 12) {
+                                newTabButton
+                                Spacer(minLength: 0)
+                                overviewOptions
+                                doneButton
+                            }
                         }
-                        if !session.privateMode {
-                            Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
-                            Button("Manage Workspaces", systemImage: "square.stack") { manageWorkspaces = true }
+                    } else {
+                        HStack(spacing: 12) {
+                            newTabButton
+                            Spacer(minLength: 0)
+                            modeMenu
+                            Spacer(minLength: 0)
+                            overviewOptions
+                            doneButton
                         }
-                        Button("Tab Appearance", systemImage: "photo") { appearance = true }
-                    } label: { Image(systemName: "ellipsis").frame(width: 48, height: 48) }
-                        .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Tab options")
-                    Button { session.showingTabs = false } label: {
-                        Image(systemName: "checkmark").fontWeight(.semibold).frame(width: 48, height: 48)
-                    }.buttonStyle(.plain)
-                        .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Done")
-                }.font(.title3).buttonStyle(.plain)
+                    }
+                }
+                .font(.title3).buttonStyle(.plain)
             }
         }
+    }
+
+    private var newTabButton: some View {
+        Button { session.newTab() } label: { Image(systemName: "plus").frame(width: 48, height: 48) }
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("New Tab")
+    }
+
+    private var overviewOptions: some View {
+        Menu {
+            Picker("Tab Layout", selection: $session.tabOverviewStyle) {
+                ForEach(TabOverviewStyle.allCases, id: \.self) { style in Label(style.title, systemImage: style.symbol).tag(style) }
+            }
+            if !session.privateMode {
+                Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
+                Button("Manage Workspaces", systemImage: "square.stack") { manageWorkspaces = true }
+            }
+            Button("Tab Appearance", systemImage: "photo") { appearance = true }
+        } label: { Image(systemName: "ellipsis").frame(width: 48, height: 48) }
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Tab options")
+    }
+
+    private var doneButton: some View {
+        Button { session.showingTabs = false } label: {
+            Image(systemName: "checkmark").fontWeight(.semibold).frame(width: 48, height: 48)
+        }.buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Done")
     }
 
     private var selectionAllButton: some View {
@@ -339,7 +394,7 @@ struct TabOverview: View {
         }
     }
     private var selectionCloseButton: some View {
-        Button("Close", systemImage: "trash", role: .destructive) { confirmClose = true }
+        Button("Close \(selectedTabs.count)", systemImage: "trash", role: .destructive) { confirmClose = true }
             .frame(minHeight: 44).disabled(selectedTabs.isEmpty)
     }
 
@@ -356,9 +411,12 @@ struct TabOverview: View {
                 }
             }
         } label: {
-            Text(session.privateMode ? "Private" : scope)
-                .font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                .padding(.horizontal, 16).frame(minHeight: 48)
+            HStack(spacing: 6) {
+                Text(session.privateMode ? "Private" : scope).lineLimit(1)
+                Text("· \(session.visibleTabs.count)").monospacedDigit().foregroundStyle(.secondary).fixedSize()
+            }
+            .font(.subheadline.weight(.semibold)).minimumScaleFactor(0.8)
+            .padding(.horizontal, 16).frame(minHeight: 48)
         }
         .glassEffect(.regular.interactive(), in: Capsule())
         .accessibilityLabel("Browsing mode, \(scope), \(session.visibleTabs.count) open")
@@ -422,6 +480,18 @@ struct TabListRow: View {
         .accessibilityAddTraits((selection ?? current) ? [.isSelected] : [])
     }
 }
+
+#if DEBUG
+private struct CompactTabHeaderProbe: UIViewRepresentable {
+    let register: ((UIView) -> Void)?
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) {
+        register?(view)
+    }
+}
+
+
+#endif
 
 private struct TabPreview: View {
     @ObservedObject var tab: BrowserModel

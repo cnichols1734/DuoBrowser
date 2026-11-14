@@ -356,9 +356,12 @@ final class BrowserSession: ObservableObject {
         let sourceWorkspace = workspaceID
         let movingIDs = Set(moving.map(\.id))
         let replacement = visibleTabs.first { !movingIDs.contains($0.id) }
+        let finalSelection = movingIDs.contains(selectedID) ? replacement?.id ?? selectedID : selectedID
         moving.forEach { $0.workspaceID = destination }
         objectWillChange.send()
-        guard saveNow() else {
+        // Persist the final selection in the same transaction as membership, without
+        // activating a replacement or cancelling the live source before it succeeds.
+        guard saveNow(selectedIDOverride: finalSelection) else {
             moving.forEach { $0.workspaceID = sourceWorkspace }
             objectWillChange.send()
             return 0
@@ -755,15 +758,19 @@ final class BrowserSession: ObservableObject {
         }
     }
     @discardableResult
-    func saveNow(replaceBackup: Bool = false, reportFailure: Bool = true) -> Bool {
+    func saveNow(replaceBackup: Bool = false, reportFailure: Bool = true, selectedIDOverride: UUID? = nil) -> Bool {
         let saveError = "Your browsing changes could not be saved on this device."
         saveTask?.cancel(); saveTask = nil
         let normal = tabs.filter { !$0.isPrivate }
         guard let first = normal.first else { return false }
+        if let selectedIDOverride, !normal.contains(where: { $0.id == selectedIDOverride }) {
+            if reportFailure { selected.errorMessage = saveError }
+            return false
+        }
         let archive = BrowserArchive(session: TabArchive(tabs: normal.map {
             TabRecord(id: $0.id, address: $0.restorationURL?.absoluteString, fixture: $0.isFixture,
                       scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
-        }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
+        }, selectedID: selectedIDOverride ?? (normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id)),
         history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces,
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {

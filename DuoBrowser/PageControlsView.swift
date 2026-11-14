@@ -58,7 +58,7 @@ struct PageControlsView: View {
         VStack(spacing: 0) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: typeSize.isAccessibilitySize ? 24 : 16) {
                     if hasPage {
                         pageActions
                         VStack(spacing: 0) {
@@ -80,13 +80,13 @@ struct PageControlsView: View {
                     #endif
                 }
                 .padding(.horizontal, 24)
-                .padding(.top, 12)
-                .padding(.bottom, 24)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
                 .frame(maxWidth: 620)
                 .frame(maxWidth: .infinity)
             }
         }
-        .presentationDetents(typeSize.isAccessibilitySize ? [.large] : [.height(hasPage ? 620 : 390), .large])
+        .presentationDetents([.large])
         .presentationDragIndicator(.visible)
         .presentationContentInteraction(.scrolls)
     }
@@ -113,7 +113,7 @@ struct PageControlsView: View {
             }
             .buttonStyle(.plain).accessibilityLabel("Done")
         }
-        .padding(.horizontal, 24).padding(.top, 28).padding(.bottom, 12)
+        .padding(.horizontal, 24).padding(.top, 16).padding(.bottom, 8)
         .frame(maxWidth: 668).frame(maxWidth: .infinity)
     }
 
@@ -190,8 +190,8 @@ struct PageControlsView: View {
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.tertiary)
             }
-            .foregroundStyle(.primary).frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-            .padding(.vertical, 4).contentShape(Rectangle())
+            .foregroundStyle(.primary).frame(maxWidth: .infinity, minHeight: typeSize.isAccessibilitySize ? 64 : 56, alignment: .leading)
+            .padding(.vertical, typeSize.isAccessibilitySize ? 4 : 2).contentShape(Rectangle())
         }
         .buttonStyle(.plain).accessibilityElement(children: .combine)
     }
@@ -217,11 +217,11 @@ private struct PageControlsQuickAction: View {
 
     var body: some View {
         Button(action: action) {
-            VStack(spacing: 9) {
+            VStack(spacing: 8) {
                 Image(systemName: symbol).font(.system(size: 23, weight: .regular)).frame(height: 30)
                 Text(title).font(.caption.weight(.medium)).multilineTextAlignment(.center).lineLimit(2)
             }
-            .frame(maxWidth: .infinity, minHeight: 68, alignment: .top).contentShape(Rectangle())
+            .frame(maxWidth: .infinity, minHeight: 60, alignment: .top).contentShape(Rectangle())
         }
         .buttonStyle(.plain).foregroundStyle(.primary).disabled(disabled)
     }

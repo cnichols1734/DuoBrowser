@@ -207,6 +207,197 @@ extension NativeCheckRunner {
         try premiumTabWriteFailureChecks()
         try premiumBatchClosePersistenceChecks()
         try await premiumPrivateTabRowChecks()
+        try await premiumAtomicMoveSelectionChecks()
+        try await premiumNewTabOverviewChecks()
+    }
+
+    private func premiumNewTabOverviewChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumNewTabOverview-" + UUID().uuidString)
+        let suite = "PremiumNewTabOverview-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        let original = session.selected
+        try await load(original, "")
+        _ = try await js(original, "document.querySelector('#kept').value='New Tab keeps this live draft'; true")
+        let originalView = original.webView
+        let shell = UIHostingController(rootView: BrowserZoomPresenter(session: session).ignoresSafeArea(.container))
+        host.addChild(shell); shell.view.frame = host.view.bounds
+        host.view.addSubview(shell.view); shell.didMove(toParent: host)
+        func findZoom(_ controller: UIViewController) -> BrowserZoomController? {
+            if let zoom = controller as? BrowserZoomController { return zoom }
+            return controller.children.lazy.compactMap { findZoom($0) }.first
+        }
+        func findStack(_ controller: UIViewController) -> TabStackController? {
+            if let stack = controller as? TabStackController { return stack }
+            return controller.children.lazy.compactMap { findStack($0) }.first
+        }
+        var zoom: BrowserZoomController?
+        defer {
+            session.showingTabs = true
+            zoom?.presentedViewController?.dismiss(animated: false)
+            shell.willMove(toParent: nil); shell.view.removeFromSuperview(); shell.removeFromParent()
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try await wait { zoom = findZoom(shell); return zoom != nil }
+        let presenter = zoom!
+        func browserVisible() -> Bool {
+            presenter.presentedViewController is TabSwipeController && presenter.presentedViewController?.isBeingPresented == false
+        }
+        func overviewVisible(_ tab: BrowserModel) -> Bool {
+            guard presenter.presentedViewController == nil, let stack = findStack(presenter),
+                  let card = stack.zoomSource(for: tab.id, centered: false) else { return false }
+            return card.window != nil && card.bounds.width > 0 && card.bounds.height > 0
+                && stack.collectionView.isUserInteractionEnabled && shell.view.isUserInteractionEnabled
+        }
+        try await wait { browserVisible() && originalView.window != nil }
+        try check(original.webView === originalView, "production browser presenter initially owns the live source page")
+
+        // Unlike the original zoom test, create a tab while its overview is offscreen.
+        let fromLiveBrowser = session.newTab()
+        try await wait { fromLiveBrowser.loadedWebView?.window != nil }
+        session.showTabs()
+        try await wait { overviewVisible(fromLiveBrowser) }
+        try check(session.selected === fromLiveBrowser && session.visibleTabs.count == 2,
+                  "New Tab from the live browser can immediately return to a visible interactive tab switcher")
+
+        let fromOverview = session.newTab()
+        try await wait { browserVisible() && fromOverview.loadedWebView?.window != nil }
+        session.showTabs()
+        try await wait { overviewVisible(fromOverview) }
+        try check(session.selected === fromOverview && session.visibleTabs.count == 3,
+                  "the overview New Tab action can return to its own tab card without restarting")
+
+        session.select(original.id)
+        try await wait { browserVisible() && originalView.window != nil }
+        guard let browser = presenter.presentedViewController as? TabSwipeController else {
+            throw NSError(domain: "Missing production live browser for Page options", code: 1)
+        }
+        var fromPageOptions: BrowserModel?
+        weak var controlsPresenter: UIViewController?
+        let controls = UIHostingController(rootView: PageControlsView(session: session, browser: original) { action in
+            let request = PageControlsRequest(action: action, browser: original)
+            controlsPresenter?.dismiss(animated: true) {
+                guard session.selectedID == original.id, request.matches(original) else { return }
+                if case .newTab = action { fromPageOptions = session.newTab() }
+            }
+        })
+        controlsPresenter = controls
+        controls.modalPresentationStyle = .pageSheet
+        browser.present(controls, animated: true)
+        try await wait { controls.presentingViewController != nil && !controls.isBeingPresented }
+        try check(originalView.window != nil && browser.presentedViewController != nil,
+                  "the real Page options surface presents above the production browser without replacing its page")
+        controls.rootView.perform(.newTab)
+        try await wait { fromPageOptions?.loadedWebView?.window != nil && controls.presentingViewController == nil }
+        session.showTabs()
+        try await wait { fromPageOptions.map(overviewVisible) == true }
+        try check(session.selected === fromPageOptions && session.visibleTabs.count == 4,
+                  "Page options dismissal then New Tab can return to the production tab switcher")
+
+        session.select(original.id)
+        try await wait { browserVisible() }
+        let rapid = session.newTab()
+        session.showTabs()
+        session.showTabs()
+        try await wait { overviewVisible(rapid) }
+        try check(session.selected === rapid && presenter.presentedViewController == nil,
+                  "rapid New Tab and repeated Tabs requests reconcile without a latched presentation state")
+        session.select(original.id)
+        try await wait { browserVisible() && originalView.window != nil }
+        let draft = try await js(original, "document.querySelector('#kept').value") as? String
+        try check(original.webView === originalView && draft == "New Tab keeps this live draft",
+                  "repeated New Tab switcher cycles preserve the original live WebKit page and unsent input")
+        session.showTabs()
+        try await wait { overviewVisible(original) }
+        try check(session.showingTabs && presenter.presentedViewController == nil,
+                  "the production presenter remains usable for another overview transition after every New Tab path")
+    }
+
+    private func premiumAtomicMoveSelectionChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumAtomicMove-" + UUID().uuidString)
+        let suite = "PremiumAtomicMove-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        var rejectPrimary = false
+        var primaryWrites = 0
+        var rejectedWrites = 0
+        var recordCommit = false
+        var selectedDuringCommit: [UUID] = []
+        var replacementUntouched = true
+        weak var liveSession: BrowserSession?
+        weak var replacement: BrowserModel?
+        var replacementLastUsed = Date.distantPast
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if url.lastPathComponent == "session.json" {
+                primaryWrites += 1
+                if recordCommit, let liveSession, let replacement {
+                    selectedDuringCommit.append(liveSession.selectedID)
+                    replacementUntouched = replacementUntouched && replacement.loadedWebView == nil
+                        && replacement.lastUsed == replacementLastUsed
+                }
+                if rejectPrimary { rejectedWrites += 1; throw CocoaError(.fileWriteOutOfSpace) }
+            }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        liveSession = session
+        var restoredSessions: [BrowserSession] = []
+        defer {
+            restoredSessions.forEach { restored in restored.tabs.forEach { $0.close() } }
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        let sourceWorkspace = session.workspaceID
+        let kept = session.newTab()
+        session.createWorkspace("Destination")
+        let destination = session.workspaceID
+        session.switchWorkspace(sourceWorkspace)
+        session.select(source.id)
+        session.showingTabs = true
+        let sourceView = source.webView
+        replacement = kept
+        replacementLastUsed = kept.lastUsed
+        try check(session.saveNow(), "atomic move seeds a durable source selection and workspace")
+        recordCommit = true
+        rejectPrimary = true
+        try check(session.moveTabs([source.id], to: destination) == 0 && session.selected === source
+                  && source.webView === sourceView && source.workspaceID == sourceWorkspace
+                  && kept.workspaceID == sourceWorkspace && session.workspaceID == sourceWorkspace && session.showingTabs,
+                  "a failed first move write preserves live selection page and source membership before any replacement activation")
+        let beforeMove = archive.load()!
+        try check(beforeMove.session.selectedID == source.id && beforeMove.session.tabs.first { $0.id == source.id }?.workspaceID == sourceWorkspace,
+                  "a failed atomic move leaves the original durable selection and memberships intact")
+        rejectPrimary = false
+        try check(session.moveTabs([source.id], to: destination) == 1 && session.selected === kept
+                  && session.workspaceID == sourceWorkspace && source.workspaceID == destination && session.showingTabs,
+                  "a successful selected-tab move switches live selection only after its archive commit")
+        recordCommit = false
+        let rejectedBeforeFollowup = rejectedWrites
+        rejectPrimary = true
+        let immediate = archive.load()!
+        let restored = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        restoredSessions.append(restored)
+        try check(immediate.session.selectedID == kept.id && immediate.session.tabs.first { $0.id == source.id }?.workspaceID == destination
+                  && restored.selectedID == kept.id && restored.workspaceID == sourceWorkspace,
+                  "the same membership write immediately restores the final selected tab and source workspace without waiting for debounce")
+        try check(selectedDuringCommit == [source.id, source.id] && replacementUntouched,
+                  "failed and successful move writes observe the original live selection and an unactivated replacement")
+        try await wait { rejectedWrites > rejectedBeforeFollowup }
+        let afterFailure = archive.load()!
+        let restoredAfterFailure = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        restoredSessions.append(restoredAfterFailure)
+        try check(afterFailure.session.selectedID == kept.id && restoredAfterFailure.selectedID == kept.id
+                  && restoredAfterFailure.workspaceID == sourceWorkspace
+                  && afterFailure.session.tabs.first { $0.id == source.id }?.workspaceID == destination
+                  && session.selected.errorMessage == "Your browsing changes could not be saved on this device.",
+                  "a later debounced write failure cannot undo the already committed final move selection or workspace")
+        let writesBeforeInvalid = primaryWrites
+        try check(!session.saveNow(selectedIDOverride: UUID()) && primaryWrites == writesBeforeInvalid
+                  && archive.load()?.session.selectedID == kept.id,
+                  "an unknown selection override is rejected before writing or changing the durable selection")
     }
 
     private func premiumBatchClosePersistenceChecks() throws {

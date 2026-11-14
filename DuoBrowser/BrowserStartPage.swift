@@ -36,7 +36,7 @@ struct BrowserStartPage: View {
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
+                VStack(alignment: .leading, spacing: dynamicTypeSize.isAccessibilitySize ? 32 : 20) {
                     heading
                         .startPageFrame("heading", update: reportFrame)
                         .startPageClearance()
@@ -54,8 +54,10 @@ struct BrowserStartPage: View {
                     }
                 }
                 .frame(maxWidth: 800, alignment: .leading)
-                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 20 : 28)
-                .padding(.top, max(32, geometry.safeAreaInsets.top + 20))
+                .padding(.horizontal, dynamicTypeSize.isAccessibilitySize ? 20 : 24)
+                // The native host supplies safe-area positioning; local reserved-region layout
+                // clears actual collisions. Do not add the same top geometry a second time.
+                .padding(.top, 16)
                 .padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 44)
                 .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .top)
             }
@@ -95,7 +97,7 @@ struct BrowserStartPage: View {
                 VStack(alignment: .leading, spacing: 12) {
                 Image(systemName: "hand.raised")
                     .font(.title2.weight(.medium)).foregroundStyle(.secondary).accessibilityHidden(true)
-                    Text("Private Browsing").font(.largeTitle.bold())
+                    Text("Private Browsing").font(dynamicTypeSize.isAccessibilitySize ? .largeTitle.bold() : .title2.bold())
                         .fixedSize(horizontal: false, vertical: true).accessibilityAddTraits(.isHeader)
                 }
             } else if dynamicTypeSize.isAccessibilitySize {
@@ -107,13 +109,13 @@ struct BrowserStartPage: View {
             } else {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .firstTextBaseline, spacing: 16) {
-                        Text("DuoBrowser").font(.largeTitle.bold()).fixedSize()
+                        Text("DuoBrowser").font(.title2.bold()).fixedSize()
                             .accessibilityAddTraits(.isHeader)
                         Spacer(minLength: 0)
                         workspaceMenu.fixedSize()
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("DuoBrowser").font(.largeTitle.bold())
+                        Text("DuoBrowser").font(.title2.bold())
                             .accessibilityAddTraits(.isHeader)
                         workspaceMenu
                     }
@@ -159,8 +161,8 @@ struct BrowserStartPage: View {
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 20).padding(.vertical, 19)
-            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+            .padding(.horizontal, 18).padding(.vertical, 14)
+            .frame(maxWidth: .infinity, minHeight: 50, alignment: .leading)
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
@@ -183,7 +185,7 @@ struct BrowserStartPage: View {
     }
 
     private var favoritesSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: dynamicTypeSize.isAccessibilitySize ? 20 : 14) {
             sectionHeading("Favorites", action: session.favorites.isEmpty ? "Add" : "Edit") {
                 if session.favorites.isEmpty { editingFavorite = LibraryEntry(address: "", title: "", isFavorite: true) }
                 else { editingFavorites = true }

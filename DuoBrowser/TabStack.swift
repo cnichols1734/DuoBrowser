@@ -191,8 +191,23 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
     private var refreshID: AnyHashable?
 
     override func loadView() {
-        view = collectionView
+        // The representable exposes a stationary viewport. A UIScrollView's root bounds origin
+        // moves during elastic overscroll; keep that scrolling/compositing space inside this clip.
+        let viewport = UIView()
+        viewport.backgroundColor = .clear
+        viewport.isOpaque = false
+        viewport.clipsToBounds = true
+        view = viewport
+        collectionView.translatesAutoresizingMaskIntoConstraints = false
+        viewport.addSubview(collectionView)
+        NSLayoutConstraint.activate([
+            collectionView.leadingAnchor.constraint(equalTo: viewport.leadingAnchor),
+            collectionView.trailingAnchor.constraint(equalTo: viewport.trailingAnchor),
+            collectionView.topAnchor.constraint(equalTo: viewport.topAnchor),
+            collectionView.bottomAnchor.constraint(equalTo: viewport.bottomAnchor)
+        ])
         collectionView.backgroundColor = .clear
+        collectionView.isOpaque = false
         collectionView.delegate = self
         collectionView.showsVerticalScrollIndicator = false
         collectionView.keyboardDismissMode = .interactive
@@ -232,6 +247,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        collectionView.layoutIfNeeded()
         updateOcclusions()
         guard collectionView.bounds.width > 0, collectionView.bounds.size != previousSize else { return }
         let focus = initialFocus ?? collectionView.indexPathsForVisibleItems.sorted().first.flatMap { dataSource.itemIdentifier(for: $0) }
@@ -244,7 +260,10 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
         }
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) { updateOcclusions() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        updateOcclusions()
+    }
+
 
     private func updateOcclusions() {
         for case let cell as TabStackCell in collectionView.visibleCells { cell.updateOcclusions() }

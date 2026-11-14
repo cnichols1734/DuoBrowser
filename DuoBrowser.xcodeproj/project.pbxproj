@@ -5,6 +5,8 @@
 	};
 	"objectVersion" = 56;
 	"objects" = {
+"7E67F87E84A47071A7A71B02" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/NativePremiumDensityChecks.swift"; sourceTree = "<group>"; };
+"7E67F87E84A47071A7A71B03" = { isa = PBXBuildFile; fileRef = "7E67F87E84A47071A7A71B02"; };
 "CA473BCA19F7E077C526BED6" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../Tests/NativeWebsiteDataDiagnostics.swift"; sourceTree = "<group>"; };
 "1365D7D38BBB00B5E39DBD24" = { isa = PBXBuildFile; fileRef = "CA473BCA19F7E077C526BED6"; };
 "1365229DB32CB5DE2DA5556D" = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "OtherBlockingAppsView.swift"; sourceTree = "<group>"; };
@@ -233,6 +235,7 @@
 			"isa" = "PBXGroup";
 			"children" = (
 "CA473BCA19F7E077C526BED6",
+"7E67F87E84A47071A7A71B02",
 "1365229DB32CB5DE2DA5556D",
 "8454D69887C133F7292E7A29",
 "3DB9FA134D3F0C393FE83E18",
@@ -321,6 +324,7 @@
 			"buildActionMask" = 2147483647;
 			"files" = (
 "1365D7D38BBB00B5E39DBD24",
+"7E67F87E84A47071A7A71B03",
 "0123404E458CC8049782988E",
 "888385D5D97F2518C2297C3C",
 "53773B26ED0B39914E35F81F",

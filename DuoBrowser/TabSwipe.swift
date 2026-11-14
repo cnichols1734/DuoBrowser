@@ -91,6 +91,7 @@ final class TabSwipeController: UIViewController {
     private var animationStartAlpha: CGFloat = 1
     private var caughtPresentation = false
     var reduceMotion = false
+    var presentationDidChange: (() -> Void)?
     var hasActivePresentation: Bool { sourceID != nil }
 
     init(content: UIViewController, session: BrowserSession) {
@@ -160,6 +161,16 @@ final class TabSwipeController: UIViewController {
     override func viewWillDisappear(_ animated: Bool) {
         cancelImmediately()
         super.viewWillDisappear(animated)
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        presentationDidChange?()
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        presentationDidChange?()
     }
 
     private var sourceIsCurrent: Bool {

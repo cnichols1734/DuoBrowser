@@ -572,7 +572,8 @@ final class NativeCheckRunner {
             let fittedFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
             // WebKit can autosize the authored 18px font on a larger display; fitting must
             // preserve the actual computed baseline rather than force the authored CSS size.
-            try check(fittedFont == originalFont, "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
+            let validOriginalFont = originalFont.hasSuffix("px") && Double(originalFont.dropLast(2)).map { $0 > 0 } == true
+            try check(validOriginalFont && fittedFont == originalFont, "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
             try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
             try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
             try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")
@@ -724,7 +725,7 @@ final class NativeCheckRunner {
             let fittedLongTop = try await measure("top"), fittedLongWidth = try await measure("width")
             try check(abs(fittedLongTop-longTop)<1 && fittedLongWidth < longWidth,
                       "production geometry bridge fits long article beside actual camera without a downshift")
-            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize===originalLongFont") as? Bool == true,
+            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&originalLongFont.endsWith('px')&&parseFloat(originalLongFont)>0&&getComputedStyle(originalLongNode).fontSize===originalLongFont") as? Bool == true,
                       "long camera fitting preserves native DOM, draft and font size")
             model.originalPageLayout = true
             try await wait { abs(((try? await measure("width")) ?? 0) - longWidth) < 1 }
@@ -2398,12 +2399,19 @@ final class NativeCheckRunner {
 
     func run() async {
         if ProcessInfo.processInfo.arguments.contains("--premium-start-preview") { premiumStartPreview(); return }
+        if ProcessInfo.processInfo.arguments.contains("--density-checks") {
+            do { try await premiumDensityChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("DensityChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--premium-checks") {
             do {
                 try await premiumControlsChecks()
                 try await premiumRecoveryChecks()
                 try await premiumTabsChecks()
                 try await premiumStartChecks()
+                try await premiumDensityChecks()
             } catch { results.append("FAIL: " + String(describing: error)) }
             let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PremiumChecks.txt")
             try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
