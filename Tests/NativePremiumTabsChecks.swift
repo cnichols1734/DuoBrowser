@@ -65,6 +65,26 @@ extension NativeCheckRunner {
                   "interactive tab drag keeps source live and does not select its preview")
         try check(abs(content.view.transform.tx) > 0 || UIAccessibility.isReduceMotionEnabled,
                   "tab drag follows the finger unless system Reduce Motion requests a fade")
+        guard let preview = swipe.view.subviews.first(where: { $0 !== content.view }) else {
+            throw NSError(domain: "missing native adjacent-tab preview", code: 1)
+        }
+        let previewBeforeLayout = preview.convert(preview.bounds, to: swipe.view)
+        let sourceBeforeLayout = content.view.convert(content.view.bounds, to: swipe.view)
+        let previewTransform = preview.transform
+        swipe.view.setNeedsLayout()
+        swipe.view.layoutIfNeeded()
+        let previewAfterLayout = preview.convert(preview.bounds, to: swipe.view)
+        let sourceAfterLayout = content.view.convert(content.view.bounds, to: swipe.view)
+        try check(swipe.hasActivePresentation && session.selected === original && preview.transform == previewTransform
+                  && abs(previewAfterLayout.minX - previewBeforeLayout.minX) < 0.5
+                  && abs(sourceAfterLayout.minX - sourceBeforeLayout.minX) < 0.5,
+                  "same-bounds layout preserves the live source and translated adjacent preview during a drag")
+        session.tabSwipe.receive?(.changed(-width * 0.20))
+        let nextPreview = preview.convert(preview.bounds, to: swipe.view)
+        let expectedMovement: CGFloat = UIAccessibility.isReduceMotionEnabled ? 0 : -width * 0.02
+        try check(abs(nextPreview.minX - previewAfterLayout.minX - expectedMovement) < 0.5
+                  && original.loadedWebView === originalView,
+                  "continuing a drag after layout moves the neighbor from its retained position without replacing WebKit")
         session.tabSwipe.receive?(.cancelled)
         try await wait { !swipe.hasActivePresentation && content.view.transform == .identity && content.view.alpha == 1 }
         try check(session.selected === original, "cancelled drag restores the same selected tab")

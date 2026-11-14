@@ -145,7 +145,10 @@ final class TabSwipeController: UIViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         if sourceID != nil, view.bounds != initialBounds { cancelImmediately() }
-        preview.frame = view.bounds
+        // A layout pass can occur while the preview is translated by an active swipe.
+        // Setting frame under that transform changes its underlying center and makes it jump.
+        preview.bounds = CGRect(origin: .zero, size: view.bounds.size)
+        preview.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         image.frame = preview.bounds
         symbol.frame = CGRect(x: preview.bounds.midX - 28, y: preview.bounds.midY - 28, width: 56, height: 56)
         let safe = view.safeAreaInsets

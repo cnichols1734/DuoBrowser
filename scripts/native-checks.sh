@@ -102,7 +102,7 @@ PY
 }
 # Loopback conversion checks must not depend on an external reputation service.
 # The suite first asserts ordinary production views still enable fraudulent-site warnings.
-run_receipt PremiumChecks.txt 132 --premium-checks
+run_receipt PremiumChecks.txt 139 --premium-checks
 if [[ "${DUO_SKIP_DOWNLOAD_CHECKS:-0}" != 1 ]]; then
     run_receipt DownloadChecks.txt 49 --download-checks --download-checks-no-reputation
 else

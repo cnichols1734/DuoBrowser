@@ -1,5 +1,26 @@
 import SwiftUI
 
+/// Presentation only: a failed first load has a useful address without becoming a
+/// committed website, permission scope or persistent restoration destination.
+@MainActor
+struct BrowserAddressIdentity {
+    let siteName: String
+    let editingAddress: String
+    let transportLabel: String
+
+    init(browser: BrowserModel) {
+        if browser.failureCoversPage, let target = browser.loadFailure?.targetURL, let host = target.host {
+            siteName = host.hasPrefix("www.") ? String(host.dropFirst(4)) : host
+            editingAddress = target.absoluteString
+            transportLabel = target.scheme == "http" ? "Not Secure · " : ""
+        } else {
+            siteName = browser.siteName
+            editingAddress = browser.address
+            transportLabel = browser.transportLabel
+        }
+    }
+}
+
 struct BrowserRecoveryView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel

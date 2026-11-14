@@ -23,6 +23,8 @@ extension NativeCheckRunner {
         source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
         let first = source.loadFailure!
         try check(first.kind == .offline && !source.failureCoversPage, "offline recovery keeps an already committed page visible")
+        try check(BrowserAddressIdentity(browser: source).editingAddress == source.address && source.address != target.absoluteString,
+                  "an inline navigation failure keeps the still-visible page's address identity")
         try check(try await js(source, "document.querySelector('#kept').value") as? String == "Synthetic recovery draft",
                   "presenting recovery preserves the existing unsent form")
         let recovery = UIHostingController(rootView: BrowserRecoveryView(session: session, browser: source, fillsPage: false, editAddress: {}))
@@ -64,6 +66,24 @@ extension NativeCheckRunner {
         empty.activate()
         empty.webView(empty.webView, didFailProvisionalNavigation: nil, withError: error)
         try check(empty.failureCoversPage && empty.loadFailure?.targetURL == target, "a failed first page gets a full accessible recovery surface")
+        let failedIdentity = BrowserAddressIdentity(browser: empty)
+        try check(failedIdentity.siteName == "127.0.0.1" && failedIdentity.editingAddress == target.absoluteString,
+                  "first-load recovery displays the validated failing host and exact editable address")
+        var editedAddress = ""
+        var editingAddress = false
+        let toolbar = BrowserToolbar(session: session, browser: empty, chrome: empty.chrome,
+            input: Binding(get: { editedAddress }, set: { editedAddress = $0 }),
+            showingAddress: Binding(get: { editingAddress }, set: { editingAddress = $0 }),
+            keyboardVisible: false, bottomSafeArea: 0, accessibilityExpanded: false)
+        toolbar.beginAddressEditing()
+        try check(editingAddress && editedAddress == target.absoluteString,
+                  "the ordinary toolbar edit action seeds the failed first destination instead of an empty search")
+        try check(empty.address.isEmpty && empty.restorationURL == nil && WebsiteSettingsScope(browser: empty).host == nil,
+                  "displaying a failed first address does not promote it to restoration or website-setting scope")
+        empty.errorMessage = nil
+        let clearedIdentity = BrowserAddressIdentity(browser: empty)
+        try check(clearedIdentity.siteName == "Start Page" && clearedIdentity.editingAddress.isEmpty,
+                  "dismissing first-load recovery restores the native start-page address identity")
         source.webViewWebContentProcessDidTerminate(webView)
         try check(source.loadFailure?.kind == .processTerminated && source.failureCoversPage,
                   "simulated process termination offers deliberate recovery without automatic reload")

@@ -110,7 +110,7 @@ struct ActiveBrowserView: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: showingSearch)
         .statusBarHidden(!session.showSystemStatus)
-        .onAppear { input = browser.address }
+        .onAppear { input = BrowserAddressIdentity(browser: browser).editingAddress }
         .onChange(of: browser.errorMessage) { _, message in
             if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }
         }
@@ -129,7 +129,7 @@ struct ActiveBrowserView: View {
     }
 
     private func openAddress() {
-        input = browser.loadFailure?.targetURL?.absoluteString ?? browser.address
+        input = BrowserAddressIdentity(browser: browser).editingAddress
         showingSearch = true
     }
 }

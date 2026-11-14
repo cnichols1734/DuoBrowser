@@ -34,8 +34,9 @@ struct BrowserToolbar: View {
     }
 
     private var statusText: String {
-        [browser.isPrivate ? "Private" : nil, browser.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
+        [browser.isPrivate ? "Private" : nil, addressIdentity.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
     }
+    private var addressIdentity: BrowserAddressIdentity { BrowserAddressIdentity(browser: browser) }
     private var addressRowHeight: CGFloat {
         max(52, textLineHeight + 16) + (statusText.isEmpty || showingAddress ? 0 : statusLineHeight + 4)
     }
@@ -68,7 +69,7 @@ struct BrowserToolbar: View {
         .sheet(isPresented: $showingProtection, onDismiss: { pageControlsFocused = true }) { BrowserProtectionView(session: session, browser: browser) }
         .sheet(item: $websiteSettings, onDismiss: { pageControlsFocused = true }) { scope in WebsiteSettingsView(session: session, browser: browser, scope: scope) }
         .fullScreenCover(item: $browser.readerArticle, onDismiss: { pageControlsFocused = true }) { ReaderView(article: $0, sourceBrowser: browser) }
-        .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
+        .onChange(of: addressIdentity.editingAddress) { _, value in if !showingAddress { input = value } }
 
     }
 
@@ -76,7 +77,7 @@ struct BrowserToolbar: View {
         GeometryReader { geometry in
             let width = min(620, max(240, geometry.size.width - 24))
             let expandedWidth = width - 124
-            let compactWidth = min(expandedWidth, max(110, CGFloat((browser.transportLabel + browser.privateLabel + browser.siteName).count) * 7 + 32))
+            let compactWidth = min(expandedWidth, max(110, CGFloat((addressIdentity.transportLabel + browser.privateLabel + addressIdentity.siteName).count) * 7 + 32))
             let p = progress
             let capsuleWidth = expandedWidth + (compactWidth - expandedWidth) * p
             GlassEffectContainer(spacing: 8) {
@@ -104,9 +105,9 @@ struct BrowserToolbar: View {
                         Group {
                             Button {
                                 if p > 0.1 { browser.revealControls() }
-                                else { input = browser.address; showingAddress = true }
+                                else { beginAddressEditing() }
                             } label: {
-                                Text(browser.transportLabel + browser.privateLabel + browser.siteName)
+                                Text(addressIdentity.transportLabel + browser.privateLabel + addressIdentity.siteName)
                                     .font(.system(size: addressFont - 5 * p, weight: .medium))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
@@ -118,7 +119,7 @@ struct BrowserToolbar: View {
                             .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
                             .accessibilityFocused($addressFocused)
                             .accessibilitySortPriority(3)
-                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
+                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(addressIdentity.siteName)" : "Address, \(addressIdentity.transportLabel)\(browser.privateLabel)\(addressIdentity.siteName)")
                             HStack(spacing: 0) {
                                 pageMenu.frame(width: 44, height: 44).accessibilitySortPriority(4)
                                 Spacer(minLength: 0)
@@ -186,21 +187,26 @@ struct BrowserToolbar: View {
 
     private func endEditing() { showingAddress = false; addressFocused = true }
 
+    func beginAddressEditing() {
+        input = addressIdentity.editingAddress
+        showingAddress = true
+    }
+
     private var accessibleControls: some View {
         VStack(spacing: 8) {
             Group {
                 Group {
                     Button {
-                        input = browser.address; showingAddress = true
+                        beginAddressEditing()
                     } label: {
                         VStack(spacing: 4) {
-                            Text(browser.siteName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                            Text(addressIdentity.siteName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
                             if !statusText.isEmpty { Text(statusText).font(.caption).lineLimit(1) }
                         }
                         .frame(maxWidth: .infinity, minHeight: addressRowHeight)
                         .contentShape(Rectangle())
                     }
-                    .accessibilityLabel("Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
+                    .accessibilityLabel("Address, \(addressIdentity.transportLabel)\(browser.privateLabel)\(addressIdentity.siteName)")
                     .accessibilityHint("Edit the website address or search")
                     .accessibilityFocused($addressFocused)
                 }
