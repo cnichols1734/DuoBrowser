@@ -7,6 +7,8 @@ struct TabStack<Content: View>: UIViewControllerRepresentable {
     let tabs: [BrowserModel]
     let selectedID: UUID
     let reduceMotion: Bool
+    var allowsDismiss = true
+    var refreshID: AnyHashable?
     let close: (UUID) -> Void
     @ViewBuilder var content: (BrowserModel, @escaping () -> Void) -> Content
 
@@ -17,7 +19,8 @@ struct TabStack<Content: View>: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ controller: TabStackController, context: Context) {
-        controller.update(tabs: tabs, selectedID: selectedID, reduceMotion: reduceMotion, close: close) { tab, dismiss in
+        controller.update(tabs: tabs, selectedID: selectedID, reduceMotion: reduceMotion,
+                          allowsDismiss: allowsDismiss, refreshID: refreshID, close: close) { tab, dismiss in
             AnyView(content(tab, dismiss))
         }
     }
@@ -184,6 +187,8 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
     private var dragStart: CGFloat = 0
     private var animators: [UUID: UIViewPropertyAnimator] = [:]
     private var closingIDs: Set<UUID> = []
+    private var allowsDismiss = true
+    private var refreshID: AnyHashable?
 
     override func loadView() {
         view = collectionView
@@ -245,11 +250,15 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
         for case let cell as TabStackCell in collectionView.visibleCells { cell.updateOcclusions() }
     }
 
-    func update(tabs: [BrowserModel], selectedID: UUID, reduceMotion: Bool, close: @escaping (UUID) -> Void,
+    func update(tabs: [BrowserModel], selectedID: UUID, reduceMotion: Bool,
+                allowsDismiss: Bool = true, refreshID: AnyHashable? = nil, close: @escaping (UUID) -> Void,
                 makeCard: @escaping (BrowserModel, @escaping () -> Void) -> AnyView) {
         loadViewIfNeeded()
         self.close = close
         self.makeCard = makeCard
+        let contentChanged = self.allowsDismiss != allowsDismiss || self.refreshID != refreshID
+        self.allowsDismiss = allowsDismiss
+        self.refreshID = refreshID
         if stackLayout.reduceMotion != reduceMotion {
             stackLayout.reduceMotion = reduceMotion
             stackLayout.invalidateLayout()
@@ -262,7 +271,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
         }
         let selectionChanged = self.selectedID != selectedID
         self.selectedID = selectedID
-        guard oldIDs != ids || selectionChanged else { return }
+        guard oldIDs != ids || selectionChanged || contentChanged else { return }
         cancelDrag()
         for removed in Set(oldIDs).subtracting(ids) {
             animators.removeValue(forKey: removed)?.stopAnimation(true)
@@ -273,7 +282,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
         var snapshot = NSDiffableDataSourceSnapshot<Int, UUID>()
         snapshot.appendSections([0])
         snapshot.appendItems(ids)
-        if selectionChanged { snapshot.reconfigureItems(ids.filter(oldIDs.contains)) }
+        if selectionChanged || contentChanged { snapshot.reconfigureItems(ids.filter(oldIDs.contains)) }
         dataSource.apply(snapshot, animatingDifferences: !reduceMotion && !oldIDs.isEmpty)
     }
 
@@ -294,6 +303,7 @@ final class TabStackController: UIViewController, UIGestureRecognizerDelegate, U
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === swipe else { return true }
+        guard allowsDismiss else { return false }
         pendingDragID = nil
         let translation = swipe.translation(in: collectionView)
         guard translation.x < 0, abs(translation.x) > abs(translation.y) * 1.15,

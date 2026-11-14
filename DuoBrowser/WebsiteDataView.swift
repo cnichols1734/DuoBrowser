@@ -61,25 +61,33 @@ struct WebsiteDataView: View {
     @State private var search = ""
     @State private var removing: WebsiteDataController.Entry?
     @State private var confirmRemoval = false
+    private var searchTerm: String { search.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var visibleEntries: [WebsiteDataController.Entry] {
+        model.entries.filter { searchTerm.isEmpty || $0.name.localizedCaseInsensitiveContains(searchTerm) }
+    }
 
     var body: some View {
         List {
             if session.privateMode {
                 Text("Return to normal browsing to manage its saved website data.")
             } else {
-                if model.isBusy { ProgressView("Loading website data…") }
+                if model.isBusy { ProgressView(model.isRemoving ? "Removing website data…" : "Loading website data…") }
                 if let message = model.message { Text(message).font(.callout).foregroundStyle(.secondary) }
                 if model.entries.isEmpty && !model.isBusy && model.hasLoaded {
-                    ContentUnavailableView("No website data", systemImage: "globe", description: Text("Data saved by websites in normal browsing appears here."))
+                    ContentUnavailableView("No Website Data", systemImage: "globe", description: Text("Data saved by websites in normal browsing appears here."))
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
+                } else if !searchTerm.isEmpty, visibleEntries.isEmpty, !model.isBusy, model.hasLoaded {
+                    ContentUnavailableView.search(text: searchTerm)
+                        .listRowBackground(Color.clear).listRowSeparator(.hidden)
                 }
                 Section {
-                    ForEach(model.entries.filter { search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) }) { entry in
+                    ForEach(visibleEntries) { entry in
                         Button { removing = entry; confirmRemoval = true } label: {
                             HStack {
                                 Text(verbatim: entry.name).foregroundStyle(.primary)
                                 Spacer()
                                 Image(systemName: "trash").foregroundStyle(.secondary)
-                            }.frame(minHeight: 44)
+                            }.frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Remove website data for " + entry.name)
@@ -88,7 +96,8 @@ struct WebsiteDataView: View {
                 } footer: {
                     Text("WebKit groups related website data by domain. Removing a group clears its cookies, stored data and cached files, and may sign you out. This does not delete bookmarks or downloads.")
                 }
-                Button("Refresh") { Task { await model.reload() } }.disabled(model.isBusy)
+                Button("Refresh", systemImage: "arrow.clockwise") { Task { await model.reload() } }
+                    .frame(minHeight: 44).disabled(model.isBusy)
             }
         }
         .searchable(text: $search, prompt: "Search Websites")

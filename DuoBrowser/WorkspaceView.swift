@@ -20,7 +20,8 @@ struct WorkspaceView: View {
                                     Image(systemName: "square.stack")
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(verbatim: workspace.name).font(.headline).lineLimit(2)
-                                        Text("\(session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count) tabs")
+                                        let count = session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count
+                                        Text("\(count) \(count == 1 ? "tab" : "tabs")")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -62,7 +63,14 @@ struct BrowserProtectionView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @Environment(\.dismiss) private var dismiss
-    private var host: String? { browser.restorationURL?.host }
+    private let scope: WebsiteSettingsScope
+    private var host: String? { scope.host }
+
+    init(session: BrowserSession, browser: BrowserModel) {
+        _session = ObservedObject(wrappedValue: session)
+        _browser = ObservedObject(wrappedValue: browser)
+        scope = WebsiteSettingsScope(browser: browser)
+    }
     private var protected: Bool { session.adBlockingEnabled && browser.blockAds }
     private var unavailable: Bool { browser.blockingStatus == "Protection unavailable" }
     private var title: String {
@@ -113,6 +121,8 @@ struct BrowserProtectionView: View {
                     }
                     NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
                         .frame(minHeight: 44)
+                    NavigationLink("Other Blocking Apps") { OtherBlockingAppsView() }
+                        .frame(minHeight: 44)
                     Divider()
                     VStack(alignment: .leading, spacing: 12) {
                         HStack {
@@ -143,9 +153,12 @@ struct BrowserProtectionView: View {
                     }
                 }.padding(24).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .navigationTitle("Website protection").navigationBarTitleDisplayMode(.inline)
+            .disabled(host != nil && !scope.matches(browser))
+            .navigationTitle("Website Protection").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .onChange(of: browser.address) { _, _ in if host != nil && !scope.matches(browser) { dismiss() } }
+        .onChange(of: session.selectedID) { _, selected in if selected != scope.browserID { dismiss() } }
         .presentationDragIndicator(.visible)
     }
 }

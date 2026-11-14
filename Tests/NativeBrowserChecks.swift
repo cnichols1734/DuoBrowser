@@ -2379,6 +2379,18 @@ final class NativeCheckRunner {
     }
 
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--premium-start-preview") { premiumStartPreview(); return }
+        if ProcessInfo.processInfo.arguments.contains("--premium-checks") {
+            do {
+                try await premiumControlsChecks()
+                try await premiumRecoveryChecks()
+                try await premiumTabsChecks()
+                try await premiumStartChecks()
+            } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PremiumChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--saved-pages-preview") { savedPagesPreview(); return }
         if ProcessInfo.processInfo.arguments.contains("--download-checks") {
             do { try await downloadsChecks() } catch { results.append("FAIL: " + String(describing: error)) }

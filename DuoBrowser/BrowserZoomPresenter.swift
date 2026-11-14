@@ -34,7 +34,7 @@ private struct BrowserScreen: View {
 final class BrowserZoomController: UIViewController {
     private let session: BrowserSession
     private let overview: UIHostingController<TabOverview>
-    private let browser: UIHostingController<BrowserScreen>
+    private let browser: TabSwipeController
     private var observation: AnyCancellable?
     private var appearanceObservation: AnyCancellable?
     private var reduceMotion = false
@@ -45,7 +45,7 @@ final class BrowserZoomController: UIViewController {
     init(session: BrowserSession) {
         self.session = session
         overview = UIHostingController(rootView: TabOverview(session: session))
-        browser = UIHostingController(rootView: BrowserScreen(session: session))
+        browser = TabSwipeController(content: UIHostingController(rootView: BrowserScreen(session: session)), session: session)
         super.init(nibName: nil, bundle: nil)
         overview.safeAreaRegions = .keyboard
         browser.modalPresentationStyle = .fullScreen
@@ -87,6 +87,7 @@ final class BrowserZoomController: UIViewController {
 
     func update(reduceMotion: Bool) {
         self.reduceMotion = reduceMotion
+        browser.reduceMotion = reduceMotion
         // Let SwiftUI update the selected card and its collection snapshot first.
         Task { @MainActor [weak self] in self?.reconcile() }
     }
@@ -115,7 +116,7 @@ final class BrowserZoomController: UIViewController {
     }
 
     private func configureTransition() {
-        if reduceMotion || UIAccessibility.isReduceMotionEnabled || UIAccessibility.isVoiceOverRunning {
+        if reduceMotion || UIAccessibility.isReduceMotionEnabled || UIAccessibility.isVoiceOverRunning || session.tabOverviewStyle == .list {
             browser.preferredTransition = .crossDissolve
         } else {
             let options = UIViewController.Transition.ZoomOptions()

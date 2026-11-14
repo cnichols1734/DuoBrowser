@@ -21,8 +21,13 @@ struct BrowserLibrary: View {
     var body: some View {
         NavigationStack {
             List {
-                if dynamicTypeSize.isAccessibilitySize { sectionPicker.pickerStyle(.menu).labelsHidden() }
-                else { sectionPicker.pickerStyle(.segmented) }
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize { sectionPicker.pickerStyle(.menu).labelsHidden() }
+                    else { sectionPicker.pickerStyle(.segmented) }
+                }
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 12, trailing: 0))
                 if section == 2 { Toggle("Unread Only", isOn: $unreadOnly) }
                 LibraryContents(session: session, section: section, folderID: nil, search: search, unreadOnly: unreadOnly, open: open)
             }

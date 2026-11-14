@@ -53,6 +53,7 @@ struct BrowserLinkSettings: View {
     @Environment(\.dismiss) private var dismiss
     @State private var apolloAvailable = false
     @State private var showingPrivacy = false
+    @AccessibilityFocusState private var privacyFocused: Bool
     @AppStorage("onlineSearchSuggestions") private var onlineSuggestions = true
     var onSetup: (() -> Void)? = nil
 
@@ -75,6 +76,7 @@ struct BrowserLinkSettings: View {
                     Picker("Appearance", selection: $session.appearance) {
                         ForEach(BrowserAppearance.allCases) { value in Text(value.title).tag(value) }
                     }
+                    .pickerStyle(.navigationLink)
                     Toggle("Time, Signal & Battery", isOn: $session.showSystemStatus)
                 }
                 Section {
@@ -88,6 +90,7 @@ struct BrowserLinkSettings: View {
                 Section {
                     Toggle("Block Ads & Trackers", isOn: $session.adBlockingEnabled)
                     NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
+                    NavigationLink("Other Blocking Apps") { OtherBlockingAppsView() }
                 } header: {
                     Text("Ad Blocking")
                 } footer: {
@@ -112,11 +115,13 @@ struct BrowserLinkSettings: View {
                 Section("About DuoBrowser") {
                     if let onSetup { Button("Set Up DuoBrowser", action: onSetup) }
                     Button("Privacy Policy") { showingPrivacy = true }
+                        .accessibilityFocused($privacyFocused)
                 }
             }
             .preferredColorScheme(session.appearance == .system ? nil : session.appearance == .dark ? .dark : .light)
-            .sheet(isPresented: $showingPrivacy) { BrowserPrivacyView() }
+            .sheet(isPresented: $showingPrivacy, onDismiss: { privacyFocused = true }) { BrowserPrivacyView() }
             .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .onAppear { apolloAvailable = routing.apolloAvailable }
             .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in

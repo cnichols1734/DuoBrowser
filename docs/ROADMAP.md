@@ -1,5 +1,13 @@
 # Build plan
 
+## Daily browsing and native polish — November 14, 2026
+
+- Owner-authorized single-PR scope: interactive adjacent-tab switching, discoverable tab search and organization, redesigned Page options, a new configurable start page without Reader additions, simple recovery, and native polish across secondary surfaces. Reader extraction/rendering is unchanged. No optional two-page mode, profiles, or private-tab lock was added.
+- Tab management preserves existing model/WebKit identities through switching/reordering/moving. Grid/List, bulk actions and write rollback are covered by new synthetic native checks; swipe interruption is tested as a real UIKit transition. Start-page Favorites preserve bookmark metadata and durable-write rollback, with normal/private projection checks and runtime reserved-region clearance.
+- Recovery uses fixed local copy and explicit document-scoped actions. It preserves usable pages, bounds oversized notices, excludes normal offline copies from private tabs, rejects replaced-view/stale callbacks, and never automatically replays a POST or bypasses TLS validation.
+- Research rechecked the installed public SDK and the owner’s named blockers. Compatible WebKit extension hosting is possible when a package is available; arbitrary installed Safari extension packages/settings remain inaccessible through the inspected APIs. Other Blocking Apps provides official setup guides for genuinely separate system-wide filtering, without pretending those Safari extensions are enabled in DuoBrowser. [Provider matrix and evidence](reviews/2026-11-14-premium-controls/extension-compatibility.md).
+- Integration builds, native interaction verification, latest-head CI/review and authorized in-place phone installation are in progress. TestFlight remains a later owner decision. [Combined evidence and remaining limits](reviews/2026-11-14-premium-browser/README.md).
+
 ## Hosted download fixture removal — November 12, 2026
 
 - At the owner's explicit request to remove failing CI tests, hosted CI now omits the synthetic Downloads batch. The default local suite retains its 49 checks, which passed in the complete 517-assertion run. All other native batches, including Undo, and the build/portable/layout/security gates remain enabled.

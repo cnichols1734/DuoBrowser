@@ -13,8 +13,11 @@ struct DownloadsView: View {
             List {
                 if manager.items.isEmpty {
                     ContentUnavailableView("No Downloads", systemImage: "arrow.down.doc",
-                        description: Text("Files you download appear here. You can preview them or save a copy to Files."))
+                        description: Text(manager.isPrivate
+                            ? "Files downloaded in private tabs appear here. Save a copy to Files before closing all private tabs."
+                            : "Files you download appear here. You can preview them or save a copy to Files."))
                         .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 } else {
                     Section {
                         ForEach(manager.items) { item in
@@ -47,6 +50,7 @@ struct DownloadsView: View {
             .onChange(of: manager.items.map(\.id)) { _, _ in
                 if let preview, !manager.items.contains(where: { $0.file == preview }) { self.preview = nil }
                 if let exporting, !manager.items.contains(where: { $0.file == exporting.url }) { self.exporting = nil }
+                if let removing, !manager.items.contains(where: { $0.id == removing.id }) { self.removing = nil }
             }
         }
     }
@@ -72,18 +76,24 @@ private struct DownloadRow: View {
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             if !typeSize.isAccessibilitySize {
-                Image(systemName: item.isDownloading ? "arrow.down.doc" : ready ? "doc" : "exclamationmark.circle")
+                Image(systemName: item.isCanceling || item.isDownloading ? "arrow.down.doc" : ready ? "doc" : "exclamationmark.circle")
                     .font(.title2).foregroundStyle(.secondary).frame(width: 28, height: 44).accessibilityHidden(true)
             }
             VStack(alignment: .leading, spacing: 6) {
-                Button(action: preview) {
-                    Text(verbatim: item.name).font(.body.weight(.medium)).foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                        .contentShape(Rectangle())
+                if ready {
+                    Button(action: preview) { filename }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(item.name), Preview")
+                        .accessibilityHint("Opens a preview of this file")
+                } else {
+                    filename
                 }
-                .buttonStyle(.plain).disabled(!ready)
-                .accessibilityLabel("\(item.name)\(ready ? ", Preview" : "")")
-                if item.isDownloading {
+                if item.isCanceling {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Canceling…").font(.subheadline).foregroundStyle(.secondary)
+                    }.accessibilityElement(children: .combine)
+                } else if item.isDownloading {
                     if item.expected > 0 {
                         ProgressView(value: Double(item.received), total: Double(max(item.expected, item.received)))
                             .accessibilityLabel("Download progress")
@@ -91,7 +101,7 @@ private struct DownloadRow: View {
                     Text(byteLabel).font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 } else if ready {
                     Text(byteLabel + " · " + item.date.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     if item.state == .recovered {
                         Text("Recovered file. Check its contents before keeping a copy.").font(.subheadline).foregroundStyle(.secondary)
                     }
@@ -100,7 +110,9 @@ private struct DownloadRow: View {
                     if item.canRetry { Button("Retry", action: retry).frame(minHeight: 44).buttonStyle(.borderless) }
                 }
             }
-            if item.isDownloading {
+            if item.isCanceling {
+                Color.clear.frame(width: 44, height: 44).accessibilityHidden(true)
+            } else if item.isDownloading {
                 Button(action: cancel) { Image(systemName: "xmark.circle").frame(width: 44, height: 44) }
                     .buttonStyle(.borderless).accessibilityLabel("Cancel download, \(item.name)")
             } else {
@@ -116,7 +128,13 @@ private struct DownloadRow: View {
             }
         }
         .padding(.vertical, 6)
-        .swipeActions { Button("Remove", role: .destructive, action: remove) }
+        .swipeActions { Button("Remove", role: .destructive, action: remove).disabled(item.isCanceling) }
+    }
+
+    private var filename: some View {
+        Text(verbatim: item.name).font(.body.weight(.medium)).foregroundStyle(.primary)
+            .multilineTextAlignment(.leading).frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .contentShape(Rectangle())
     }
 }
 
