@@ -95,6 +95,34 @@ extension NativeCheckRunner {
         try check(session.selected === second && !swipe.hasActivePresentation,
                   "an interrupted snap-back accepts and commits the next gesture")
         session.select(original.id)
+        session.tabSwipe.receive?(.changed(-width * 0.18))
+        if !UIAccessibility.isReduceMotionEnabled {
+            try await wait { abs((content.view.layer.presentation()?.affineTransform().tx ?? 0) + width * 0.18) < 2 }
+        }
+        let beforeOpposite = content.view.layer.presentation()?.affineTransform().tx ?? content.view.transform.tx
+        session.tabSwipe.receive?(.cancelled)
+        session.tabSwipe.receive?(.changed(width * 0.03))
+        try check(swipe.hasActivePresentation &&
+                  (UIAccessibility.isReduceMotionEnabled || abs(content.view.transform.tx - beforeOpposite) < 3),
+                  "an opposite drag catches the same returning presentation without jumping")
+        session.tabSwipe.receive?(.ended(width * 0.3, width * 1.1))
+        try await wait { session.selectedID == third.id }
+        try check(session.selected === third && !swipe.hasActivePresentation,
+                  "a fresh rightward gesture after cancelled leftward motion selects the previous tab")
+        session.select(original.id)
+        session.tabSwipe.receive?(.changed(-width * 0.45))
+        if !UIAccessibility.isReduceMotionEnabled {
+            try await wait { abs((content.view.layer.presentation()?.affineTransform().tx ?? 0) + width * 0.45) < 2 }
+        }
+        session.tabSwipe.receive?(.cancelled)
+        session.tabSwipe.receive?(.changed(20))
+        session.tabSwipe.receive?(.ended(20, 20))
+        try await wait { !swipe.hasActivePresentation }
+        try check(session.selected === original,
+                  "a tiny fresh opposite gesture cannot inherit a commitment from the old page offset")
+        let draftAfterOpposite = try await js(original, "document.querySelector('#kept').value") as? String
+        try check(original.webView === originalView && draftAfterOpposite == "A premium tab keeps this draft",
+                  "opposite-direction interruptions preserve the original live page and form draft")
         session.tabSwipe.receive?(.changed(width * 0.3))
         swipe.view.frame.size.width += 20
         swipe.view.setNeedsLayout(); swipe.view.layoutIfNeeded()
@@ -108,6 +136,14 @@ extension NativeCheckRunner {
         try check(content.view.transform == .identity, "Reduce Motion avoids page translation during tab swipe")
         session.tabSwipe.receive?(.cancelled)
         try await wait { !swipe.hasActivePresentation && content.view.alpha == 1 }
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        session.tabSwipe.receive?(.cancelled)
+        session.tabSwipe.receive?(.changed(width * 0.03))
+        session.tabSwipe.receive?(.ended(width * 0.3, width * 1.1))
+        try await wait { session.selectedID == third.id }
+        try check(session.selected === third && content.view.transform == .identity && !swipe.hasActivePresentation,
+                  "Reduce Motion also uses fresh opposite-gesture intent to choose the previous tab")
+        session.select(original.id)
 
         let beforePrivate = session.visibleTabs.map(\.id)
         let privateTab = session.newTab(privateTab: true)

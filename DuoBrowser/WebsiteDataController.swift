@@ -26,7 +26,13 @@ protocol WebsiteDataAccess {
 struct WebKitWebsiteDataAccess: WebsiteDataAccess {
     let store: WKWebsiteDataStore
     func records() async throws -> [WKWebsiteDataRecord] {
-        await store.dataRecords(ofTypes: BrowsingDataSelection.managedTypes)
+        await Self.fetchRecords(in: store, types: BrowsingDataSelection.managedTypes)
+    }
+    /// Keep the public callback boundary explicit. Named-store enumeration liveness is covered natively.
+    static func fetchRecords(in store: WKWebsiteDataStore, types: Set<String>) async -> [WKWebsiteDataRecord] {
+        await withCheckedContinuation { continuation in
+            store.fetchDataRecords(ofTypes: types) { records in continuation.resume(returning: records) }
+        }
     }
     func remove(types: Set<String>, records: [WKWebsiteDataRecord]?) async throws {
         guard !types.isEmpty else { return }

@@ -112,14 +112,20 @@ struct BrowserRecoveryView: View {
 
     private func openSavedCopy(_ entry: LibraryEntry, failure: BrowserLoadFailure) {
         do {
-            guard let article = try session.articleForRecovery(entry, browser: browser, failure: failure) else { return }
-            browser.errorMessage = nil
-            browser.readerArticle = article
+            try session.openSavedCopyForRecovery(entry, browser: browser, failure: failure)
         } catch { savedCopyError = "Try opening the website again." }
     }
 }
 
 extension BrowserSession {
+    @discardableResult
+    func openSavedCopyForRecovery(_ entry: LibraryEntry, browser: BrowserModel, failure: BrowserLoadFailure) throws -> Bool {
+        guard let article = try articleForRecovery(entry, browser: browser, failure: failure) else { return false }
+        // The copy is a separate presentation. The source document still needs its recovery action.
+        browser.readerArticle = article
+        return true
+    }
+
     /// Reading a missing/corrupt copy must not replace the navigation failure or its recovery actions.
     func articleForRecovery(_ entry: LibraryEntry, browser: BrowserModel, failure: BrowserLoadFailure) throws -> ReaderArticle? {
         guard browser.loadFailure?.id == failure.id, browser.documentGeneration == failure.documentID,

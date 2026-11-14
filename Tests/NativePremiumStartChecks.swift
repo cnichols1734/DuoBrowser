@@ -141,21 +141,29 @@ extension NativeCheckRunner {
         ]
         for (name, region, direction, horizontal, top) in cases {
             let regions = PremiumStartFixtureRegions([region])
-            var measured: [String: CGRect] = [:]
+            var probes: [String: UIView] = [:]
+            func frame(_ key: String) -> CGRect? {
+                guard let probe = probes[key], let window = probe.window else { return nil }
+                return probe.convert(probe.bounds, to: window)
+            }
             let controller = UIHostingController(rootView: PremiumStartClearanceFixture(regions: regions, direction: direction) {
-                measured[$0] = $1
+                probes[$0] = $1
             })
             host.addChild(controller); controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
             host.view.addSubview(controller.view); controller.didMove(toParent: host)
             defer { controller.willMove(toParent: nil); controller.view.removeFromSuperview(); controller.removeFromParent() }
-            try await wait {
-                guard let outer = measured["outer"], let content = measured["content"] else { return false }
-                let expectedX = horizontal > 0 ? outer.minX + horizontal : outer.minX
-                let expectedWidth = outer.width - abs(horizontal)
-                return abs(content.minX - expectedX) < 1 && abs(content.width - expectedWidth) < 1 &&
-                    abs(content.minY - outer.minY - top) < 1 && abs(content.height - 120) < 1
+            do {
+                try await wait {
+                    guard let outer = frame("outer"), let content = frame("content") else { return false }
+                    let expectedX = horizontal > 0 ? outer.minX + horizontal : outer.minX
+                    let expectedWidth = outer.width - abs(horizontal)
+                    return abs(content.minX - expectedX) < 1 && abs(content.width - expectedWidth) < 1 &&
+                        abs(content.minY - outer.minY - top) < 1 && abs(content.height - 120) < 1
+                }
+            } catch {
+                throw NSError(domain: "Start rendered clearance did not settle for \(name); outer=\(String(describing: frame("outer"))) content=\(String(describing: frame("content"))) expectedHorizontal=\(horizontal) expectedTop=\(top)", code: 1)
             }
-            guard let outer = measured["outer"], let content = measured["content"] else {
+            guard let outer = frame("outer"), let content = frame("content") else {
                 throw NSError(domain: "missing rendered start clearance frames", code: 1)
             }
             let obstruction = region.offsetBy(dx: outer.minX, dy: outer.minY)
@@ -173,7 +181,7 @@ extension NativeCheckRunner {
                 scroll.setContentOffset(.zero, animated: false)
                 regions.value = []
                 try await wait {
-                    guard let outer = measured["outer"], let content = measured["content"] else { return false }
+                    guard let outer = frame("outer"), let content = frame("content") else { return false }
                     return abs(content.minX - outer.minX) < 1 && abs(content.minY - outer.minY) < 1 &&
                         abs(content.width - 400) < 1 && abs(outer.height - 120) < 1
                 }
@@ -222,15 +230,15 @@ private final class PremiumStartFixtureRegions: ObservableObject {
 private struct PremiumStartClearanceFixture: View {
     @ObservedObject var regions: PremiumStartFixtureRegions
     let direction: LayoutDirection
-    let update: (String, CGRect) -> Void
+    let register: (String, UIView) -> Void
     var body: some View {
         ScrollView {
             VStack(spacing: 0) {
                 Button {} label: { Text("Synthetic start action").frame(maxWidth: .infinity, maxHeight: .infinity) }
                     .frame(height: 120)
-                    .background { PremiumStartClearanceProbe(name: "content", update: update) }
+                    .background { PremiumStartClearanceProbe(name: "content", register: register) }
                     .modifier(StartPageClearance())
-                    .background { PremiumStartClearanceProbe(name: "outer", update: update) }
+                    .background { PremiumStartClearanceProbe(name: "outer", register: register) }
                 Text("Synthetic controls farther down the start page").frame(height: 900)
             }
         }
@@ -242,26 +250,8 @@ private struct PremiumStartClearanceFixture: View {
 
 private struct PremiumStartClearanceProbe: UIViewRepresentable {
     let name: String
-    let update: (String, CGRect) -> Void
-    func makeUIView(context: Context) -> Probe { Probe() }
-    func updateUIView(_ view: Probe, context: Context) { view.name = name; view.update = update; view.setNeedsLayout() }
-    final class Probe: UIView {
-        var name = ""
-        var update: ((String, CGRect) -> Void)?
-        private var last: CGRect?
-        override func didMoveToWindow() { super.didMoveToWindow(); last = nil; setNeedsLayout() }
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            guard let window else { return }
-            let frame = convert(bounds, to: window)
-            guard frame != last else { return }
-            last = frame
-            let name = name
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.last == frame else { return }
-                self.update?(name, frame)
-            }
-        }
-    }
+    let register: (String, UIView) -> Void
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) { register(name, view) }
 }
 #endif

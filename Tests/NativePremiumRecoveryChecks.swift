@@ -72,12 +72,22 @@ extension NativeCheckRunner {
         missingCopy.offlineID = UUID()
         session.readingList = [missingCopy]
         var failedCopy = false
-        do { _ = try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) }
+        do { _ = try session.openSavedCopyForRecovery(missingCopy, browser: source, failure: processFailure) }
         catch { failedCopy = true }
         try check(failedCopy && source.loadFailure?.id == processFailure.id && source.failureCoversPage,
                   "a missing saved copy retains the full navigation failure and recovery actions")
         try check(source.errorMessage == processFailure.message,
                   "offline file errors cannot replace the navigation recovery message")
+        let offline = OfflineArticle(title: "Synthetic recovery copy", address: missingCopy.address,
+                                     blocks: [.init(kind: "paragraph", text: "A safe local saved copy", jpeg: nil)])
+        try session.savePage(missingCopy, reading: true, offline: offline)
+        let validCopy = session.readingList.first { $0.id == missingCopy.id }!
+        try check(try session.openSavedCopyForRecovery(validCopy, browser: source, failure: processFailure)
+                  && source.readerArticle != nil && source.loadFailure?.id == processFailure.id,
+                  "opening a valid saved copy preserves the source page failure")
+        source.readerArticle = nil
+        try check(source.failureCoversPage && source.errorMessage == processFailure.message && source.loadedWebView === webView,
+                  "returning from a saved copy restores recovery for the same unrecovered source page")
         _ = session.newTab(privateTab: true)
         try check(try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) == nil,
                   "a saved-copy action captured before private browsing cannot expose the normal library")

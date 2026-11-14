@@ -2316,6 +2316,10 @@ final class NativeCheckRunner {
             return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
         }
         try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        let enumeratedTypes = data.entries.reduce(into: Set<String>()) { $0.formUnion($1.record.dataTypes) }
+        try check(enumeratedTypes.isSuperset(of: [WKWebsiteDataTypeCookies, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeLocalStorage])
+                  && enumeratedTypes.isSubset(of: BrowsingDataSelection.managedTypes),
+                  "callback enumeration retains the production-managed cookie cache and local-storage coverage")
         // Complete the potentially slow WebKit refresh before starting the user-facing Undo window.
         let first = data.entries.first { $0.name == "first.example" }!
         await data.reload()
@@ -2346,12 +2350,12 @@ final class NativeCheckRunner {
         try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
         try check(await data.clear(BrowsingDataSelection(cache: true)), "cached files can be cleared independently")
-        try check(!(await store.dataRecords(ofTypes: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
+        try check(!(await WebKitWebsiteDataAccess.fetchRecords(in: store, types: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
         try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "second.example" }, "cache-only clear preserves cookies")
         try check(try await js(normal, "localStorage.getItem('settings-check')") as? String == "normal", "cache-only clear preserves website local storage")
         try check(await data.clear(BrowsingDataSelection(siteData: true)), "cookies and site data can be cleared independently")
         try check((await store.httpCookieStore.allCookies()).isEmpty, "actual normal WebKit cookies removed")
-        try check((await store.dataRecords(ofTypes: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
+        try check((await WebKitWebsiteDataAccess.fetchRecords(in: store, types: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
         try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")
