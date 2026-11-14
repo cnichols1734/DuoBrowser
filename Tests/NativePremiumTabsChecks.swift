@@ -209,6 +209,116 @@ extension NativeCheckRunner {
         try await premiumPrivateTabRowChecks()
         try await premiumAtomicMoveSelectionChecks()
         try await premiumNewTabOverviewChecks()
+        try await premiumSwipePresentationInterruptionChecks()
+    }
+
+    private func premiumSwipePresentationInterruptionChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumSwipeModal-" + UUID().uuidString)
+        let suite = "PremiumSwipeModal-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        let source = session.selected
+        try await load(source, "")
+        _ = try await js(source, "document.querySelector('#kept').value='Keep the source behind this dialog'; true")
+        let sourceView = source.webView
+        let next = session.newTab()
+        session.select(source.id)
+        let shell = UIHostingController(rootView: BrowserZoomPresenter(session: session).ignoresSafeArea(.container))
+        host.addChild(shell); shell.view.frame = host.view.bounds
+        host.view.addSubview(shell.view); shell.didMove(toParent: host)
+        func findZoom(_ controller: UIViewController) -> BrowserZoomController? {
+            if let zoom = controller as? BrowserZoomController { return zoom }
+            return controller.children.lazy.compactMap { findZoom($0) }.first
+        }
+        var zoom: BrowserZoomController?
+        defer {
+            session.tabs.forEach { $0.presentation.cancel() }
+            session.showingTabs = true
+            zoom?.presentedViewController?.dismiss(animated: false)
+            shell.willMove(toParent: nil); shell.view.removeFromSuperview(); shell.removeFromParent()
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        try await wait {
+            zoom = findZoom(shell)
+            return zoom?.presentedViewController is TabSwipeController
+                && zoom?.presentedViewController?.isBeingPresented == false && sourceView.window != nil
+        }
+        guard let swipe = zoom?.presentedViewController as? TabSwipeController,
+              let content = swipe.children.first,
+              let preview = swipe.view.subviews.first(where: { $0 !== content.view }) else {
+            throw NSError(domain: "Missing production swipe presentation", code: 1)
+        }
+        let width = swipe.view.bounds.width
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
+        try check(swipe.hasActivePresentation && session.selected === source,
+                  "production swipe commitment begins before an intervening source prompt")
+        var promptCompletions = 0
+        source.presentation.ask(origin: "Synthetic source", message: "Keep this source dialog", kind: "confirm") { _ in
+            promptCompletions += 1
+        }
+        guard let prompt = swipe.presentedViewController as? UIAlertController else {
+            throw NSError(domain: "Source prompt was not presented over production swipe", code: 1)
+        }
+        try await wait { !prompt.isBeingPresented && !swipe.hasActivePresentation }
+        try check(session.selected === source && swipe.presentedViewController === prompt && promptCompletions == 0,
+                  "a real source prompt arriving after swipe commit starts stays presented and prevents neighbor selection")
+        try check(source.loadedWebView === sourceView && sourceView.window != nil && content.view.transform == .identity
+                  && content.view.alpha == 1 && preview.isHidden,
+                  "an intervening prompt restores the same attached source page and clears only swipe visuals")
+        source.presentation.cancel()
+        try await wait { swipe.presentedViewController == nil }
+        let draftAfterPrompt = try await js(source, "document.querySelector('#kept').value") as? String
+        try check(promptCompletions == 1 && draftAfterPrompt == "Keep the source behind this dialog",
+                  "only explicit prompt cancellation completes the dialog while its original form draft survives")
+
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        var releaseCompletions = 0
+        source.presentation.ask(origin: "Synthetic source", message: "Prompt before release", kind: "confirm") { _ in
+            releaseCompletions += 1
+        }
+        guard let releasePrompt = swipe.presentedViewController as? UIAlertController else {
+            throw NSError(domain: "Source prompt before swipe release was not presented", code: 1)
+        }
+        session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
+        try await wait { !releasePrompt.isBeingPresented && !swipe.hasActivePresentation }
+        try check(session.selected === source && swipe.presentedViewController === releasePrompt
+                  && releaseCompletions == 0 && content.view.transform == .identity && preview.isHidden,
+                  "swipe release also rejects a newly presented dialog without cancelling it")
+        source.presentation.cancel()
+        try await wait { swipe.presentedViewController == nil }
+
+        guard let parent = swipe.view.superview, let index = parent.subviews.firstIndex(of: swipe.view) else {
+            throw NSError(domain: "Missing production swipe window attachment", code: 1)
+        }
+        let bounds = swipe.view.bounds
+        let center = swipe.view.center
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
+        swipe.view.removeFromSuperview()
+        try await wait { !swipe.hasActivePresentation }
+        try check(session.selected === source && source.loadedWebView === sourceView && content.view.transform == .identity
+                  && content.view.alpha == 1 && preview.isHidden,
+                  "losing the presentation window during commitment cannot select a neighbor and resets swipe motion")
+        parent.insertSubview(swipe.view, at: min(index, parent.subviews.count))
+        swipe.view.bounds = bounds; swipe.view.center = center
+        swipe.view.setNeedsLayout(); swipe.view.layoutIfNeeded()
+        try await wait { sourceView.window != nil }
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
+        try await wait { session.selectedID == next.id && !swipe.hasActivePresentation }
+        try check(session.selected === next && releaseCompletions == 1 && content.view.transform == .identity,
+                  "an ordinary swipe still commits after source-dialog and window interruptions")
+        let blank = session.newTab()
+        session.select(next.id)
+        try await wait { session.selected.showingStartPage && content.view.window != nil }
+        session.tabSwipe.receive?(.changed(-width * 0.3))
+        session.tabSwipe.receive?(.ended(-width * 0.3, -width * 0.8))
+        try await wait { session.selectedID == blank.id && !swipe.hasActivePresentation }
+        try check(session.selected === blank && blank.showingStartPage,
+                  "native blank start pages remain eligible for ordinary adjacent-tab swipes")
     }
 
     private func premiumNewTabOverviewChecks() async throws {

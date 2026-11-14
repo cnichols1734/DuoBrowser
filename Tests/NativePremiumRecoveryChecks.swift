@@ -280,11 +280,41 @@ extension NativeCheckRunner {
         try check(source.failureCoversPage && source.loadFailure?.id == failure.id
                   && source.errorMessage == failure.message && source.loadedWebView === webView,
                   "closing that saved copy retains the original failure and retry surface")
+        let retryClock = ContinuousClock()
+        let retryStarted = retryClock.now
+        var retryEvents: [String] = []
+        func recordRetryEvent(_ event: String) {
+            guard retryEvents.count < 32 else { return }
+            retryEvents.append("\(retryStarted.duration(to: retryClock.now)): \(event.prefix(192))")
+        }
+        source.testNavigationObserver = recordRetryEvent
+        source.testDownloadObserver = recordRetryEvent
+        defer { source.testNavigationObserver = nil; source.testDownloadObserver = nil }
         try check(source.retryLoadFailure(failure),
                   "original recovery retry remains actionable after a failed unread-copy status update")
-        try await wait {
-            guard !source.isLoading, source.loadFailure == nil else { return false }
-            return (try? await self.js(source, "document.readyState==='complete' && location.search==='?recovery-read-status=1' && typeof window.__recoveryCopyRetryMarker==='undefined'")) as? Bool == true
+        var lastRetryDocument = "not evaluated"
+        var lastRetryScriptError = "none"
+        do {
+            // This action starts a new GET document, including on a cold hosted simulator.
+            // Use load()'s existing navigation-readiness budget; interaction waits remain 10s.
+            try await wait(timeout: 60) {
+                guard !source.isLoading, source.loadFailure == nil else { return false }
+                do {
+                    let value = try await self.js(source, """
+                        ({complete:document.readyState==='complete' && location.search==='?recovery-read-status=1' && typeof window.__recoveryCopyRetryMarker==='undefined',
+                          ready:document.readyState,search:location.search,markerType:typeof window.__recoveryCopyRetryMarker})
+                        """) as? [String: Any]
+                    lastRetryDocument = String(String(describing: value).prefix(768))
+                    lastRetryScriptError = "none"
+                    return value?["complete"] as? Bool == true
+                } catch {
+                    lastRetryScriptError = String(String(describing: error).prefix(384))
+                    return false
+                }
+            }
+        } catch {
+            results.append("RECOVERY RETRY: elapsed=\(retryStarted.duration(to: retryClock.now)) actual=\(webView.url?.absoluteString ?? "nil") modelLoading=\(source.isLoading) nativeLoading=\(webView.isLoading) failure=\(String(describing: source.loadFailure?.kind)) message=\(source.errorMessage ?? "none") document=\(lastRetryDocument) scriptError=\(lastRetryScriptError) events=\(retryEvents.joined(separator: "; "))")
+            throw error
         }
         var ordinarySaveFailed = false
         var read = unread; read.isRead = true

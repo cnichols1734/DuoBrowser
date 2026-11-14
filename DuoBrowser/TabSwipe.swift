@@ -177,17 +177,26 @@ final class TabSwipeController: UIViewController {
         sourceID == session.selectedID && !session.showingTabs
     }
 
+    private var presentationAllowsSwipe: Bool {
+        guard let window = viewIfLoaded?.window, !window.isHidden,
+              let hosted = content.viewIfLoaded, hosted.window === window,
+              hosted.isDescendant(of: view),
+              !isBeingPresented, !isBeingDismissed,
+              presentedViewController == nil, content.presentedViewController == nil else { return false }
+        return true
+    }
+
     private var valid: Bool {
         guard let targetID else { return false }
-        return sourceIsCurrent && session.adjacentTabID(direction) == targetID
+        return sourceIsCurrent && presentationAllowsSwipe && session.adjacentTabID(direction) == targetID
     }
 
     private func receive(_ event: TabSwipeState.Event) {
         guard isViewLoaded else { return }
         switch event {
         case .changed(let distance):
-            guard distance.isFinite, view.window != nil,
-                  presentedViewController == nil, content.presentedViewController == nil else { return }
+            guard distance.isFinite else { return }
+            guard presentationAllowsSwipe else { cancelImmediately(); return }
             if finishing {
                 guard sourceIsCurrent else { cancelImmediately(); return }
                 guard interruptSettling(at: distance) else { return }
@@ -296,8 +305,8 @@ final class TabSwipeController: UIViewController {
             }
         }
         animator?.addCompletion { [weak self] position in
-            guard let self, position == .end else { return }
-            let shouldSelect = commit && self.valid
+            guard let self else { return }
+            let shouldSelect = position == .end && commit && self.valid
             self.cancelImmediately()
             if shouldSelect, let target { self.session.select(target) }
         }

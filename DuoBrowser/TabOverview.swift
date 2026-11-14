@@ -38,7 +38,6 @@ struct TabOverview: View {
     @State private var appearance = false
     @State private var controlLift: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
-    @State private var contentInsets = UIEdgeInsets.zero
     @State private var photo: PhotosPickerItem?
     @State private var wallpaperError: String?
     @State private var operationError: String?
@@ -48,22 +47,28 @@ struct TabOverview: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-    @Environment(\.layoutDirection) private var layoutDirection
     @ScaledMetric(relativeTo: .body) private var searchRowHeight = 44.0
     #if DEBUG
     private var didRenderTabs: (([UUID]) -> Void)?
     private var didMeasureHeader: ((UIView) -> Void)?
+    private var didMeasureListViewport: ((UIView) -> Void)?
+    private var didMeasureListLane: ((UIView) -> Void)?
+    private var didMeasureListRow: ((UUID, UIView) -> Void)?
     #endif
 
     init(session: BrowserSession) { self.session = session }
 
     #if DEBUG
     init(session: BrowserSession, search: String, didRenderTabs: @escaping ([UUID]) -> Void,
-         didMeasureHeader: ((UIView) -> Void)? = nil) {
+         didMeasureHeader: ((UIView) -> Void)? = nil, didMeasureListViewport: ((UIView) -> Void)? = nil,
+         didMeasureListLane: ((UIView) -> Void)? = nil, didMeasureListRow: ((UUID, UIView) -> Void)? = nil) {
         self.session = session
         _search = State(initialValue: search)
         self.didRenderTabs = didRenderTabs
         self.didMeasureHeader = didMeasureHeader
+        self.didMeasureListViewport = didMeasureListViewport
+        self.didMeasureListLane = didMeasureListLane
+        self.didMeasureListRow = didMeasureListRow
     }
     #endif
 
@@ -127,8 +132,8 @@ struct TabOverview: View {
             }
             .background {
                 BrowserWallpaper()
-                OverviewRegionReader(footerHeight: footerHeight, bottomInset: max(8, geometry.safeAreaInsets.bottom)) {
-                    controlLift = $0; contentInsets = $1
+                OverviewRegionReader(footerHeight: footerHeight, bottomInset: max(8, geometry.safeAreaInsets.bottom)) { lift, _ in
+                    controlLift = lift
                 }.allowsHitTesting(false)
                 if reduceTransparency { Color(uiColor: .systemGroupedBackground) }
                 else { Rectangle().fill(.ultraThinMaterial) }
@@ -222,11 +227,32 @@ struct TabOverview: View {
     }
 
     private var tabList: some View {
+        TabListViewport {
+            listContents
+                .background {
+                    #if DEBUG
+                    CompactTabHeaderProbe(register: didMeasureListLane).allowsHitTesting(false).accessibilityHidden(true)
+                    #endif
+                }
+        }
+        .background {
+            #if DEBUG
+            CompactTabHeaderProbe(register: didMeasureListViewport).allowsHitTesting(false).accessibilityHidden(true)
+            #endif
+        }
+    }
+
+    private var listContents: some View {
         List(selection: $selectedTabs) {
             ForEach(filteredTabs) { tab in
                 Group {
                     if selecting { listLabel(tab) }
                     else { Button { session.select(tab.id) } label: { listLabel(tab) }.buttonStyle(.plain) }
+                }
+                .background {
+                    #if DEBUG
+                    CompactTabHeaderProbe(register: { didMeasureListRow?(tab.id, $0) }).allowsHitTesting(false).accessibilityHidden(true)
+                    #endif
                 }
                 .tag(tab.id)
                 .listRowBackground(Color.clear)
@@ -244,8 +270,6 @@ struct TabOverview: View {
         .listStyle(.plain).scrollContentBackground(.hidden)
         .environment(\.editMode, .constant(selecting ? .active : .inactive))
         .scrollDismissesKeyboard(.interactively)
-        .padding(.leading, layoutDirection == .rightToLeft ? contentInsets.right : contentInsets.left)
-        .padding(.trailing, layoutDirection == .rightToLeft ? contentInsets.left : contentInsets.right)
     }
 
     private func listLabel(_ tab: BrowserModel) -> some View {
@@ -481,7 +505,107 @@ struct TabListRow: View {
     }
 }
 
+/// The reader remains on the original list allocation; resizing the clear lane cannot change its
+/// region coordinates. One List identity retains selection/scroll state as that lane moves.
+private struct TabListViewport<Content: View>: View {
+    @State private var regions: [CGRect]?
+    @Environment(\.layoutDirection) private var direction
+    private let content: () -> Content
+    init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
+    var body: some View {
+        GeometryReader { geometry in
+            let clear = regions.map { TabListViewportGeometry.clearRect(in: CGRect(origin: .zero, size: geometry.size), regions: $0, direction: direction) } ?? .zero
+            content()
+                .frame(width: max(1, clear.width), height: max(1, clear.height))
+                .clipped()
+                .opacity(clear.isEmpty ? 0 : 1)
+                .allowsHitTesting(!clear.isEmpty)
+                .accessibilityHidden(clear.isEmpty)
+                .position(x: direction == .rightToLeft ? geometry.size.width - clear.midX : clear.midX, y: clear.midY)
+        }
+        .background { TabListRegionReader { regions = $0 }.allowsHitTesting(false).accessibilityHidden(true) }
+    }
+}
+
+enum TabListViewportGeometry {
+    static func clearRect(in bounds: CGRect, regions: [CGRect], direction: LayoutDirection) -> CGRect {
+        guard !bounds.isEmpty, !bounds.isInfinite else { return .zero }
+        let active = regions.filter { !$0.isNull && !$0.isInfinite && !$0.isEmpty && $0.intersects(bounds) }
+        var candidates = [bounds]
+        let minimumWidth = min(160, bounds.width), minimumHeight = min(88, bounds.height)
+        func ordered(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+            let leftArea = lhs.width * lhs.height, rightArea = rhs.width * rhs.height
+            if leftArea != rightArea { return leftArea > rightArea }
+            if lhs.minY != rhs.minY { return lhs.minY < rhs.minY }
+            return direction == .rightToLeft ? lhs.maxX > rhs.maxX : lhs.minX < rhs.minX
+        }
+        for region in active {
+            let excluded = region.insetBy(dx: -8, dy: -8)
+            var next: [CGRect] = []
+            for candidate in candidates {
+                if !candidate.intersects(excluded) { next.append(candidate); continue }
+                let pieces = [
+                    CGRect(x: candidate.minX, y: candidate.minY, width: max(0, excluded.minX - candidate.minX), height: candidate.height),
+                    CGRect(x: max(candidate.minX, excluded.maxX), y: candidate.minY, width: max(0, candidate.maxX - excluded.maxX), height: candidate.height),
+                    CGRect(x: candidate.minX, y: candidate.minY, width: candidate.width, height: max(0, excluded.minY - candidate.minY)),
+                    CGRect(x: candidate.minX, y: max(candidate.minY, excluded.maxY), width: candidate.width, height: max(0, candidate.maxY - excluded.maxY))
+                ]
+                for piece in pieces where piece.width >= minimumWidth && piece.height >= minimumHeight && !next.contains(piece) { next.append(piece) }
+            }
+            // Every retained candidate has cleared every processed region. Bound work without
+            // dropping any system exclusion; if no useful lane survives the List is noninteractive.
+            candidates = Array(next.sorted(by: ordered).prefix(64))
+        }
+        return candidates.sorted(by: ordered).first ?? .zero
+    }
+}
+
+private struct TabListRegionReader: UIViewRepresentable {
+    let update: ([CGRect]) -> Void
+    #if DEBUG
+    @Environment(\.tabListTestRegionsInWindow) private var testRegions
+    #endif
+    func makeUIView(context: Context) -> RegionView { RegionView() }
+    func updateUIView(_ view: RegionView, context: Context) {
+        view.update = update
+        #if DEBUG
+        view.testRegions = testRegions
+        #endif
+        view.setNeedsLayout()
+    }
+    final class RegionView: UIView {
+        var update: (([CGRect]) -> Void)?
+        private var last: [CGRect]?
+        #if DEBUG
+        var testRegions: [CGRect]?
+        #endif
+        override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            var next = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+            #if DEBUG
+            if let testRegions, let window { next = testRegions.map { convert($0, from: window) } }
+            #endif
+            guard next != last else { return }
+            last = next
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.last == next else { return }
+                self.update?(next)
+            }
+        }
+    }
+}
+
 #if DEBUG
+private struct TabListTestRegionsInWindowKey: EnvironmentKey { static let defaultValue: [CGRect]? = nil }
+extension EnvironmentValues {
+    var tabListTestRegionsInWindow: [CGRect]? {
+        get { self[TabListTestRegionsInWindowKey.self] }
+        set { self[TabListTestRegionsInWindowKey.self] = newValue }
+    }
+}
+
 private struct CompactTabHeaderProbe: UIViewRepresentable {
     let register: ((UIView) -> Void)?
     func makeUIView(context: Context) -> UIView { UIView() }
