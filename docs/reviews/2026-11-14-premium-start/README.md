@@ -1,5 +1,7 @@
 # Premium start page — November 14, 2026
 
+The [combined validation and delivery report](../2026-11-14-premium-browser/README.md) supersedes the handoff's pending execution statements below; all 37 start-page assertions passed in the full and final focused runs.
+
 The start page is now a navigation canvas built around the current workspace, a direct search invitation, Favorites, and returning to already open normal tabs. It does not introduce Reader or Reading List surfaces.
 
 ## Behavior

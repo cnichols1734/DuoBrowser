@@ -1,5 +1,7 @@
 # Premium page controls — November 14, 2026
 
+The [combined validation and delivery report](../2026-11-14-premium-browser/README.md) supersedes the handoff's pending execution statements below; all 13 controls assertions passed in the full and final focused runs.
+
 ## Implemented
 
 - Replaced the long mixed Page options menu with a native, scrollable controls sheet. Share, Save, Find and the existing Reader entry are first; website layout/protection state is followed by tab actions and browser destinations.

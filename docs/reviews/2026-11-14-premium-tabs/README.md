@@ -1,5 +1,7 @@
 # Tabs interaction refinement — November 14, 2026
 
+The [combined validation and delivery report](../2026-11-14-premium-browser/README.md) records the integrated result. The final focused run includes 59 tab assertions, adding two same-bounds mid-drag layout regressions to the handoff checkpoint below.
+
 ## Implemented behavior
 
 - Search Tabs is visible at the top of the overview. Workspace/private identity and the tab count remain explicit.
