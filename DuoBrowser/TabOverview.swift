@@ -3,11 +3,33 @@ import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
 import CoreTransferable
+import Combine
+
+/// Refresh only the overview when a visible tab changes. Private updates never pass
+/// through BrowserSession's normal-history/archive observers.
+@MainActor
+final class TabOverviewUpdates: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
+    private var ids: [UUID] = []
+    private var observation: AnyCancellable?
+
+    func observe(_ tabs: [BrowserModel]) {
+        let current = tabs.map(\.id)
+        guard current != ids || observation == nil else { return }
+        ids = current
+        observation = Publishers.MergeMany(tabs.map(\.objectWillChange))
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.objectWillChange.send() }
+    }
+
+    func stop() { observation = nil; ids = [] }
+}
 
 struct TabOverview: View {
     @State private var showingRecentlyClosed = false
     @ObservedObject var session: BrowserSession
     @ObservedObject private var wallpaper = BrowserWallpaperStore.shared
+    @StateObject private var tabUpdates = TabOverviewUpdates()
     @State private var search = ""
     @State private var selecting = false
     @State private var selectedTabs: Set<UUID> = []
@@ -26,6 +48,19 @@ struct TabOverview: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    #if DEBUG
+    private var didRenderTabs: (([UUID]) -> Void)?
+    #endif
+
+    init(session: BrowserSession) { self.session = session }
+
+    #if DEBUG
+    init(session: BrowserSession, search: String, didRenderTabs: @escaping ([UUID]) -> Void) {
+        self.session = session
+        _search = State(initialValue: search)
+        self.didRenderTabs = didRenderTabs
+    }
+    #endif
 
     private var colorChoice: Binding<Color> {
         Binding(get: {
@@ -46,6 +81,16 @@ struct TabOverview: View {
     private var scope: String { session.privateMode ? "Private" : session.workspaceName }
 
     var body: some View {
+        #if DEBUG
+        overview
+            .onAppear { didRenderTabs?(filteredTabs.map(\.id)) }
+            .onChange(of: filteredTabs.map(\.id)) { _, ids in didRenderTabs?(ids) }
+        #else
+        overview
+        #endif
+    }
+
+    private var overview: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 header
@@ -80,10 +125,16 @@ struct TabOverview: View {
         }
         .ignoresSafeArea(.container)
         .statusBarHidden(true)
+        .onAppear { if session.showingTabs { tabUpdates.observe(session.visibleTabs) } }
+        .onDisappear { tabUpdates.stop() }
         .onChange(of: session.showingTabs) { _, showing in
-            if showing { search = ""; searchFocused = false; endSelection() }
+            if showing { search = ""; searchFocused = false; endSelection(); tabUpdates.observe(session.visibleTabs) }
+            else { tabUpdates.stop() }
         }
-        .onChange(of: session.visibleTabs.map(\.id)) { _, ids in selectedTabs.formIntersection(ids) }
+        .onChange(of: session.visibleTabs.map(\.id)) { _, ids in
+            selectedTabs.formIntersection(ids)
+            if session.showingTabs { tabUpdates.observe(session.visibleTabs) }
+        }
         .onChange(of: session.privateMode) { _, _ in search = ""; endSelection() }
         .onChange(of: session.workspaceID) { _, _ in search = ""; endSelection() }
         .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
@@ -170,21 +221,8 @@ struct TabOverview: View {
     }
 
     private func listLabel(_ tab: BrowserModel) -> some View {
-        HStack(spacing: 14) {
-            Image(systemName: tab.isPinned ? "pin.fill" : "globe")
-                .font(.title3).foregroundStyle(.secondary).frame(width: 28)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(tab.title).font(.body.weight(.semibold)).lineLimit(2)
-                Text(tab.siteName).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            if !selecting, tab.id == session.selectedID {
-                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.accentColor)
-            }
-        }
-        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
-        .accessibilityElement(children: .combine)
-        .accessibilityAddTraits((selecting ? selectedTabs.contains(tab.id) : tab.id == session.selectedID) ? [.isSelected] : [])
+        TabListRow(tab: tab, current: tab.id == session.selectedID,
+                   selection: selecting ? selectedTabs.contains(tab.id) : nil)
     }
 
     private func tabItem(_ tab: BrowserModel, close: @escaping () -> Void) -> some View {
@@ -342,6 +380,46 @@ struct TabOverview: View {
             .navigationTitle("Tab Appearance")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { appearance = false } } }
         }.presentationDetents([.medium])
+    }
+}
+
+/// Each tab publishes independently. Private page changes must update its row without
+/// notifying the normal session, history or archive.
+struct TabListRow: View {
+    @ObservedObject var tab: BrowserModel
+    let current: Bool
+    var selection: Bool?
+    #if DEBUG
+    var didRender: ((String, String) -> Void)?
+    #endif
+
+    var body: some View {
+        #if DEBUG
+        row
+            .onAppear { didRender?(tab.title, tab.siteName) }
+            .onChange(of: tab.title) { _, title in didRender?(title, tab.siteName) }
+            .onChange(of: tab.address) { _, _ in didRender?(tab.title, tab.siteName) }
+        #else
+        row
+        #endif
+    }
+
+    private var row: some View {
+        HStack(spacing: 14) {
+            Image(systemName: tab.isPinned ? "pin.fill" : "globe")
+                .font(.title3).foregroundStyle(.secondary).frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tab.title).font(.body.weight(.semibold)).lineLimit(2)
+                Text(tab.siteName).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if selection == nil, current {
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.accentColor)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits((selection ?? current) ? [.isSelected] : [])
     }
 }
 

@@ -67,6 +67,20 @@ extension NativeCheckRunner {
         source.webViewWebContentProcessDidTerminate(webView)
         try check(source.loadFailure?.kind == .processTerminated && source.failureCoversPage,
                   "simulated process termination offers deliberate recovery without automatic reload")
+        let processFailure = source.loadFailure!
+        var missingCopy = LibraryEntry(address: processFailure.targetURL!.absoluteString, title: "Missing synthetic offline copy")
+        missingCopy.offlineID = UUID()
+        session.readingList = [missingCopy]
+        var failedCopy = false
+        do { _ = try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) }
+        catch { failedCopy = true }
+        try check(failedCopy && source.loadFailure?.id == processFailure.id && source.failureCoversPage,
+                  "a missing saved copy retains the full navigation failure and recovery actions")
+        try check(source.errorMessage == processFailure.message,
+                  "offline file errors cannot replace the navigation recovery message")
+        _ = session.newTab(privateTab: true)
+        try check(try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) == nil,
+                  "a saved-copy action captured before private browsing cannot expose the normal library")
     }
 }
 #endif

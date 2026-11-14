@@ -58,6 +58,68 @@ extension NativeCheckRunner {
                   "browser and tab organization actions remain valid after same-tab navigation")
         try check(PageControlsRequest(action: .share, browser: source).matches(source),
                   "newly requested page actions use the replacement document")
+        try await protectionPresentationScopeChecks(session: session, browser: source)
+    }
+
+    private func protectionPresentationScopeChecks(session: BrowserSession, browser: BrowserModel) async throws {
+        let sourceHost = browser.restorationURL?.host
+        var originalScope: WebsiteSettingsScope?
+        var renderedScope: WebsiteSettingsScope?
+        var renderedCurrent = false
+        var toggle: Binding<Bool>?
+        var renderedReplacement = false
+        func screen(replacement: Bool) -> BrowserProtectionView {
+            var screen = BrowserProtectionView(session: session, browser: browser)
+            screen.scopeDidChange = { scope, isCurrent, binding in
+                if originalScope == nil { originalScope = scope }
+                renderedScope = scope
+                renderedCurrent = isCurrent
+                toggle = binding
+                if replacement { renderedReplacement = true }
+            }
+            return screen
+        }
+        let protection = UIHostingController(rootView: screen(replacement: false))
+        host.addChild(protection)
+        protection.view.frame = host.view.bounds
+        host.view.addSubview(protection.view)
+        protection.didMove(toParent: host)
+        defer {
+            protection.willMove(toParent: nil)
+            protection.view.removeFromSuperview()
+            protection.removeFromParent()
+        }
+        try await wait { originalScope != nil && toggle != nil }
+        let scopeID = originalScope!.id
+        try check(originalScope?.host == sourceHost && renderedCurrent,
+                  "protection presentation captures the original website in rendered SwiftUI state")
+        toggle?.wrappedValue = false
+        try check(!browser.blockAds && session.blockingExceptions(isPrivate: false).contains(sourceHost!),
+                  "rendered protection toggle updates its original website")
+        toggle?.wrappedValue = true
+
+        // Keep the protection UI mounted while WebKit navigates to a distinct real fixture origin.
+        // Calling load() here would remove the UI from its window and miss the presentation-lifetime bug.
+        let destination = URL(string: "http://localhost:8765/upgrades?protection-scope=1")!
+        browser.navigate(to: destination.absoluteString)
+        try await wait {
+            guard browser.restorationURL == destination, !browser.isLoading else { return false }
+            return (try? await self.js(browser, "document.readyState==='complete' && location.hostname==='localhost'")) as? Bool == true
+        }
+        try await wait { !renderedCurrent }
+
+        // A SwiftUI sheet builder can initialize a new value without creating a new presentation identity.
+        // The old plain stored scope recaptured localhost here and made the stale controls current again.
+        protection.rootView = screen(replacement: true)
+        protection.view.setNeedsLayout()
+        protection.view.layoutIfNeeded()
+        try await wait { renderedReplacement }
+        try check(renderedScope?.id == scopeID && renderedScope?.host == sourceHost && !renderedCurrent,
+                  "rebuilding protection sheet content after navigation retains its original website scope")
+        let value = browser.blockAds
+        toggle?.wrappedValue = !value
+        try check(browser.blockAds == value && !session.blockingExceptions(isPrivate: false).contains("localhost"),
+                  "stale rendered protection toggle cannot retarget the newly navigated website")
     }
 }
 #endif

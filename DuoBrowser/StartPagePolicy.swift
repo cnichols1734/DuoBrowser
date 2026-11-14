@@ -21,13 +21,19 @@ enum StartPagePolicy {
         }.prefix(max(0, min(6, limit))).map { $0.element.id })
     }
 
-    static func recentSites(_ history: [LibraryEntry], favorites: [LibraryEntry], isPrivate: Bool, limit: Int = 4) -> [LibraryEntry] {
-        guard !isPrivate else { return [] }
+    static func recentSites<History: Sequence>(_ history: History, favorites: [LibraryEntry], isPrivate: Bool,
+                                              limit: Int = 4) -> [LibraryEntry] where History.Element == LibraryEntry {
+        let count = max(0, min(8, limit))
+        guard !isPrivate, count > 0 else { return [] }
         var hosts = Set(favorites.compactMap { host($0.address) })
-        return Array(history.filter {
-            guard WebAddress.valid(URL(string: $0.address)) != nil, let name = host($0.address) else { return false }
-            return hosts.insert(name).inserted
-        }.prefix(max(0, min(8, limit))))
+        var result: [LibraryEntry] = []
+        for entry in history {
+            guard WebAddress.valid(URL(string: entry.address)) != nil, let name = host(entry.address),
+                  hosts.insert(name).inserted else { continue }
+            result.append(entry)
+            if result.count == count { break }
+        }
+        return result
     }
 
     /// Reorder favorite slots while preserving every bookmark, folder, and other metadata.

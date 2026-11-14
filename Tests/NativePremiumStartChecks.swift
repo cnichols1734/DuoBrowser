@@ -2,6 +2,7 @@
 import SwiftUI
 import UIKit
 import WebKit
+import Combine
 
 extension NativeCheckRunner {
     func premiumStartChecks() async throws {
@@ -54,6 +55,35 @@ extension NativeCheckRunner {
                   promoted[0].date == existing.date && promoted[0].title == "Added favorite" && promoted[0].isFavorite == true,
                   "Start: favorite promotion preserves existing bookmark folder date and identity without duplication")
 
+        let recent = StartPageRecentSitesProjection()
+        var projectionUpdates = 0
+        let projectionObservation = recent.$sites.dropFirst().sink { _ in projectionUpdates += 1 }
+        defer { projectionObservation.cancel() }
+        let recentEntry = LibraryEntry(address: "https://recent.example/page", title: "Recent synthetic page")
+        recent.bind(to: session, enabled: false)
+        session.history = [recentEntry]
+        try check(recent.sites.isEmpty && projectionUpdates == 0,
+                  "Start: hidden Recent Sites does not build a history projection when data changes")
+        recent.bind(to: session, enabled: true)
+        let firstProjectionUpdates = projectionUpdates
+        for _ in 0..<20 { recent.bind(to: session, enabled: true) }
+        try check(recent.sites.map(\.id) == [recentEntry.id] && projectionUpdates == firstProjectionUpdates,
+                  "Start: repeated view binding retains the cached Recent Sites projection")
+        let newestEntry = LibraryEntry(address: "https://newest.example/page", title: "Newer synthetic page")
+        session.history = [newestEntry, recentEntry]
+        try check(recent.sites.map(\.id) == [newestEntry.id, recentEntry.id] && projectionUpdates == firstProjectionUpdates + 1,
+                  "Start: Recent Sites rebuilds when normal history actually changes")
+        recent.bind(to: session, enabled: false)
+        let hiddenUpdates = projectionUpdates
+        session.history = [newestEntry]
+        try check(recent.sites.isEmpty && projectionUpdates == hiddenUpdates,
+                  "Start: hiding Recent Sites drops its subscription and cached results")
+        session.switchMode(true)
+        recent.bind(to: session, enabled: true)
+        try check(recent.sites.isEmpty && projectionUpdates == hiddenUpdates,
+                  "Start: a private start cannot enable a normal history projection")
+        session.switchMode(false)
+
         let bounds = CGRect(x: 0, y: 0, width: 400, height: 120)
         let trailing = CGRect(x: 350, y: 30, width: 50, height: 50)
         let side = StartPageLayout.clearance(in: bounds, applied: .zero, regions: [trailing])
@@ -62,8 +92,8 @@ extension NativeCheckRunner {
         let bottom = CGRect(x: 0, y: 100, width: 400, height: 20)
         let first = StartPageLayout.clearance(in: bounds, applied: .zero, regions: [bottom])
         let grown = CGRect(x: 0, y: 0, width: 400, height: bounds.height + first.top + first.bottom)
-        try check(first.bottom == 28 && StartPageLayout.clearance(in: grown, applied: first, regions: [bottom]) == first,
-                  "Start: bottom clearance reaches a stable layout instead of growing on every pass")
+        try check(first.top == 128 && first.bottom == 0 && StartPageLayout.clearance(in: grown, applied: first, regions: [bottom]) == first,
+                  "Start: low full-width occlusion moves actual content below it with stable top clearance")
         try check(StartPageLayout.clearance(in: bounds, applied: side, regions: []).right == 0,
                   "Start: section returns to full width when system occlusion disappears")
         let top = CGRect(x: 0, y: 0, width: 400, height: 22)
@@ -97,6 +127,64 @@ extension NativeCheckRunner {
         try check(privateFrames["favorites"] == nil && privateFrames["openTabs"] == nil && privateFrames["recentSites"] == nil && privateFrames["customize"] == nil,
                   "Start: rendered private start omits normal favorite/history/tab/customization surfaces")
         try check(session.bookmarks.contains { $0.id == b.id }, "Start: private presentation leaves normal saved pages intact")
+        try await premiumStartRenderedClearanceChecks()
+    }
+
+    private func premiumStartRenderedClearanceChecks() async throws {
+        let cases: [(String, CGRect, LayoutDirection, CGFloat, CGFloat)] = [
+            ("low full-width region", CGRect(x: 0, y: 100, width: 400, height: 20), .leftToRight, 0, 128),
+            ("wide interior region", CGRect(x: 80, y: 45, width: 240, height: 30), .leftToRight, 0, 83),
+            ("right region LTR", CGRect(x: 350, y: 30, width: 50, height: 50), .leftToRight, -58, 0),
+            ("right region RTL", CGRect(x: 350, y: 30, width: 50, height: 50), .rightToLeft, -58, 0),
+            ("left region LTR", CGRect(x: 0, y: 30, width: 50, height: 50), .leftToRight, 58, 0),
+            ("left region RTL", CGRect(x: 0, y: 30, width: 50, height: 50), .rightToLeft, 58, 0)
+        ]
+        for (name, region, direction, horizontal, top) in cases {
+            let regions = PremiumStartFixtureRegions([region])
+            var measured: [String: CGRect] = [:]
+            let controller = UIHostingController(rootView: PremiumStartClearanceFixture(regions: regions, direction: direction) {
+                measured[$0] = $1
+            })
+            host.addChild(controller); controller.view.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+            host.view.addSubview(controller.view); controller.didMove(toParent: host)
+            defer { controller.willMove(toParent: nil); controller.view.removeFromSuperview(); controller.removeFromParent() }
+            try await wait {
+                guard let outer = measured["outer"], let content = measured["content"] else { return false }
+                let expectedX = horizontal > 0 ? outer.minX + horizontal : outer.minX
+                let expectedWidth = outer.width - abs(horizontal)
+                return abs(content.minX - expectedX) < 1 && abs(content.width - expectedWidth) < 1 &&
+                    abs(content.minY - outer.minY - top) < 1 && abs(content.height - 120) < 1
+            }
+            guard let outer = measured["outer"], let content = measured["content"] else {
+                throw NSError(domain: "missing rendered start clearance frames", code: 1)
+            }
+            let obstruction = region.offsetBy(dx: outer.minX, dy: outer.minY)
+            try check(!content.intersects(obstruction) && content.minX >= outer.minX && content.maxX <= outer.maxX &&
+                      content.minY >= outer.minY && content.maxY <= outer.maxY + 1,
+                      "Start: actual rendered tap surface clears \(name) and stays inside its expanded section")
+            if name == "low full-width region" {
+                guard let scroll = premiumStartScrollView(in: controller.view) else {
+                    throw NSError(domain: "missing start clearance fixture scroll view", code: 1)
+                }
+                try await wait { scroll.contentSize.height > scroll.bounds.height + 200 }
+                scroll.setContentOffset(CGPoint(x: 0, y: 150), animated: false)
+                try check(scroll.isScrollEnabled && scroll.contentOffset.y > 100,
+                          "Start: moved section expands native scroll content and leaves later controls reachable")
+                scroll.setContentOffset(.zero, animated: false)
+                regions.value = []
+                try await wait {
+                    guard let outer = measured["outer"], let content = measured["content"] else { return false }
+                    return abs(content.minX - outer.minX) < 1 && abs(content.minY - outer.minY) < 1 &&
+                        abs(content.width - 400) < 1 && abs(outer.height - 120) < 1
+                }
+                try check(true, "Start: removing a system region restores the actual rendered content frame and section height")
+            }
+        }
+    }
+
+    private func premiumStartScrollView(in view: UIView) -> UIScrollView? {
+        if let scroll = view as? UIScrollView { return scroll }
+        return view.subviews.lazy.compactMap { self.premiumStartScrollView(in: $0) }.first
     }
 
     /// Synthetic start-page scene for closed/open/partial/rotation/large-type visual review.
@@ -122,6 +210,58 @@ extension NativeCheckRunner {
         host.addChild(controller); controller.view.frame = host.view.bounds
         controller.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         host.view.addSubview(controller.view); controller.didMove(toParent: host)
+    }
+}
+
+@MainActor
+private final class PremiumStartFixtureRegions: ObservableObject {
+    @Published var value: [CGRect]
+    init(_ value: [CGRect]) { self.value = value }
+}
+
+private struct PremiumStartClearanceFixture: View {
+    @ObservedObject var regions: PremiumStartFixtureRegions
+    let direction: LayoutDirection
+    let update: (String, CGRect) -> Void
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 0) {
+                Button {} label: { Text("Synthetic start action").frame(maxWidth: .infinity, maxHeight: .infinity) }
+                    .frame(height: 120)
+                    .background { PremiumStartClearanceProbe(name: "content", update: update) }
+                    .modifier(StartPageClearance())
+                    .background { PremiumStartClearanceProbe(name: "outer", update: update) }
+                Text("Synthetic controls farther down the start page").frame(height: 900)
+            }
+        }
+        .environment(\.layoutDirection, direction)
+        .environment(\.startPageTestRegions, regions.value)
+        .ignoresSafeArea(.container)
+    }
+}
+
+private struct PremiumStartClearanceProbe: UIViewRepresentable {
+    let name: String
+    let update: (String, CGRect) -> Void
+    func makeUIView(context: Context) -> Probe { Probe() }
+    func updateUIView(_ view: Probe, context: Context) { view.name = name; view.update = update; view.setNeedsLayout() }
+    final class Probe: UIView {
+        var name = ""
+        var update: ((String, CGRect) -> Void)?
+        private var last: CGRect?
+        override func didMoveToWindow() { super.didMoveToWindow(); last = nil; setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard let window else { return }
+            let frame = convert(bounds, to: window)
+            guard frame != last else { return }
+            last = frame
+            let name = name
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.last == frame else { return }
+                self.update?(name, frame)
+            }
+        }
     }
 }
 #endif

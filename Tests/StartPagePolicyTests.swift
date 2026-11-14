@@ -40,6 +40,16 @@ import Foundation
               "private start never returns normal history")
         check(StartPagePolicy.recentSites(history, favorites: [favorite], isPrivate: false, limit: 1).map(\.id) == [visit.id],
               "recent site count is bounded")
+        let largeHistory = (0..<20_000).map { LibraryEntry(address: "https://site\($0).example/page", title: "Site \($0)") }
+        let visitCounter = StartPageHistoryVisitCounter()
+        let countedHistory = StartPageCountedHistory(entries: largeHistory, counter: visitCounter)
+        check(StartPagePolicy.recentSites(countedHistory, favorites: [], isPrivate: false).count == 4 && visitCounter.count == 4,
+              "recent sites stop reading a twenty-thousand-entry history after four eligible unique sites")
+        visitCounter.count = 0
+        check(StartPagePolicy.recentSites(countedHistory, favorites: [], isPrivate: false, limit: 0).isEmpty && visitCounter.count == 0,
+              "zero recent-site limit does not inspect history")
+        check(StartPagePolicy.recentSites(countedHistory, favorites: [], isPrivate: true).isEmpty && visitCounter.count == 0,
+              "private projection does not inspect normal history")
         check(StartPagePolicy.host(visit.address) == "news.example", "displayed recent site never exposes browsing path or query")
         let folder = UUID()
         let second = LibraryEntry(address: "https://second.example", title: "Second", folderID: folder, isFavorite: true)
@@ -70,5 +80,20 @@ import Foundation
         check(StartPagePolicy.favoriteURL("file:///tmp/example") == nil, "favorite editor rejects local file URLs")
         check(StartPagePolicy.favoriteURL(" ") == nil, "favorite editor rejects empty input")
         print("\(checks) start-page policy checks passed")
+    }
+}
+
+private final class StartPageHistoryVisitCounter { var count = 0 }
+private struct StartPageCountedHistory: Sequence {
+    let entries: [LibraryEntry]
+    let counter: StartPageHistoryVisitCounter
+    func makeIterator() -> AnyIterator<LibraryEntry> {
+        var index = 0
+        return AnyIterator {
+            guard index < entries.count else { return nil }
+            counter.count += 1
+            defer { index += 1 }
+            return entries[index]
+        }
     }
 }

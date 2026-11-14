@@ -1,6 +1,7 @@
 #if DEBUG
 import SwiftUI
 import WebKit
+import Combine
 
 extension NativeCheckRunner {
     func premiumTabsChecks() async throws {
@@ -148,6 +149,135 @@ extension NativeCheckRunner {
                   !TabSwipeMotion.shouldCommit(translation: -120, predicted: -300, width: 0),
                   "invalid geometry and reversed intent cannot commit a tab swipe")
         try premiumTabWriteFailureChecks()
+        try premiumBatchClosePersistenceChecks()
+        try await premiumPrivateTabRowChecks()
+    }
+
+    private func premiumBatchClosePersistenceChecks() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumBatchClose-" + UUID().uuidString)
+        let suite = "PremiumBatchClose-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        var primaryWrites = 0
+        var backupWrites = 0
+        var rejectPrimary = false
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if url.lastPathComponent == "session.json" {
+                primaryWrites += 1
+                if rejectPrimary { throw CocoaError(.fileWriteOutOfSpace) }
+            } else if url.lastPathComponent == "session.backup.json" { backupWrites += 1 }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let kept = session.selected
+        let closing = (0..<12).map { _ in session.newTab() }
+        let selected = session.selected
+        session.showingTabs = true
+        try check(session.saveNow(), "batch close seeds a durable session for counted writes")
+        var previousIDs = Set(session.tabs.map(\.id))
+        var removalOrder: [UUID] = []
+        let tabObservation = session.$tabs.sink { tabs in
+            let currentIDs = Set(tabs.map(\.id))
+            removalOrder.append(contentsOf: previousIDs.subtracting(currentIDs))
+            previousIDs = currentIDs
+        }
+        defer { tabObservation.cancel() }
+        primaryWrites = 0; backupWrites = 0
+        try check(session.closeTabs(Set(closing.map(\.id))) == closing.count,
+                  "batch close tears down every selected tab including the active tab")
+        try check(primaryWrites == 1 && backupWrites == 1,
+                  "multi-tab close performs exactly one primary and one backup archive write")
+        try check(removalOrder.last == selected.id && removalOrder.count == closing.count,
+                  "batch teardown removes the active tab last without intermediate replacements")
+        try check(session.selected === kept && session.tabs.count == 1 && session.showingTabs &&
+                  !session.tabs.contains { $0 === selected }, "batch close keeps its unselected neighbor and overview state")
+        try check(archive.load()?.session.tabs.map(\.id) == [kept.id], "single batch archive contains the complete final tab state")
+        primaryWrites = 0; backupWrites = 0
+        try check(session.closeTabs(Set(closing.map(\.id))) == 0 && primaryWrites == 0 && backupWrites == 0,
+                  "a stale closed selection performs no additional archive writes")
+        let single = session.newTab()
+        _ = session.saveNow()
+        primaryWrites = 0; backupWrites = 0
+        session.close(single.id)
+        try check(primaryWrites == 1 && backupWrites == 1 && session.selected === kept,
+                  "ordinary single-tab close still persists immediately")
+        let final = session.newTab()
+        _ = session.saveNow()
+        primaryWrites = 0; backupWrites = 0; rejectPrimary = true
+        try check(session.closeTabs([final.id]) == 1 && primaryWrites == 1 && backupWrites == 1 &&
+                  session.selected.errorMessage == "Your browsing changes could not be saved on this device.",
+                  "a failed batch commit reports its save error on the remaining selected tab")
+    }
+
+    private func premiumPrivateTabRowChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumPrivateRow-" + UUID().uuidString)
+        let suite = "PremiumPrivateRow-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        var primaryWrites = 0
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if url.lastPathComponent == "session.json" { primaryWrites += 1 }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.closePrivateTabs(); session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let tab = session.newTab(privateTab: true)
+        try await load(tab, "")
+        session.showingTabs = true
+        var renderedTitle = ""
+        var renderedSite = ""
+        var renderEvents = 0
+        let row = UIHostingController(rootView: TabListRow(tab: tab, current: true, didRender: { title, site in
+            renderedTitle = title; renderedSite = site; renderEvents += 1
+        }))
+        host.addChild(row)
+        row.view.frame = CGRect(x: 0, y: 0, width: host.view.bounds.width, height: 120)
+        host.view.addSubview(row.view); row.didMove(toParent: host)
+        defer { row.willMove(toParent: nil); row.view.removeFromSuperview(); row.removeFromParent() }
+        try await wait { renderedTitle == tab.title && renderedSite == "127.0.0.1" }
+        let initialEvents = renderEvents
+        var sessionPublications = 0
+        let observation = session.objectWillChange.sink { sessionPublications += 1 }
+        defer { observation.cancel() }
+        _ = session.saveNow()
+        primaryWrites = 0
+        let updatedTitle = "Private title updates independently"
+        _ = try await js(tab, "document.title='Private title updates independently'; true")
+        try await wait { tab.title == updatedTitle && renderedTitle == updatedTitle }
+        try check(renderEvents > initialEvents && sessionPublications == 0,
+                  "a hosted list row observes a private page title without normal-session publication")
+        tab.webView.load(URLRequest(url: URL(string: "about:blank")!))
+        try await wait { !tab.isLoading && tab.webView.url?.absoluteString == "about:blank" && renderedSite == "Start Page" }
+        try check(session.showingTabs && renderedSite == tab.siteName && sessionPublications == 0,
+                  "private navigation refreshes the rendered list-row site while the overview stays open")
+        try check(primaryWrites == 0 && archive.load()?.session.tabs.contains { $0.id == tab.id } == false,
+                  "private row updates remain unarchived and trigger no normal-session writes")
+        session.tabOverviewStyle = .list
+        sessionPublications = 0
+        var filteredIDs: [UUID] = []
+        var filterRenders = 0
+        let overview = UIHostingController(rootView: TabOverview(session: session, search: "needle", didRenderTabs: { ids in
+            filteredIDs = ids; filterRenders += 1
+        }))
+        host.addChild(overview); overview.view.frame = host.view.bounds
+        host.view.addSubview(overview.view); overview.didMove(toParent: host)
+        defer { overview.willMove(toParent: nil); overview.view.removeFromSuperview(); overview.removeFromParent() }
+        try await wait { filterRenders > 0 && filteredIDs.isEmpty }
+        _ = try await js(tab, "document.title='Private needle arrives'; true")
+        try await wait { tab.title == "Private needle arrives" && filteredIDs == [tab.id] }
+        try check(session.showingTabs && sessionPublications == 0 && primaryWrites == 0,
+                  "a renamed private page enters a rendered nonempty tab search without changing the query or session")
+        _ = try await js(tab, "document.title='Private renamed away'; true")
+        try await wait { tab.title == "Private renamed away" && filteredIDs.isEmpty }
+        try check(filterRenders >= 3 && sessionPublications == 0 && primaryWrites == 0,
+                  "a renamed private page leaves the same rendered search with no normal archive writes")
     }
 
     private func premiumTabWriteFailureChecks() throws {

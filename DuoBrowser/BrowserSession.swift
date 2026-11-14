@@ -380,12 +380,17 @@ final class BrowserSession: ObservableObject {
         let overview = showingTabs
         // Close the selected tab last to avoid activating a succession of discarded pages.
         let ordered = eligible.filter { $0.id != selectedID } + eligible.filter { $0.id == selectedID }
-        for tab in ordered { close(tab.id) }
+        for tab in ordered { close(tab.id, persist: false) }
         showingTabs = overview
+        saveNow()
         return ordered.count
     }
 
     func close(_ id: UUID) {
+        close(id, persist: true)
+    }
+
+    private func close(_ id: UUID, persist: Bool) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let order = visibleTabs.map(\.id)
         let visibleIndex = order.firstIndex(of: id)
@@ -421,7 +426,7 @@ final class BrowserSession: ObservableObject {
             selected.activate()
         }
         rememberSelection()
-        saveNow()
+        if persist { saveNow() }
     }
 
     @discardableResult

@@ -26,3 +26,9 @@
 Exercise the actual controls → Share/Save/Find/Reader/Website Settings/Protection/Library/Downloads/Workspaces/Settings actions after integrated build, including cancellation and stale navigation. Inspect regular iPhone and Duo closed/open/partially folded/rotated layouts, large text, Reduce Motion and VoiceOver focus. Pinch/fold/web-form continuity, physical touch/energy and fully spoken VoiceOver remain separate acceptance checks.
 
 [Installed blocker compatibility research](extension-compatibility.md) records ten representative products, public SDK boundaries, and real system-level filtering alternatives. No arbitrary installed Safari extension support is claimed or implemented.
+
+## Protection presentation-scope review follow-up
+
+Copilot correctly identified that a plain stored `WebsiteSettingsScope` in `BrowserProtectionView` could be recaptured when SwiftUI rebuilt sheet content after navigation. The scope now lives in `@State`, initialized once per presentation identity. Its toggle, reload and exception mutations also guard the retained host/tab before acting.
+
+Four native regressions extend `premiumControlsChecks()` from nine to thirteen assertions. They mount the actual protection view, use its rendered toggle binding, navigate the underlying WebKit document from the loopback IP to `localhost`, and replace the hosting controller's root value with a newly initialized view while preserving presentation identity. The replacement must retain the original scope, stay stale/disabled and reject writes to the new host. A Debug-only render probe observes the view's installed state and binding; it is excluded from Release. Swift parsing and targeted patch checks passed at handoff; the coordinating workstream records the integrated native result.

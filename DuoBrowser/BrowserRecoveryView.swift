@@ -6,6 +6,7 @@ struct BrowserRecoveryView: View {
     let fillsPage: Bool
     let editAddress: () -> Void
     var maximumHeight: CGFloat = 360
+    @State private var savedCopyError: String?
 
     private var savedEntry: LibraryEntry? {
         guard !browser.isPrivate, !session.privateMode, session.selectedID == browser.id,
@@ -46,6 +47,9 @@ struct BrowserRecoveryView: View {
                 }
             }
             .accessibilityIdentifier(fillsPage ? "browserFailurePage" : "browserFailureNotice")
+            .alert("Couldn’t Open Saved Copy", isPresented: Binding(get: { savedCopyError != nil }, set: { if !$0 { savedCopyError = nil } })) {
+                Button("OK", role: .cancel) { savedCopyError = nil }
+            } message: { Text(savedCopyError ?? "") }
         } else if let message = browser.errorMessage, !fillsPage {
             ViewThatFits(in: .vertical) {
                 localMessage(message).fixedSize(horizontal: false, vertical: true)
@@ -107,13 +111,21 @@ struct BrowserRecoveryView: View {
     }
 
     private func openSavedCopy(_ entry: LibraryEntry, failure: BrowserLoadFailure) {
-        guard browser.loadFailure?.id == failure.id, browser.documentGeneration == failure.documentID,
-              !session.privateMode, !browser.isPrivate, session.selectedID == browser.id,
-              let current = session.readingList.first(where: { $0.id == entry.id && $0.address == failure.targetURL?.absoluteString }) else { return }
         do {
-            guard let article = try session.articleForOpening(current) else { return }
+            guard let article = try session.articleForRecovery(entry, browser: browser, failure: failure) else { return }
             browser.errorMessage = nil
             browser.readerArticle = article
-        } catch { browser.errorMessage = "The saved copy couldn’t be opened. Try the website again." }
+        } catch { savedCopyError = "Try opening the website again." }
+    }
+}
+
+extension BrowserSession {
+    /// Reading a missing/corrupt copy must not replace the navigation failure or its recovery actions.
+    func articleForRecovery(_ entry: LibraryEntry, browser: BrowserModel, failure: BrowserLoadFailure) throws -> ReaderArticle? {
+        guard browser.loadFailure?.id == failure.id, browser.documentGeneration == failure.documentID,
+              !privateMode, !browser.isPrivate, selectedID == browser.id,
+              let current = readingList.first(where: { $0.id == entry.id && $0.address == failure.targetURL?.absoluteString }),
+              current.offlineID != nil else { return nil }
+        return try articleForOpening(current)
     }
 }

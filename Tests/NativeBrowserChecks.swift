@@ -2307,6 +2307,9 @@ final class NativeCheckRunner {
         session.selected.errorMessage = nil
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
         try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")
+        if ProcessInfo.processInfo.arguments.contains("--settings-record-diagnostics") {
+            await websiteDataDiagnostics(store)
+        }
         let data = session.websiteData
         try await wait(timeout: 20) {
             await data.reload()

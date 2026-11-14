@@ -2,6 +2,8 @@
 
 `--browser-checks --premium-checks` runs the combined daily-browsing regressions in `NativePremiumTabsChecks.swift`, `NativePremiumStartChecks.swift`, `NativePageControlsChecks.swift` and `NativePremiumRecoveryChecks.swift`. It writes `PremiumChecks.txt` and is included in the native script. These use isolated sessions and loopback fixtures to verify live draft retention, scoped tab operations and write rollback, interrupted UIKit swipe transitions, normal/private start projections, favorite metadata, measured occlusion clearance, deferred page-control actions and explicit stale-safe recovery. Simulated process callbacks are identified as simulated. Debug-only `--premium-start-preview` renders a synthetic start page for manual UI checks; `--premium-private-preview` selects its private variant.
 
+For a stalled synthetic Settings run, add `--settings-record-diagnostics` to `--browser-checks --settings-checks`. This Debug-only opt-in writes `WebsiteDataDiagnostics.txt` with bounded public callback completion stages for synthetic/empty stores. It records no website records, URLs or cookies and changes no existing assertion or timeout.
+
 Run from the repo root:
 
 ```sh

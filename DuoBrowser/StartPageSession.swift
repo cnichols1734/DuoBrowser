@@ -1,4 +1,29 @@
 import Foundation
+import Combine
+
+/// This projection observes data changes once; scrolling never re-scans normal history.
+@MainActor
+final class StartPageRecentSitesProjection: ObservableObject {
+    @Published private(set) var sites: [LibraryEntry] = []
+    private weak var session: BrowserSession?
+    private var observation: AnyCancellable?
+
+    func bind(to session: BrowserSession, enabled: Bool) {
+        guard enabled, !session.privateMode else {
+            observation = nil
+            self.session = nil
+            if !sites.isEmpty { sites = [] }
+            return
+        }
+        guard self.session !== session || observation == nil else { return }
+        observation = nil
+        self.session = session
+        observation = session.$history.combineLatest(session.$bookmarks).sink { [weak self, weak session] history, bookmarks in
+            guard let self, let session, !session.privateMode else { self?.sites = []; return }
+            sites = StartPagePolicy.recentSites(history, favorites: bookmarks.filter { $0.isFavorite != false }, isPrivate: false)
+        }
+    }
+}
 
 extension BrowserSession {
     @discardableResult

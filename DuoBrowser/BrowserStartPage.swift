@@ -16,6 +16,7 @@ struct BrowserStartPage: View {
     @State private var editingFavorite: LibraryEntry?
     @State private var favoriteError = false
     @State private var scrollOffset: CGFloat = 0
+    @StateObject private var recentSitesProjection = StartPageRecentSitesProjection()
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .caption) private var favoriteRibbonHeight = 112.0
     #if DEBUG
@@ -32,11 +33,6 @@ struct BrowserStartPage: View {
         let lookup = Dictionary(session.tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         return ids.compactMap { lookup[$0] }
     }
-    private var recentSites: [LibraryEntry] {
-        guard !privateStart else { return [] }
-        return StartPagePolicy.recentSites(session.history, favorites: session.favorites, isPrivate: false)
-    }
-
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
@@ -51,7 +47,9 @@ struct BrowserStartPage: View {
                     else {
                         if showFavorites { favoritesSection.startPageFrame("favorites", update: reportFrame).startPageClearance() }
                         if showOpenTabs, !openTabs.isEmpty { openTabsSection.startPageFrame("openTabs", update: reportFrame).startPageClearance() }
-                        if showRecentSites, !recentSites.isEmpty { recentSitesSection.startPageFrame("recentSites", update: reportFrame).startPageClearance() }
+                        if showRecentSites, !recentSitesProjection.sites.isEmpty {
+                            recentSitesSection.startPageFrame("recentSites", update: reportFrame).startPageClearance()
+                        }
                         customizeButton.startPageFrame("customize", update: reportFrame).startPageClearance()
                     }
                 }
@@ -75,10 +73,15 @@ struct BrowserStartPage: View {
         .alert("Couldn’t Update Favorites", isPresented: $favoriteError) {
             Button("OK", role: .cancel) {}
         } message: { Text("Your favorites are unchanged. Please try again.") }
+        .onAppear { bindRecentSites() }
+        .onChange(of: showRecentSites) { _, _ in bindRecentSites() }
         .onChange(of: privateStart) { _, isPrivate in
+            bindRecentSites()
             if isPrivate { customizing = false; editingFavorites = false; editingFavorite = nil }
         }
     }
+
+    private func bindRecentSites() { recentSitesProjection.bind(to: session, enabled: showRecentSites && !privateStart) }
 
     private func reportFrame(_ name: String, _ frame: CGRect) {
         #if DEBUG
@@ -263,7 +266,7 @@ struct BrowserStartPage: View {
     private var recentSitesSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Recent Sites").font(.title3.bold()).accessibilityAddTraits(.isHeader).padding(.bottom, 12)
-            ForEach(recentSites) { entry in
+            ForEach(recentSitesProjection.sites) { entry in
                 Button {
                     guard !privateStart else { return }
                     browser.navigate(to: entry.address)
@@ -358,13 +361,14 @@ private struct StartPageCustomization: View {
 }
 
 /// Clear only a section that actually intersects a current system occlusion. The rest keeps its full width.
-private struct StartPageClearance: ViewModifier {
+struct StartPageClearance: ViewModifier {
     @State private var insets = UIEdgeInsets.zero
     @Environment(\.startPageScrollOffset) private var scrollOffset
+    @Environment(\.layoutDirection) private var layoutDirection
+    init() {}
     func body(content: Content) -> some View {
         content
-            .padding(.top, insets.top).padding(.bottom, insets.bottom)
-            .padding(.leading, insets.left).padding(.trailing, insets.right)
+            .padding(StartPageLayout.directionalPadding(insets, direction: layoutDirection))
             .background {
                 StartPageRegionReader(applied: insets, scrollOffset: scrollOffset) { insets = $0 }
                     .allowsHitTesting(false).accessibilityHidden(true)
@@ -376,19 +380,31 @@ private struct StartPageRegionReader: UIViewRepresentable {
     let applied: UIEdgeInsets
     let scrollOffset: CGFloat
     let update: (UIEdgeInsets) -> Void
+    #if DEBUG
+    @Environment(\.startPageTestRegions) private var testRegions
+    #endif
     func makeUIView(context: Context) -> RegionView { RegionView() }
     func updateUIView(_ view: RegionView, context: Context) {
         view.applied = applied; view.update = update; view.setNeedsLayout()
+        #if DEBUG
+        view.testRegions = testRegions
+        #endif
     }
     final class RegionView: UIView {
         var applied = UIEdgeInsets.zero
         var update: ((UIEdgeInsets) -> Void)?
         private var last = UIEdgeInsets.zero
+        #if DEBUG
+        var testRegions: [CGRect]?
+        #endif
         override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
         override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
         override func layoutSubviews() {
             super.layoutSubviews()
-            let regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+            var regions = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+            #if DEBUG
+            if let testRegions { regions = testRegions }
+            #endif
             let next = StartPageLayout.clearance(in: bounds, applied: applied, regions: regions)
             guard next != last else { return }
             last = next
@@ -402,11 +418,38 @@ private struct StartPageRegionReader: UIViewRepresentable {
 
 enum StartPageLayout {
     static func clearance(in bounds: CGRect, applied: UIEdgeInsets, regions: [CGRect]) -> UIEdgeInsets {
-        // The probe surrounds the padding. Remove our own vertical contribution before measuring
-        // so a bottom exclusion cannot keep growing the section on every layout pass.
+        // The probe surrounds padding. Reconstruct the content's baseline height so moving it
+        // below a region does not increase the correction on every subsequent layout pass.
         let baseline = CGRect(x: bounds.minX, y: bounds.minY, width: bounds.width,
                               height: max(0, bounds.height - applied.top - applied.bottom))
-        return OverviewRegionView.clearInsets(in: baseline, regions: regions)
+        guard !baseline.isEmpty, !baseline.isInfinite else { return .zero }
+        let active = regions.filter { !$0.isNull && !$0.isInfinite && !$0.isEmpty }
+        let hits = active.filter { $0.intersects(baseline) }
+        var result = UIEdgeInsets.zero
+        for region in hits {
+            // Prefer the larger free side, then verify that the resulting lane is useful.
+            let leftSpace = region.minX - baseline.minX
+            let rightSpace = baseline.maxX - region.maxX
+            if leftSpace >= rightSpace { result.right = max(result.right, baseline.maxX - region.minX + 8) }
+            else { result.left = max(result.left, region.maxX - baseline.minX + 8) }
+        }
+        let minimumWidth = min(220, baseline.width * 0.6)
+        if baseline.width - result.left - result.right < minimumWidth { result = .zero }
+        var content = CGRect(x: baseline.minX + result.left, y: baseline.minY,
+                             width: baseline.width - result.left - result.right, height: baseline.height)
+        // Bottom padding alone leaves low/interior content covered. Move the entire section below
+        // any remaining collision; padding expands the ScrollView's content rather than clipping it.
+        for _ in 0...active.count {
+            guard let bottom = active.filter({ $0.intersects(content) }).map(\.maxY).max() else { break }
+            result.top = max(result.top, bottom - baseline.minY + 8)
+            content.origin.y = baseline.minY + result.top
+        }
+        return result
+    }
+
+    static func directionalPadding(_ insets: UIEdgeInsets, direction: LayoutDirection) -> EdgeInsets {
+        EdgeInsets(top: insets.top, leading: direction == .rightToLeft ? insets.right : insets.left,
+                   bottom: insets.bottom, trailing: direction == .rightToLeft ? insets.left : insets.right)
     }
 }
 
@@ -417,6 +460,17 @@ private extension EnvironmentValues {
         set { self[StartPageScrollOffsetKey.self] = newValue }
     }
 }
+
+#if DEBUG
+private struct StartPageTestRegionsKey: EnvironmentKey { static let defaultValue: [CGRect]? = nil }
+extension EnvironmentValues {
+    /// Debug synthetic layout fixture only. Production always reads UIKit reserved-region geometry.
+    var startPageTestRegions: [CGRect]? {
+        get { self[StartPageTestRegionsKey.self] }
+        set { self[StartPageTestRegionsKey.self] = newValue }
+    }
+}
+#endif
 
 private extension View {
     func startPageClearance() -> some View { modifier(StartPageClearance()) }
