@@ -44,6 +44,7 @@ struct ActiveBrowserView: View {
     @State private var keyboardVisible = false
     @State private var showingSearch = false
     @State private var noticeHeight: CGFloat = 0
+    @State private var recoveryHeight: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -53,27 +54,34 @@ struct ActiveBrowserView: View {
         GeometryReader { geometry in
             ZStack(alignment: .bottom) {
                 BrowserSurface(browser: browser, fullWidth: browser.fullWidthLayout, showRegions: session.showRegions,
-                               additionalBottomObstruction: showingSearch || session.privateMode ? 0 : noticeHeight > 0 ? noticeHeight + 8 : 0)
+                               additionalBottomObstruction: showingSearch ? 0 :
+                                   (session.privateMode || noticeHeight == 0 ? 0 : noticeHeight + 8) + (recoveryHeight > 0 ? recoveryHeight + 8 : 0))
                     .ignoresSafeArea(.container)
                     .blur(radius: showingSearch ? 5 : 0)
-                    .accessibilityHidden(showingSearch || browser.showingStartPage)
-                    .allowsHitTesting(!showingSearch && !browser.showingStartPage)
-                if browser.showingStartPage {
-                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport)
+                    .accessibilityHidden(showingSearch || browser.showingStartPage || browser.failureCoversPage)
+                    .allowsHitTesting(!showingSearch && !browser.showingStartPage && !browser.failureCoversPage)
+                if browser.failureCoversPage {
+                    BrowserRecoveryView(session: session, browser: browser, fillsPage: true, editAddress: openAddress)
+                        .padding(.horizontal, max(16, max(geometry.safeAreaInsets.leading, geometry.safeAreaInsets.trailing)))
+                        .padding(.top, geometry.safeAreaInsets.top)
+                        .padding(.bottom, browser.chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 24)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(uiColor: .systemBackground))
+                        .accessibilityHidden(showingSearch).allowsHitTesting(!showingSearch)
+                } else if browser.showingStartPage {
+                    BrowserStartPage(session: session, browser: browser, chrome: browser.chrome, viewport: viewport,
+                                     onSearch: { input = ""; showingSearch = true })
                         .blur(radius: showingSearch ? 5 : 0)
                         .accessibilityHidden(showingSearch)
                         .allowsHitTesting(!showingSearch)
                 }
                 VStack(spacing: 8) {
                     ClosedTabNotice(session: session) { noticeHeight = $0 }
-                    if let error = browser.errorMessage {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(error).font(.callout)
-                            Button("Dismiss") { browser.errorMessage = nil }.frame(minHeight: 44)
-                        }
-                        .padding(12)
-                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 16))
-                        .padding(.horizontal, 12)
+                    if browser.errorMessage != nil, !browser.failureCoversPage {
+                        BrowserRecoveryView(session: session, browser: browser, fillsPage: false, editAddress: openAddress,
+                                            maximumHeight: max(80, geometry.size.height - browser.chrome.expandedHeight - viewport.bottomControlLift - geometry.safeAreaInsets.bottom - noticeHeight - 40))
+                            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { recoveryHeight = $0 }
+                            .onDisappear { recoveryHeight = 0 }
                     }
                     BrowserToolbar(session: session, browser: browser, chrome: browser.chrome,
                                    input: $input, showingAddress: $showingSearch, keyboardVisible: keyboardVisible,
@@ -102,7 +110,7 @@ struct ActiveBrowserView: View {
         }
         .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: showingSearch)
         .statusBarHidden(!session.showSystemStatus)
-        .onAppear { input = browser.address }
+        .onAppear { input = BrowserAddressIdentity(browser: browser).editingAddress }
         .onChange(of: browser.errorMessage) { _, message in
             if voiceOverEnabled, let message { UIAccessibility.post(notification: .announcement, argument: message) }
         }
@@ -118,6 +126,11 @@ struct ActiveBrowserView: View {
     private func closeSearch() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         showingSearch = false
+    }
+
+    private func openAddress() {
+        input = BrowserAddressIdentity(browser: browser).editingAddress
+        showingSearch = true
     }
 }
 
@@ -226,64 +239,5 @@ final class ViewportView: UIView {
         if webView.obscuredContentInsets != inset { webView.obscuredContentInsets = inset }
         webView.scrollView.contentInset.bottom = 0
         webView.scrollView.verticalScrollIndicatorInsets = inset
-    }
-}
-
-private struct BrowserStartPage: View {
-    @ObservedObject var session: BrowserSession
-    @ObservedObject var browser: BrowserModel
-    @ObservedObject var chrome: BrowserChromeState
-    @ObservedObject var viewport: BrowserViewportState
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 30) {
-                    HStack {
-                        Text(browser.isPrivate ? "Private Browsing" : "Start Page")
-                            .font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.trailing, geometry.safeAreaInsets.trailing)
-                    if browser.isPrivate {
-                        Label("Private browsing", systemImage: "hand.raised.fill")
-                            .font(.headline)
-                        Text("Your private tabs and browsing history aren't saved.")
-                            .foregroundStyle(.primary)
-                    } else {
-                        section("Favorites", entries: Array(session.favorites.prefix(8)), empty: "Save a bookmark from Page options to see it here.", icon: "star")
-                        section("Recently Visited", entries: Array(session.history.prefix(5)), empty: "Pages you visit will appear here.", icon: "clock")
-                    }
-
-                }
-                .frame(maxWidth: 680, alignment: .leading)
-                .padding(.horizontal, 24).padding(.top, 32).padding(.bottom, chrome.expandedHeight + viewport.bottomControlLift + geometry.safeAreaInsets.bottom + 32)
-                .frame(maxWidth: .infinity)
-            }
-            .background { BrowserWallpaper() }
-        }
-    }
-
-    private func section(_ title: String, entries: [LibraryEntry], empty: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
-            if entries.isEmpty {
-                Label(empty, systemImage: icon).font(.subheadline).foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: dynamicTypeSize.isAccessibilitySize ? 150 : 100), spacing: 16)], alignment: .leading, spacing: 18) {
-                    ForEach(entries) { entry in
-                        Button { browser.navigate(to: entry.address) } label: {
-                            VStack(alignment: .center, spacing: 8) {
-                                WebsiteIcon(address: entry.address)
-                                Text(verbatim: entry.title.isEmpty ? (URL(string: entry.address)?.host ?? entry.address) : entry.title)
-                                    .font(.caption).lineLimit(2).multilineTextAlignment(.center)
-                            }.frame(maxWidth: .infinity, minHeight: 96, alignment: .top).contentShape(Rectangle())
-                        }.buttonStyle(.plain).accessibilityHint("Opens this page")
-                    }
-                }
-            }
-        }
     }
 }

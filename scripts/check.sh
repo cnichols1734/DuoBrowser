@@ -2,6 +2,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 mkdir -p work/checks
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/BrowserRecovery.swift Tests/BrowserRecoveryTests.swift -o work/checks/recovery
+work/checks/recovery
+swiftc -warnings-as-errors DuoBrowser/BrowserData.swift DuoBrowser/TabArchive.swift DuoBrowser/StartPagePolicy.swift Tests/StartPagePolicyTests.swift -o work/checks/start-page
+work/checks/start-page
 swiftc -warnings-as-errors DuoBrowser/DownloadStore.swift Tests/DownloadStoreTests.swift -o work/checks/downloads
 work/checks/downloads
 python3 -B Tests/DownloadFixtureGateTests.py

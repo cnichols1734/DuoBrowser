@@ -3,22 +3,75 @@ import PhotosUI
 import ImageIO
 import UniformTypeIdentifiers
 import CoreTransferable
+import Combine
+
+/// Refresh only the overview when a visible tab changes. Private updates never pass
+/// through BrowserSession's normal-history/archive observers.
+@MainActor
+final class TabOverviewUpdates: ObservableObject {
+    let objectWillChange = ObservableObjectPublisher()
+    private var ids: [UUID] = []
+    private var observation: AnyCancellable?
+
+    func observe(_ tabs: [BrowserModel]) {
+        let current = tabs.map(\.id)
+        guard current != ids || observation == nil else { return }
+        ids = current
+        observation = Publishers.MergeMany(tabs.map(\.objectWillChange))
+            .receive(on: RunLoop.main)
+            .sink { [weak self] in self?.objectWillChange.send() }
+    }
+
+    func stop() { observation = nil; ids = [] }
+}
 
 struct TabOverview: View {
     @State private var showingRecentlyClosed = false
     @ObservedObject var session: BrowserSession
     @ObservedObject private var wallpaper = BrowserWallpaperStore.shared
+    @StateObject private var tabUpdates = TabOverviewUpdates()
     @State private var search = ""
-    @State private var searching = false
+    @State private var selecting = false
+    @State private var selectedTabs: Set<UUID> = []
+    @State private var confirmClose = false
     @State private var manageWorkspaces = false
     @State private var appearance = false
     @State private var controlLift: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
-    @State private var contentInsets = UIEdgeInsets.zero
     @State private var photo: PhotosPickerItem?
     @State private var wallpaperError: String?
+    @State private var operationError: String?
     @FocusState private var searchFocused: Bool
     @AppStorage("browser.tabBackgroundHex") private var backgroundHex = ""
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @ScaledMetric(relativeTo: .body) private var searchRowHeight = 44.0
+    #if DEBUG
+    private var didRenderTabs: (([UUID]) -> Void)?
+    private var didMeasureHeader: ((UIView) -> Void)?
+    private var didMeasureListViewport: ((UIView) -> Void)?
+    private var didMeasureListLane: ((UIView) -> Void)?
+    private var didMeasureListRow: ((UUID, UIView) -> Void)?
+    #endif
+
+    init(session: BrowserSession) { self.session = session }
+
+    #if DEBUG
+    init(session: BrowserSession, search: String, didRenderTabs: @escaping ([UUID]) -> Void,
+         didMeasureHeader: ((UIView) -> Void)? = nil, didMeasureListViewport: ((UIView) -> Void)? = nil,
+         didMeasureListLane: ((UIView) -> Void)? = nil, didMeasureListRow: ((UUID, UIView) -> Void)? = nil) {
+        self.session = session
+        _search = State(initialValue: search)
+        self.didRenderTabs = didRenderTabs
+        self.didMeasureHeader = didMeasureHeader
+        self.didMeasureListViewport = didMeasureListViewport
+        self.didMeasureListLane = didMeasureListLane
+        self.didMeasureListRow = didMeasureListRow
+    }
+    #endif
+
     private var colorChoice: Binding<Color> {
         Binding(get: {
             guard let value = UInt32(backgroundHex, radix: 16), backgroundHex.count == 6 else { return .blue }
@@ -30,47 +83,45 @@ struct TabOverview: View {
             backgroundHex = String(format: "%02X%02X%02X", Int(red * 255), Int(green * 255), Int(blue * 255))
         })
     }
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOver
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
     private var filteredTabs: [BrowserModel] {
         session.visibleTabs.filter { search.isEmpty || $0.title.localizedCaseInsensitiveContains(search)
             || $0.siteName.localizedCaseInsensitiveContains(search) }
     }
-    private var accessibleList: Bool { dynamicTypeSize.isAccessibilitySize || voiceOver }
+    private var usesList: Bool { session.tabOverviewStyle == .list || dynamicTypeSize.isAccessibilitySize || voiceOver }
+    private var scope: String { session.privateMode ? "Private" : session.workspaceName }
 
     var body: some View {
+        #if DEBUG
+        overview
+            .onAppear { didRenderTabs?(filteredTabs.map(\.id)) }
+            .onChange(of: filteredTabs.map(\.id)) { _, ids in didRenderTabs?(ids) }
+        #else
+        overview
+        #endif
+    }
+
+    private var overview: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
-                if searching {
-                    HStack {
-                        Image(systemName: "magnifyingglass").accessibilityHidden(true)
-                        TextField("Search Tabs", text: $search)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .focused($searchFocused)
-                        Button("Cancel") { search = ""; searching = false; searchFocused = false }
+                header
+                    .background {
+                        #if DEBUG
+                        CompactTabHeaderProbe(register: didMeasureHeader).allowsHitTesting(false).accessibilityHidden(true)
+                        #endif
                     }
-                    .padding(12).glassEffect(.regular, in: Capsule())
-                    .padding(.horizontal, max(16, max(contentInsets.left, contentInsets.right) + 8))
-                    .padding(.top, max(8, contentInsets.top + 8))
-                }
+                    .modifier(StartPageClearance())
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 12)
                 if filteredTabs.isEmpty {
                     ContentUnavailableView.search(text: search)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if accessibleList {
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(filteredTabs) { tab in tabItem(tab, list: true).environmentObject(TabCardGeometry()) }
-                        }.padding(16)
-                    }.scrollDismissesKeyboard(.interactively)
-                    .padding(.horizontal, max(contentInsets.left, contentInsets.right))
-                    .padding(.top, searching ? 0 : contentInsets.top)
-                } else {
+                } else if usesList { tabList }
+                else {
                     TabStack(tabs: filteredTabs, selectedID: session.selectedID,
-                             reduceMotion: reduceMotion, close: { session.close($0) }) { tab, close in
-                        tabItem(tab, list: false, close: close)
+                             reduceMotion: reduceMotion, allowsDismiss: !selecting,
+                             refreshID: selecting ? AnyHashable(selectedTabs) : nil, close: { session.close($0) }) { tab, close in
+                        tabItem(tab, close: close)
                     }
                 }
                 ClosedTabNotice(session: session)
@@ -81,38 +132,39 @@ struct TabOverview: View {
             }
             .background {
                 BrowserWallpaper()
-                OverviewRegionReader(footerHeight: footerHeight, bottomInset: max(8, geometry.safeAreaInsets.bottom)) {
-                    controlLift = $0; contentInsets = $1
+                OverviewRegionReader(footerHeight: footerHeight, bottomInset: max(8, geometry.safeAreaInsets.bottom)) { lift, _ in
+                    controlLift = lift
                 }.allowsHitTesting(false)
                 if reduceTransparency { Color(uiColor: .systemGroupedBackground) }
                 else { Rectangle().fill(.ultraThinMaterial) }
             }
         }
-        // Reclaim the display at the measuring container, not just its inner content.
         .ignoresSafeArea(.container)
         .statusBarHidden(true)
+        .onAppear { if session.showingTabs { tabUpdates.observe(session.visibleTabs) } }
+        .onDisappear { tabUpdates.stop() }
         .onChange(of: session.showingTabs) { _, showing in
-            if showing { search = ""; searching = false; searchFocused = false }
+            if showing { search = ""; searchFocused = false; endSelection(); tabUpdates.observe(session.visibleTabs) }
+            else { tabUpdates.stop() }
         }
+        .onChange(of: session.visibleTabs.map(\.id)) { _, ids in
+            selectedTabs.formIntersection(ids)
+            if session.showingTabs { tabUpdates.observe(session.visibleTabs) }
+        }
+        .onChange(of: session.privateMode) { _, _ in search = ""; endSelection() }
+        .onChange(of: session.workspaceID) { _, _ in search = ""; endSelection() }
         .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
         .sheet(isPresented: $manageWorkspaces) { WorkspaceView(session: session) }
-        .sheet(isPresented: $appearance) {
-            NavigationStack {
-                Form {
-                    Section("Wallpaper") {
-                        PhotosPicker("Choose Photo", selection: $photo, matching: .images)
-                        if wallpaper.image != nil || photo != nil {
-                            Button("Remove Photo") { photo = nil; wallpaper.remove(); wallpaperError = nil }
-                        }
-                        ColorPicker("Background tint", selection: colorChoice, supportsOpacity: false)
-                        if !backgroundHex.isEmpty { Button("Reset Tint") { backgroundHex = "" } }
-                        if let wallpaperError { Text(wallpaperError).foregroundStyle(.secondary) }
-                    }
-                }
-                .navigationTitle("Tab Appearance")
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { appearance = false } } }
-            }.presentationDetents([.medium])
-        }
+        .sheet(isPresented: $appearance) { appearanceSheet }
+        .alert("Couldn’t Save Changes", isPresented: Binding(get: { operationError != nil }, set: { if !$0 { operationError = nil } })) {
+            Button("OK") { operationError = nil }
+        } message: { Text(operationError ?? "") }
+        .confirmationDialog("Close \(selectedTabs.count) \(selectedTabs.count == 1 ? "tab" : "tabs")?", isPresented: $confirmClose) {
+            Button("Close \(selectedTabs.count) \(selectedTabs.count == 1 ? "Tab" : "Tabs")", role: .destructive) {
+                _ = session.closeTabs(selectedTabs)
+                endSelection()
+            }
+        } message: { Text("Unsaved changes in these tabs will be lost.") }
         .task(id: photo) {
             guard let selectedPhoto = photo else { return }
             let token = wallpaper.beginImport()
@@ -120,80 +172,450 @@ struct TabOverview: View {
                 guard let imported = try await selectedPhoto.loadTransferable(type: WallpaperImport.self) else { throw CocoaError(.fileReadCorruptFile) }
                 guard !Task.isCancelled, photo == selectedPhoto else { return }
                 try wallpaper.save(imported, token: token)
-                wallpaperError = nil
-                photo = nil
+                wallpaperError = nil; photo = nil
             } catch {
                 guard !Task.isCancelled, photo == selectedPhoto else { return }
-                wallpaperError = "This photo couldn't be used. Please choose another."
-                photo = nil
+                wallpaperError = "This photo couldn't be used. Please choose another."; photo = nil
             }
         }
     }
 
-    private func tabItem(_ tab: BrowserModel, list: Bool, close: (() -> Void)? = nil) -> some View {
-        TabPreview(tab: tab, selected: session.selectedID == tab.id, list: list,
-                   select: { session.select(tab.id) }, close: close ?? {
-            withAnimation(reduceMotion ? nil : .smooth(duration: 0.22)) { session.close(tab.id) }
-        })
-        .contextMenu {
-            Button("Close Tab", systemImage: "xmark", role: .destructive) { session.close(tab.id) }
-            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
-            if !tab.isPrivate {
-                Menu("Move to Workspace") {
-                    ForEach(session.workspaces) { workspace in
-                        Button(workspace.name) { session.move(tab, to: workspace.id) }
+    private var header: some View {
+        Group {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 8) {
+                    searchField
+                    HStack {
+                        Text(selecting ? "\(selectedTabs.count) Selected" : "\(session.visibleTabs.count) Tabs")
+                            .font(.headline).accessibilityAddTraits(.isHeader)
+                        Spacer(minLength: 8)
+                        selectionButton
                     }
+                }
+            } else {
+                HStack(spacing: 12) {
+                    searchField
+                    selectionButton
                 }
             }
         }
     }
 
+    private var selectionButton: some View {
+        Button(selecting ? "Cancel" : "Select") {
+            if selecting { endSelection() }
+            else { selecting = true; searchFocused = false }
+        }
+        .font(.body.weight(.medium)).fixedSize()
+        .frame(minWidth: 44, minHeight: 44)
+        .accessibilityLabel(selecting ? "Cancel tab selection, \(selectedTabs.count) selected" : "Select Tabs")
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField("Search Tabs", text: $search)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().focused($searchFocused)
+                .accessibilityLabel("Search Tabs")
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary).frame(width: 44, height: 44) }
+                    .accessibilityLabel("Clear tab search")
+            }
+        }
+        .padding(.horizontal, 14).frame(minHeight: max(44, searchRowHeight))
+        .background(Color(uiColor: .secondarySystemGroupedBackground).opacity(0.88), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var tabList: some View {
+        TabListViewport {
+            listContents
+                .background {
+                    #if DEBUG
+                    CompactTabHeaderProbe(register: didMeasureListLane).allowsHitTesting(false).accessibilityHidden(true)
+                    #endif
+                }
+        }
+        .background {
+            #if DEBUG
+            CompactTabHeaderProbe(register: didMeasureListViewport).allowsHitTesting(false).accessibilityHidden(true)
+            #endif
+        }
+    }
+
+    private var listContents: some View {
+        List(selection: $selectedTabs) {
+            ForEach(filteredTabs) { tab in
+                Group {
+                    if selecting { listLabel(tab) }
+                    else { Button { session.select(tab.id) } label: { listLabel(tab) }.buttonStyle(.plain) }
+                }
+                .background {
+                    #if DEBUG
+                    CompactTabHeaderProbe(register: { didMeasureListRow?(tab.id, $0) }).allowsHitTesting(false).accessibilityHidden(true)
+                    #endif
+                }
+                .tag(tab.id)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                .contextMenu { tabContextMenu(tab) }
+            }
+            .onMove { from, to in
+                guard search.isEmpty else { return }
+                var ids = session.visibleTabs.map(\.id)
+                ids.move(fromOffsets: from, toOffset: to)
+                reorder(ids)
+            }
+            .moveDisabled(!search.isEmpty)
+        }
+        .listStyle(.plain).scrollContentBackground(.hidden)
+        .environment(\.editMode, .constant(selecting ? .active : .inactive))
+        .scrollDismissesKeyboard(.interactively)
+    }
+
+    private func listLabel(_ tab: BrowserModel) -> some View {
+        TabListRow(tab: tab, current: tab.id == session.selectedID,
+                   selection: selecting ? selectedTabs.contains(tab.id) : nil)
+    }
+
+    private func tabItem(_ tab: BrowserModel, close: @escaping () -> Void) -> some View {
+        TabPreview(tab: tab, selected: session.selectedID == tab.id, list: false,
+                   select: {
+                       if selecting {
+                           if selectedTabs.contains(tab.id) { selectedTabs.remove(tab.id) }
+                           else { selectedTabs.insert(tab.id) }
+                       } else { session.select(tab.id) }
+                   }, close: close, selection: selecting ? selectedTabs.contains(tab.id) : nil)
+        .contextMenu { tabContextMenu(tab) }
+    }
+
+    @ViewBuilder private func tabContextMenu(_ tab: BrowserModel) -> some View {
+        Button("Close Tab", systemImage: "xmark", role: .destructive) { session.close(tab.id) }
+        Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: "pin") { session.togglePin(tab) }
+        Button("Move Earlier", systemImage: "arrow.up") { move(tab, by: -1) }.disabled(!canMove(tab, by: -1))
+        Button("Move Later", systemImage: "arrow.down") { move(tab, by: 1) }.disabled(!canMove(tab, by: 1))
+        if !tab.isPrivate {
+            Menu("Move to Workspace") {
+                ForEach(session.workspaces.filter { $0.id != tab.workspaceID }) { workspace in
+                    Button(workspace.name) { _ = move([tab.id], to: workspace.id) }
+                }
+            }
+        }
+    }
+
+    private func canMove(_ tab: BrowserModel, by direction: Int) -> Bool {
+        let tabs = session.visibleTabs
+        guard let index = tabs.firstIndex(where: { $0.id == tab.id }), tabs.indices.contains(index + direction) else { return false }
+        return tabs[index + direction].isPinned == tab.isPinned
+    }
+    private func move(_ tab: BrowserModel, by direction: Int) {
+        guard canMove(tab, by: direction), let index = session.visibleTabs.firstIndex(where: { $0.id == tab.id }) else { return }
+        var ids = session.visibleTabs.map(\.id)
+        ids.swapAt(index, index + direction)
+        reorder(ids)
+    }
+    private func reorder(_ ids: [UUID]) {
+        if !session.reorderVisibleTabs(ids) { operationError = "Your browsing changes could not be saved on this device. Try again." }
+    }
+    @discardableResult private func move(_ ids: Set<UUID>, to workspace: UUID) -> Bool {
+        guard session.moveTabs(ids, to: workspace) > 0 else {
+            operationError = "Your browsing changes could not be saved on this device. Try again."
+            return false
+        }
+        return true
+    }
+    private func endSelection() { selecting = false; selectedTabs.removeAll() }
+
     private var footer: some View {
-        VStack(spacing: 8) {
-            if accessibleList { modeMenu }
-            HStack(spacing: 12) {
-                Button { session.newTab() } label: { Image(systemName: "plus").frame(width: 48, height: 48) }
-                    .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("New Tab")
-                if !accessibleList { Spacer(minLength: 0); modeMenu; Spacer(minLength: 0) }
-                else { Spacer(minLength: 0) }
-                Menu {
-                    Button("Search Tabs", systemImage: "magnifyingglass") { searching = true; searchFocused = true }
-                    if !session.privateMode {
-                        Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
-                        Menu("Workspaces", systemImage: "square.stack") {
-                            ForEach(session.workspaces) { workspace in
-                                Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
-                            }
-                            Button("Manage Workspaces") { manageWorkspaces = true }
+        Group {
+            if selecting {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 8) {
+                            selectionAllButton
+                            HStack(spacing: 20) { selectionMoveMenu; Spacer(minLength: 0); selectionCloseButton }
+                        }
+                    } else {
+                        HStack(spacing: 16) {
+                            selectionAllButton
+                            Spacer(minLength: 0)
+                            selectionMoveMenu
+                            selectionCloseButton
                         }
                     }
-                    Button("Tab Appearance", systemImage: "photo") { appearance = true }
-                } label: { Image(systemName: "ellipsis").frame(width: 48, height: 48) }
-                    .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Tab options")
-                Button { session.showingTabs = false } label: {
-                    Image(systemName: "checkmark").fontWeight(.semibold).frame(width: 48, height: 48)
-                }.buttonStyle(.plain).foregroundStyle(.white)
-                    .glassEffect(.regular.tint(.accentColor).interactive(), in: Circle()).accessibilityLabel("Done")
-            }.font(.title3).buttonStyle(.plain)
+                }
+                .font(.subheadline.weight(.medium)).padding(.horizontal, 16).padding(.vertical, 8).frame(minHeight: 52)
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20))
+            } else {
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(spacing: 8) {
+                            modeMenu
+                            HStack(spacing: 12) {
+                                newTabButton
+                                Spacer(minLength: 0)
+                                overviewOptions
+                                doneButton
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 12) {
+                            newTabButton
+                            Spacer(minLength: 0)
+                            modeMenu
+                            Spacer(minLength: 0)
+                            overviewOptions
+                            doneButton
+                        }
+                    }
+                }
+                .font(.title3).buttonStyle(.plain)
+            }
         }
+    }
+
+    private var newTabButton: some View {
+        Button { session.newTab() } label: { Image(systemName: "plus").frame(width: 48, height: 48) }
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("New Tab")
+    }
+
+    private var overviewOptions: some View {
+        Menu {
+            Picker("Tab Layout", selection: $session.tabOverviewStyle) {
+                ForEach(TabOverviewStyle.allCases, id: \.self) { style in Label(style.title, systemImage: style.symbol).tag(style) }
+            }
+            if !session.privateMode {
+                Button("Recently Closed", systemImage: "clock.arrow.circlepath") { showingRecentlyClosed = true }
+                Button("Manage Workspaces", systemImage: "square.stack") { manageWorkspaces = true }
+            }
+            Button("Tab Appearance", systemImage: "photo") { appearance = true }
+        } label: { Image(systemName: "ellipsis").frame(width: 48, height: 48) }
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Tab options")
+    }
+
+    private var doneButton: some View {
+        Button { session.showingTabs = false } label: {
+            Image(systemName: "checkmark").fontWeight(.semibold).frame(width: 48, height: 48)
+        }.buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: Circle()).accessibilityLabel("Done")
+    }
+
+    private var selectionAllButton: some View {
+        let ids = Set(filteredTabs.map(\.id))
+        let allSelected = !ids.isEmpty && ids.isSubset(of: selectedTabs)
+        return Button(allSelected ? "Deselect All" : "Select All") {
+            if allSelected { selectedTabs.subtract(ids) }
+            else { selectedTabs.formUnion(ids) }
+        }.frame(minHeight: 44)
+    }
+    @ViewBuilder private var selectionMoveMenu: some View {
+        if !session.privateMode {
+            Menu {
+                ForEach(session.workspaces.filter { $0.id != session.workspaceID }) { workspace in
+                    Button(workspace.name) { if move(selectedTabs, to: workspace.id) { endSelection() } }
+                }
+            } label: { Label("Move", systemImage: "folder").frame(minHeight: 44) }
+            .disabled(selectedTabs.isEmpty || session.workspaces.count < 2)
+        }
+    }
+    private var selectionCloseButton: some View {
+        Button("Close \(selectedTabs.count)", systemImage: "trash", role: .destructive) { confirmClose = true }
+            .frame(minHeight: 44).disabled(selectedTabs.isEmpty)
     }
 
     private var modeMenu: some View {
         Menu {
             Button("Tabs") { search = ""; session.switchMode(false) }
             Button("Private") { search = ""; session.switchMode(true) }
-            if session.privateMode {
-                Button("Close All Private Tabs", role: .destructive) { session.closePrivateTabs() }
+            if session.privateMode { Button("Close All Private Tabs", role: .destructive) { session.closePrivateTabs() } }
+            else {
+                Section("Workspaces") {
+                    ForEach(session.workspaces) { workspace in
+                        Button(workspace.name) { search = ""; session.switchWorkspace(workspace.id); session.showingTabs = true }
+                    }
+                }
             }
         } label: {
-            Text(session.privateMode ? "Private · \(session.visibleTabs.count)" : "\(session.visibleTabs.count) \(session.visibleTabs.count == 1 ? "Tab" : "Tabs")")
-                .font(.subheadline.weight(.semibold)).lineLimit(1).minimumScaleFactor(0.8)
-                .padding(.horizontal, 16).frame(minHeight: 48)
+            HStack(spacing: 6) {
+                Text(session.privateMode ? "Private" : scope).lineLimit(1)
+                Text("· \(session.visibleTabs.count)").monospacedDigit().foregroundStyle(.secondary).fixedSize()
+            }
+            .font(.subheadline.weight(.semibold)).minimumScaleFactor(0.8)
+            .padding(.horizontal, 16).frame(minHeight: 48)
         }
         .glassEffect(.regular.interactive(), in: Capsule())
-        .accessibilityLabel("Browsing mode, \(session.privateMode ? "Private" : session.workspaceName), \(session.visibleTabs.count) open")
+        .accessibilityLabel("Browsing mode, \(scope), \(session.visibleTabs.count) open")
+    }
+
+    private var appearanceSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Wallpaper") {
+                    PhotosPicker("Choose Photo", selection: $photo, matching: .images)
+                    if wallpaper.image != nil || photo != nil {
+                        Button("Remove Photo") { photo = nil; wallpaper.remove(); wallpaperError = nil }
+                    }
+                    ColorPicker("Background tint", selection: colorChoice, supportsOpacity: false)
+                    if !backgroundHex.isEmpty { Button("Reset Tint") { backgroundHex = "" } }
+                    if let wallpaperError { Text(wallpaperError).foregroundStyle(.secondary) }
+                }
+            }
+            .navigationTitle("Tab Appearance")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { appearance = false } } }
+        }.presentationDetents([.medium])
     }
 }
+
+/// Each tab publishes independently. Private page changes must update its row without
+/// notifying the normal session, history or archive.
+struct TabListRow: View {
+    @ObservedObject var tab: BrowserModel
+    let current: Bool
+    var selection: Bool?
+    #if DEBUG
+    var didRender: ((String, String) -> Void)?
+    #endif
+
+    var body: some View {
+        #if DEBUG
+        row
+            .onAppear { didRender?(tab.title, tab.siteName) }
+            .onChange(of: tab.title) { _, title in didRender?(title, tab.siteName) }
+            .onChange(of: tab.address) { _, _ in didRender?(tab.title, tab.siteName) }
+        #else
+        row
+        #endif
+    }
+
+    private var row: some View {
+        HStack(spacing: 14) {
+            Image(systemName: tab.isPinned ? "pin.fill" : "globe")
+                .font(.title3).foregroundStyle(.secondary).frame(width: 28)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(tab.title).font(.body.weight(.semibold)).lineLimit(2)
+                Text(tab.siteName).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            if selection == nil, current {
+                Image(systemName: "checkmark").font(.body.weight(.semibold)).foregroundStyle(Color.accentColor)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading).contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits((selection ?? current) ? [.isSelected] : [])
+    }
+}
+
+/// The reader remains on the original list allocation; resizing the clear lane cannot change its
+/// region coordinates. One List identity retains selection/scroll state as that lane moves.
+private struct TabListViewport<Content: View>: View {
+    @State private var regions: [CGRect]?
+    @Environment(\.layoutDirection) private var direction
+    private let content: () -> Content
+    init(@ViewBuilder content: @escaping () -> Content) { self.content = content }
+    var body: some View {
+        GeometryReader { geometry in
+            let clear = regions.map { TabListViewportGeometry.clearRect(in: CGRect(origin: .zero, size: geometry.size), regions: $0, direction: direction) } ?? .zero
+            content()
+                .frame(width: max(1, clear.width), height: max(1, clear.height))
+                .clipped()
+                .opacity(clear.isEmpty ? 0 : 1)
+                .allowsHitTesting(!clear.isEmpty)
+                .accessibilityHidden(clear.isEmpty)
+                .position(x: direction == .rightToLeft ? geometry.size.width - clear.midX : clear.midX, y: clear.midY)
+        }
+        .background { TabListRegionReader { regions = $0 }.allowsHitTesting(false).accessibilityHidden(true) }
+    }
+}
+
+enum TabListViewportGeometry {
+    static func clearRect(in bounds: CGRect, regions: [CGRect], direction: LayoutDirection) -> CGRect {
+        guard !bounds.isEmpty, !bounds.isInfinite else { return .zero }
+        let active = regions.filter { !$0.isNull && !$0.isInfinite && !$0.isEmpty && $0.intersects(bounds) }
+        var candidates = [bounds]
+        let minimumWidth = min(160, bounds.width), minimumHeight = min(88, bounds.height)
+        func ordered(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+            let leftArea = lhs.width * lhs.height, rightArea = rhs.width * rhs.height
+            if leftArea != rightArea { return leftArea > rightArea }
+            if lhs.minY != rhs.minY { return lhs.minY < rhs.minY }
+            return direction == .rightToLeft ? lhs.maxX > rhs.maxX : lhs.minX < rhs.minX
+        }
+        for region in active {
+            let excluded = region.insetBy(dx: -8, dy: -8)
+            var next: [CGRect] = []
+            for candidate in candidates {
+                if !candidate.intersects(excluded) { next.append(candidate); continue }
+                let pieces = [
+                    CGRect(x: candidate.minX, y: candidate.minY, width: max(0, excluded.minX - candidate.minX), height: candidate.height),
+                    CGRect(x: max(candidate.minX, excluded.maxX), y: candidate.minY, width: max(0, candidate.maxX - excluded.maxX), height: candidate.height),
+                    CGRect(x: candidate.minX, y: candidate.minY, width: candidate.width, height: max(0, excluded.minY - candidate.minY)),
+                    CGRect(x: candidate.minX, y: max(candidate.minY, excluded.maxY), width: candidate.width, height: max(0, candidate.maxY - excluded.maxY))
+                ]
+                for piece in pieces where piece.width >= minimumWidth && piece.height >= minimumHeight && !next.contains(piece) { next.append(piece) }
+            }
+            // Every retained candidate has cleared every processed region. Bound work without
+            // dropping any system exclusion; if no useful lane survives the List is noninteractive.
+            candidates = Array(next.sorted(by: ordered).prefix(64))
+        }
+        return candidates.sorted(by: ordered).first ?? .zero
+    }
+}
+
+private struct TabListRegionReader: UIViewRepresentable {
+    let update: ([CGRect]) -> Void
+    #if DEBUG
+    @Environment(\.tabListTestRegionsInWindow) private var testRegions
+    #endif
+    func makeUIView(context: Context) -> RegionView { RegionView() }
+    func updateUIView(_ view: RegionView, context: Context) {
+        view.update = update
+        #if DEBUG
+        view.testRegions = testRegions
+        #endif
+        view.setNeedsLayout()
+    }
+    final class RegionView: UIView {
+        var update: (([CGRect]) -> Void)?
+        private var last: [CGRect]?
+        #if DEBUG
+        var testRegions: [CGRect]?
+        #endif
+        override func didMoveToWindow() { super.didMoveToWindow(); setNeedsLayout() }
+        override func safeAreaInsetsDidChange() { super.safeAreaInsetsDidChange(); setNeedsLayout() }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            var next = reservedRegions(kind: .occlusion).filter(\.isActive).map(\.frame)
+            #if DEBUG
+            if let testRegions, let window { next = testRegions.map { convert($0, from: window) } }
+            #endif
+            guard next != last else { return }
+            last = next
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.last == next else { return }
+                self.update?(next)
+            }
+        }
+    }
+}
+
+#if DEBUG
+private struct TabListTestRegionsInWindowKey: EnvironmentKey { static let defaultValue: [CGRect]? = nil }
+extension EnvironmentValues {
+    var tabListTestRegionsInWindow: [CGRect]? {
+        get { self[TabListTestRegionsInWindowKey.self] }
+        set { self[TabListTestRegionsInWindowKey.self] = newValue }
+    }
+}
+
+private struct CompactTabHeaderProbe: UIViewRepresentable {
+    let register: ((UIView) -> Void)?
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) {
+        register?(view)
+    }
+}
+
+
+#endif
 
 private struct TabPreview: View {
     @ObservedObject var tab: BrowserModel
@@ -201,6 +623,7 @@ private struct TabPreview: View {
     let list: Bool
     let select: () -> Void
     let close: () -> Void
+    var selection: Bool?
     @EnvironmentObject private var geometry: TabCardGeometry
 
     var body: some View {
@@ -214,8 +637,8 @@ private struct TabPreview: View {
                         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(tab.isPinned ? "Pinned tab" : "Open tab"), \(tab.title)")
-                    .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                    .accessibilityLabel("\(selection != nil ? "Select tab" : tab.isPinned ? "Pinned tab" : "Open tab"), \(tab.title)")
+                    .accessibilityAddTraits((selection ?? selected) ? [.isButton, .isSelected] : .isButton)
                     Button(action: close) { Image(systemName: "xmark").font(.system(size: 20)).frame(width: 52, height: 52) }
                         .accessibilityLabel("Close tab, \(tab.title)")
                 }
@@ -255,10 +678,18 @@ private struct TabPreview: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("\(tab.isPinned ? "Pinned tab" : "Open tab"), \(tab.title)")
-                .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+                .accessibilityLabel("\(selection != nil ? "Select tab" : tab.isPinned ? "Pinned tab" : "Open tab"), \(tab.title)")
+                .accessibilityAddTraits((selection ?? selected) ? [.isButton, .isSelected] : .isButton)
 
-                if let origin = geometry.closeOrigin {
+                if let origin = geometry.closeOrigin, let selection {
+                    Image(systemName: selection ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 27, weight: .medium))
+                        .symbolRenderingMode(.palette)
+                        .foregroundStyle(selection ? Color.accentColor : Color.primary, Color(uiColor: .systemBackground))
+                        .frame(width: 48, height: 48)
+                        .position(x: origin.x + 24, y: origin.y + 24)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                } else if let origin = geometry.closeOrigin {
                     Button(action: close) {
                         Image(systemName: "xmark").font(.system(size: 16, weight: .medium))
                             .frame(width: 32, height: 32)

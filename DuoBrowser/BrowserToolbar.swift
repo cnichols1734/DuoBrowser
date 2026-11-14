@@ -2,6 +2,8 @@ import SwiftUI
 
 struct BrowserToolbar: View {
     @State private var showingRecentlyClosed = false
+    @State private var showingPageControls = false
+    @State private var pendingPageAction: PageControlsRequest?
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @ObservedObject var chrome: BrowserChromeState
@@ -21,17 +23,32 @@ struct BrowserToolbar: View {
     @ScaledMetric(relativeTo: .body) private var addressFont = 17.0
     @ScaledMetric(relativeTo: .caption) private var statusLineHeight = 15.0
     @AccessibilityFocusState private var addressFocused: Bool
+    @AccessibilityFocusState private var pageControlsFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var keepExpanded: Bool {
-        showingAddress || keyboardVisible || accessibilityExpanded || session.showingTabs
+        showingAddress || keyboardVisible || accessibilityExpanded || session.showingTabs || showingPageControls
     }
     private var progress: CGFloat {
         keepExpanded || browser.errorMessage != nil ? 0 : chrome.progress
     }
 
     private var statusText: String {
-        [browser.isPrivate ? "Private" : nil, browser.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
+        [browser.isPrivate ? "Private" : nil, addressIdentity.transportLabel.isEmpty ? nil : "Not Secure"].compactMap { $0 }.joined(separator: " · ")
+    }
+    private var addressIdentity: BrowserAddressIdentity { BrowserAddressIdentity(browser: browser) }
+    private var tabSwipeGesture: TabSwipeGestureModifier {
+        #if DEBUG
+        var gesture = TabSwipeGestureModifier(session: session, enabled: !keepExpanded)
+        let ownerID = browser.id
+        let state = session.tabSwipe
+        gesture.lifecycleDidChangeForTesting = { token, appeared in
+            state.gestureOwnerDidChangeForTesting?(token, ownerID, appeared)
+        }
+        return gesture
+        #else
+        TabSwipeGestureModifier(session: session, enabled: !keepExpanded)
+        #endif
     }
     private var addressRowHeight: CGFloat {
         max(52, textLineHeight + 16) + (statusText.isEmpty || showingAddress ? 0 : statusLineHeight + 4)
@@ -45,20 +62,27 @@ struct BrowserToolbar: View {
         }
         .onChange(of: toolbarHeight, initial: true) { _, height in browser.chrome.expandedHeight = height }
         .onChange(of: keepExpanded, initial: true) { _, value in browser.keepControlsExpanded = value }
+        .sheet(isPresented: $showingPageControls, onDismiss: finishPageAction) {
+            PageControlsView(session: session, browser: browser) { action in
+                pendingPageAction = PageControlsRequest(action: action, browser: browser)
+                showingPageControls = false
+            }
+        }
         .sheet(isPresented: $showingRecentlyClosed) { RecentlyClosedView(session: session) }
-        .sheet(item: $savingPage) { SavePageView(session: session, browser: browser, entry: $0) }
-        .sheet(isPresented: $showingDownloads) { DownloadsView(manager: browser.downloads) }
+        .sheet(item: $savingPage, onDismiss: { pageControlsFocused = true }) { SavePageView(session: session, browser: browser, entry: $0) }
+        .sheet(isPresented: $showingDownloads, onDismiss: { pageControlsFocused = true }) { DownloadsView(manager: browser.downloads) }
         .sheet(isPresented: $showingSettings, onDismiss: {
             if setupAfterSettings { setupAfterSettings = false; session.setup.reopen(); session.showingSetup = true }
+            else { pageControlsFocused = true }
         }) {
             BrowserLinkSettings(session: session, routing: session.redditLinks, onSetup: {
                 setupAfterSettings = true; showingSettings = false
             })
         }
-        .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
-        .sheet(item: $websiteSettings) { scope in WebsiteSettingsView(session: session, browser: browser, scope: scope) }
-        .fullScreenCover(item: $browser.readerArticle) { ReaderView(article: $0, sourceBrowser: browser) }
-        .onChange(of: browser.address) { _, value in if !showingAddress { input = value } }
+        .sheet(isPresented: $showingProtection, onDismiss: { pageControlsFocused = true }) { BrowserProtectionView(session: session, browser: browser) }
+        .sheet(item: $websiteSettings, onDismiss: { pageControlsFocused = true }) { scope in WebsiteSettingsView(session: session, browser: browser, scope: scope) }
+        .fullScreenCover(item: $browser.readerArticle, onDismiss: { pageControlsFocused = true }) { ReaderView(article: $0, sourceBrowser: browser) }
+        .onChange(of: addressIdentity.editingAddress) { _, value in if !showingAddress { input = value } }
 
     }
 
@@ -66,7 +90,7 @@ struct BrowserToolbar: View {
         GeometryReader { geometry in
             let width = min(620, max(240, geometry.size.width - 24))
             let expandedWidth = width - 124
-            let compactWidth = min(expandedWidth, max(110, CGFloat((browser.transportLabel + browser.privateLabel + browser.siteName).count) * 7 + 32))
+            let compactWidth = min(expandedWidth, max(110, CGFloat((addressIdentity.transportLabel + browser.privateLabel + addressIdentity.siteName).count) * 7 + 32))
             let p = progress
             let capsuleWidth = expandedWidth + (compactWidth - expandedWidth) * p
             GlassEffectContainer(spacing: 8) {
@@ -94,24 +118,21 @@ struct BrowserToolbar: View {
                         Group {
                             Button {
                                 if p > 0.1 { browser.revealControls() }
-                                else { input = browser.address; showingAddress = true }
+                                else { beginAddressEditing() }
                             } label: {
-                                Text(browser.transportLabel + browser.privateLabel + browser.siteName)
+                                Text(addressIdentity.transportLabel + browser.privateLabel + addressIdentity.siteName)
                                     .font(.system(size: addressFont - 5 * p, weight: .medium))
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                                     .frame(width: max(40, capsuleWidth - 88 * (1 - p)), height: 44)
                                     .contentShape(Rectangle())
                             }
-                            .simultaneousGesture(DragGesture(minimumDistance: 32).onEnded { value in
-                                guard !keepExpanded, abs(value.translation.width) > abs(value.translation.height) * 2 else { return }
-                                session.switchAdjacentTab(value.translation.width < 0 ? 1 : -1)
-                            })
+                            .modifier(tabSwipeGesture)
                             .accessibilityAction(named: "Next Tab") { session.switchAdjacentTab(1) }
                             .accessibilityAction(named: "Previous Tab") { session.switchAdjacentTab(-1) }
                             .accessibilityFocused($addressFocused)
                             .accessibilitySortPriority(3)
-                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(browser.siteName)" : "Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
+                            .accessibilityLabel(p > 0.1 ? "Show browser controls for \(browser.privateLabel)\(addressIdentity.siteName)" : "Address, \(addressIdentity.transportLabel)\(browser.privateLabel)\(addressIdentity.siteName)")
                             HStack(spacing: 0) {
                                 pageMenu.frame(width: 44, height: 44).accessibilitySortPriority(4)
                                 Spacer(minLength: 0)
@@ -179,21 +200,26 @@ struct BrowserToolbar: View {
 
     private func endEditing() { showingAddress = false; addressFocused = true }
 
+    func beginAddressEditing() {
+        input = addressIdentity.editingAddress
+        showingAddress = true
+    }
+
     private var accessibleControls: some View {
         VStack(spacing: 8) {
             Group {
                 Group {
                     Button {
-                        input = browser.address; showingAddress = true
+                        beginAddressEditing()
                     } label: {
                         VStack(spacing: 4) {
-                            Text(browser.siteName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
+                            Text(addressIdentity.siteName).font(.body.weight(.medium)).lineLimit(1).truncationMode(.middle)
                             if !statusText.isEmpty { Text(statusText).font(.caption).lineLimit(1) }
                         }
                         .frame(maxWidth: .infinity, minHeight: addressRowHeight)
                         .contentShape(Rectangle())
                     }
-                    .accessibilityLabel("Address, \(browser.transportLabel)\(browser.privateLabel)\(browser.siteName)")
+                    .accessibilityLabel("Address, \(addressIdentity.transportLabel)\(browser.privateLabel)\(addressIdentity.siteName)")
                     .accessibilityHint("Edit the website address or search")
                     .accessibilityFocused($addressFocused)
                 }
@@ -243,41 +269,63 @@ struct BrowserToolbar: View {
     }
 
     private var pageMenu: some View {
-        Menu {
-            Section {
-                if let url = browser.restorationURL {
-                    Button("Share", systemImage: "square.and.arrow.up") { browser.presentation.share(url) }
-                    Button("Save Page…", systemImage: "bookmark") { savingPage = LibraryEntry(address: url.absoluteString, title: browser.title) }
-                    Button("Find on Page", systemImage: "doc.text.magnifyingglass") {
-                        browser.webView.findInteraction?.presentFindNavigator(showingReplace: false)
-                    }
-                }
-                Button(browser.readerLoading ? "Preparing Reader…" : "Reader", systemImage: "doc.richtext") { browser.openReader() }
-                    .disabled(browser.restorationURL == nil || browser.isLoading || browser.readerLoading)
-                Button("Website Protection", systemImage: session.adBlockingEnabled && browser.blockAds ? "checkmark.shield" : "shield.slash") { showingProtection = true }
-                Button("Website Settings", systemImage: "globe") { websiteSettings = WebsiteSettingsScope(browser: browser) }
-                    .disabled(browser.restorationURL?.host == nil)
-            }
-            Section {
-                Button("New Tab", systemImage: "plus") { session.newTab() }
-                Button("Forward", systemImage: "chevron.forward") { browser.webView.goForward() }.disabled(!browser.canGoForward)
-                Button(browser.isPinned ? "Unpin Tab" : "Pin Tab", systemImage: browser.isPinned ? "pin.slash" : "pin") { session.togglePin(browser) }
-                Button("Workspaces", systemImage: "square.stack") { session.showingWorkspaces = true }
-                Button("Library", systemImage: "book") { session.showingLibrary = true }
-                DownloadMenuAction(manager: browser.downloads) { showingDownloads = true }
-            }
-            Button("Settings", systemImage: "gearshape") { showingSettings = true }
-            #if DEBUG
-            Menu("Developer") {
-                Toggle("Show reserved regions", isOn: $session.showRegions)
-                Button("Open test page", systemImage: "ruler") { browser.loadFixture() }
-            }
-            #endif
+        Button {
+            pendingPageAction = nil
+            browser.revealControls()
+            showingPageControls = true
         } label: {
             DownloadPageOptionsSymbol(manager: browser.downloads)
         }
         .accessibilityLabel("Page options")
+        .accessibilityHint("Page actions, website controls, and browser settings")
+        .accessibilityFocused($pageControlsFocused)
     }
+
+    /// Present the next surface only after the controls sheet has finished dismissing.
+    private func finishPageAction() {
+        let request = pendingPageAction
+        pendingPageAction = nil
+        guard let request, session.selectedID == browser.id, request.matches(browser) else {
+            pageControlsFocused = true
+            return
+        }
+        switch request.action {
+        case .share:
+            if let url = browser.restorationURL { browser.presentation.share(url) }
+        case .save:
+            if let url = browser.restorationURL { savingPage = LibraryEntry(address: url.absoluteString, title: browser.title) }
+        case .find:
+            browser.loadedWebView?.findInteraction?.presentFindNavigator(showingReplace: false)
+        case .reader:
+            browser.openReader()
+        case .protection:
+            showingProtection = true
+        case .websiteSettings:
+            websiteSettings = WebsiteSettingsScope(browser: browser)
+        case .newTab:
+            session.newTab()
+        case .forward:
+            browser.loadedWebView?.goForward()
+        case .pin:
+            session.togglePin(browser)
+            addressFocused = true
+        case .workspaces:
+            session.showingWorkspaces = true
+        case .library:
+            session.showingLibrary = true
+        case .downloads:
+            showingDownloads = true
+        case .settings:
+            showingSettings = true
+        #if DEBUG
+        case .regions:
+            session.showRegions.toggle()
+        case .fixture:
+            browser.loadFixture()
+        #endif
+        }
+    }
+
 }
 
 
@@ -306,6 +354,7 @@ struct BrowserPrivacyView: View {
                 }
             }
             .navigationTitle("Privacy Policy")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
     }

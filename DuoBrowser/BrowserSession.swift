@@ -42,6 +42,10 @@ final class BrowserSession: ObservableObject {
         didSet { settingsStorage.set(showSystemStatus, forKey: "browser.showSystemStatus") }
     }
     @Published var showingTabs = false
+    @Published var tabOverviewStyle: TabOverviewStyle = .grid {
+        didSet { settingsStorage.set(tabOverviewStyle.rawValue, forKey: "browser.tabOverviewStyle") }
+    }
+    let tabSwipe = TabSwipeState()
     @Published var workspaces = [Workspace.standard]
     @Published var workspaceID = Workspace.defaultID
     @Published var showingWorkspaces = false
@@ -71,6 +75,7 @@ final class BrowserSession: ObservableObject {
 
     init(storage: UserDefaults = .standard, archiveStore: BrowserArchiveStore = BrowserArchiveStore(), dataStore: WKWebsiteDataStore = .default(), offlineStore: OfflineArticleStore? = nil) {
         self.settingsStorage = storage
+        self.tabOverviewStyle = storage.string(forKey: "browser.tabOverviewStyle").flatMap(TabOverviewStyle.init(rawValue:)) ?? .grid
         self.searchEngine = storage.string(forKey: "browser.searchEngine").flatMap(BrowserSearchEngine.init(rawValue:)) ?? .google
         self.appearance = storage.string(forKey: "browser.appearance").flatMap(BrowserAppearance.init(rawValue:)) ?? .system
         self.websiteData = WebsiteDataController(store: WebKitWebsiteDataAccess(store: dataStore))
@@ -308,7 +313,87 @@ final class BrowserSession: ObservableObject {
         scheduleSave()
     }
 
+    /// Adjacent means the visible workspace/profile order, never a tab in another scope.
+    func adjacentTabID(_ direction: Int) -> UUID? {
+        let ordered = visibleTabs
+        guard direction == -1 || direction == 1,
+              let index = ordered.firstIndex(where: { $0.id == selectedID }),
+              ordered.indices.contains(index + direction) else { return nil }
+        return ordered[index + direction].id
+    }
+
+    /// Reject stale/partial drag orders. Reordering changes model positions, not live web views.
+    @discardableResult
+    func reorderVisibleTabs(_ orderedIDs: [UUID]) -> Bool {
+        let visible = visibleTabs
+        guard orderedIDs.count == visible.count, Set(orderedIDs).count == orderedIDs.count,
+              Set(orderedIDs) == Set(visible.map(\.id)) else { return false }
+        let lookup = Dictionary(uniqueKeysWithValues: visible.map { ($0.id, $0) })
+        let ordered = orderedIDs.compactMap { lookup[$0] }
+        // Pinned tabs remain first; a drag cannot silently change pin state.
+        let grouped = ordered.filter(\.isPinned) + ordered.filter { !$0.isPinned }
+        let ids = Set(orderedIDs)
+        let previous = tabs
+        var next = 0
+        tabs = tabs.map { tab in
+            guard ids.contains(tab.id) else { return tab }
+            defer { next += 1 }
+            return grouped[next]
+        }
+        if !privateMode, !saveNow() {
+            tabs = previous
+            return false
+        }
+        return true
+    }
+
+    @discardableResult
+    func moveTabs(_ ids: Set<UUID>, to destination: UUID) -> Int {
+        guard !privateMode, workspaces.contains(where: { $0.id == destination }), destination != workspaceID else { return 0 }
+        let moving = visibleTabs.filter { ids.contains($0.id) }
+        guard !moving.isEmpty else { return 0 }
+        let overview = showingTabs
+        let sourceWorkspace = workspaceID
+        let movingIDs = Set(moving.map(\.id))
+        let replacement = visibleTabs.first { !movingIDs.contains($0.id) }
+        let finalSelection = movingIDs.contains(selectedID) ? replacement?.id ?? selectedID : selectedID
+        moving.forEach { $0.workspaceID = destination }
+        objectWillChange.send()
+        // Persist the final selection in the same transaction as membership, without
+        // activating a replacement or cancelling the live source before it succeeds.
+        guard saveNow(selectedIDOverride: finalSelection) else {
+            moving.forEach { $0.workspaceID = sourceWorkspace }
+            objectWillChange.send()
+            return 0
+        }
+        if movingIDs.contains(selectedID) {
+            if let replacement { select(replacement.id) }
+            else { workspaceID = destination }
+        }
+        objectWillChange.send()
+        showingTabs = overview
+        return moving.count
+    }
+
+    /// A selection captured in another workspace/private mode cannot close tabs here.
+    @discardableResult
+    func closeTabs(_ ids: Set<UUID>) -> Int {
+        let eligible = visibleTabs.filter { ids.contains($0.id) }
+        guard !eligible.isEmpty else { return 0 }
+        let overview = showingTabs
+        // Close the selected tab last to avoid activating a succession of discarded pages.
+        let ordered = eligible.filter { $0.id != selectedID } + eligible.filter { $0.id == selectedID }
+        for tab in ordered { close(tab.id, persist: false) }
+        showingTabs = overview
+        saveNow()
+        return ordered.count
+    }
+
     func close(_ id: UUID) {
+        close(id, persist: true)
+    }
+
+    private func close(_ id: UUID, persist: Bool) {
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         let order = visibleTabs.map(\.id)
         let visibleIndex = order.firstIndex(of: id)
@@ -344,7 +429,7 @@ final class BrowserSession: ObservableObject {
             selected.activate()
         }
         rememberSelection()
-        saveNow()
+        if persist { saveNow() }
     }
 
     @discardableResult
@@ -415,10 +500,8 @@ final class BrowserSession: ObservableObject {
     }
 
     func switchAdjacentTab(_ direction: Int) {
-        let candidates = visibleTabs
-        guard let index = candidates.firstIndex(where: { $0.id == selectedID }),
-              candidates.indices.contains(index + direction) else { return }
-        select(candidates[index + direction].id)
+        guard let id = adjacentTabID(direction) else { return }
+        select(id)
     }
 
     func closePrivateTabs() {
@@ -675,21 +758,28 @@ final class BrowserSession: ObservableObject {
         }
     }
     @discardableResult
-    func saveNow(replaceBackup: Bool = false) -> Bool {
+    func saveNow(replaceBackup: Bool = false, reportFailure: Bool = true, selectedIDOverride: UUID? = nil) -> Bool {
         let saveError = "Your browsing changes could not be saved on this device."
         saveTask?.cancel(); saveTask = nil
         let normal = tabs.filter { !$0.isPrivate }
         guard let first = normal.first else { return false }
+        if let selectedIDOverride, !normal.contains(where: { $0.id == selectedIDOverride }) {
+            if reportFailure { selected.errorMessage = saveError }
+            return false
+        }
         let archive = BrowserArchive(session: TabArchive(tabs: normal.map {
             TabRecord(id: $0.id, address: $0.restorationURL?.absoluteString, fixture: $0.isFixture,
                       scrollY: $0.loadedWebView.map { Double(max(0, $0.scrollView.contentOffset.y)) } ?? $0.pendingScrollY, workspaceID: $0.workspaceID, pinned: $0.isPinned)
-        }, selectedID: normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id),
+        }, selectedID: selectedIDOverride ?? (normal.contains { $0.id == selectedID } ? selectedID : lastNormalID ?? first.id)),
         history: history, bookmarks: bookmarks, sites: normalSites, workspaces: workspaces,
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
-            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = nil }
+            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = tab.loadFailure?.message }
             return true
-        } catch { selected.errorMessage = saveError; return false }
+        } catch {
+            if reportFailure { selected.errorMessage = saveError }
+            return false
+        }
     }
 }

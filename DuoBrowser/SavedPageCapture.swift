@@ -90,22 +90,22 @@ extension BrowserSession {
         let referenced = archiveStore.offlineReferences().union(readingList.compactMap(\.offlineID))
         offlineStore.reconcile(retaining: referenced)
     }
-    func articleForOpening(_ entry: LibraryEntry) throws -> ReaderArticle? {
+    func articleForOpening(_ entry: LibraryEntry, reportReadStatusFailure: Bool = true) throws -> ReaderArticle? {
         var article: ReaderArticle?
         if let id = entry.offlineID {
             guard let saved = ReaderArticle.offline(try offlineStore.read(id)) else { throw SavedPageError.invalidArticle }
             article = saved
         }
-        markReadWhenOpened(entry)
+        markReadWhenOpened(entry, reportFailure: reportReadStatusFailure)
         return article
     }
     /// Reading remains available when a best-effort status update cannot be persisted.
-    func markReadWhenOpened(_ entry: LibraryEntry) {
+    func markReadWhenOpened(_ entry: LibraryEntry, reportFailure: Bool = true) {
         guard let current = readingList.first(where: { $0.id == entry.id }), current.isRead != true else { return }
         var read = current; read.isRead = true
-        try? savePage(read, reading: true)
+        try? savePage(read, reading: true, reportPersistenceFailure: reportFailure)
     }
-    func savePage(_ entry: LibraryEntry, reading: Bool, offline: OfflineArticle? = nil) throws {
+    func savePage(_ entry: LibraryEntry, reading: Bool, offline: OfflineArticle? = nil, reportPersistenceFailure: Bool = true) throws {
         guard entry.title.count <= 512, WebAddress.valid(URL(string: entry.address)) != nil,
               offline == nil || offline?.address == entry.address,
               SavedPagesPolicy.canMove(nil, to: entry.folderID, folders: bookmarkFolders) else { throw SavedPageError.invalidFolder }
@@ -129,7 +129,7 @@ extension BrowserSession {
         else { entries.insert(updated, at: 0) }
         if reading { readingList = entries } else { bookmarks = entries }
         // write() commits the primary last; do not roll back after a backup-only post-commit error.
-        guard saveNow() else {
+        guard saveNow(reportFailure: reportPersistenceFailure) else {
             if reading { readingList = old } else { bookmarks = old }
             if offline != nil { reconcileOfflineCopies() }
             throw SavedPageError.saveFailed

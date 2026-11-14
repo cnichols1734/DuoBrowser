@@ -1,0 +1,332 @@
+#if DEBUG
+import SwiftUI
+import WebKit
+
+extension NativeCheckRunner {
+    func premiumRecoveryChecks() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("PremiumRecovery-" + UUID().uuidString)
+        let suite = "DuoBrowser.PremiumRecovery." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let session = BrowserSession(storage: defaults, archiveStore: BrowserArchiveStore(directory: directory), dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        try await load(source, "upgrades?recovery=1")
+        let webView = source.webView
+        _ = try await js(source, "document.querySelector('#kept').value='Synthetic recovery draft'")
+        let target = URL(string: "http://127.0.0.1:8765/upgrades?retry=1")!
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
+                            userInfo: [NSURLErrorFailingURLErrorKey: target])
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        let first = source.loadFailure!
+        try check(first.kind == .offline && !source.failureCoversPage, "offline recovery keeps an already committed page visible")
+        try check(BrowserAddressIdentity(browser: source).editingAddress == source.address && source.address != target.absoluteString,
+                  "an inline navigation failure keeps the still-visible page's address identity")
+        try check(try await js(source, "document.querySelector('#kept').value") as? String == "Synthetic recovery draft",
+                  "presenting recovery preserves the existing unsent form")
+        let recovery = UIHostingController(rootView: BrowserRecoveryView(session: session, browser: source, fillsPage: false, editAddress: {}))
+        host.addChild(recovery)
+        recovery.view.frame = host.view.bounds
+        host.view.addSubview(recovery.view)
+        recovery.didMove(toParent: host)
+        recovery.view.layoutIfNeeded()
+        try check(source.loadedWebView === webView && source.loadFailure?.id == first.id, "rendering recovery never replaces the live WebKit view")
+        recovery.willMove(toParent: nil)
+        recovery.view.removeFromSuperview()
+        recovery.removeFromParent()
+        try check(try await js(source, "document.querySelector('#kept').value") as? String == "Synthetic recovery draft",
+                  "dismissing recovery UI performs no automatic navigation")
+        source.errorMessage = nil
+        try check(source.loadFailure == nil && !source.retryLoadFailure(first), "dismissed failure actions cannot navigate")
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        let retry = source.loadFailure!
+        try check(source.retryLoadFailure(retry), "explicit recovery starts a safe GET to the exact failing URL")
+        try await wait { source.restorationURL == target && !source.isLoading && source.loadFailure == nil }
+        try check(source.loadedWebView === webView && !source.retryLoadFailure(retry), "recovery retains the view and rejects a duplicate retry")
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        let stale = source.loadFailure!
+        source.documentGeneration = UUID()
+        try check(!source.retryLoadFailure(stale), "a replacement document invalidates a visible recovery action")
+        try check(!source.goBackFromLoadFailure(stale), "a stale recovery Back action cannot navigate a replacement document")
+        source.errorMessage = "A different local error"
+        try check(source.loadFailure?.id == stale.id && !source.retryLoadFailure(stale),
+                  "generic notices preserve typed recovery without making a stale navigation action valid")
+        source.errorMessage = nil
+        source.isRetainedForUndo = true
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        try check(source.loadFailure == nil, "retained closed tabs cannot publish page failure actions")
+        source.isRetainedForUndo = false
+        let unrelatedView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        source.webView(unrelatedView, didFailProvisionalNavigation: nil, withError: error)
+        source.webViewWebContentProcessDidTerminate(unrelatedView)
+        try check(source.loadFailure == nil, "callbacks from a replaced web view cannot publish recovery actions")
+        let empty = BrowserModel(dataStore: .nonPersistent())
+        defer { empty.close() }
+        empty.activate()
+        empty.webView(empty.webView, didFailProvisionalNavigation: nil, withError: error)
+        try check(empty.failureCoversPage && empty.loadFailure?.targetURL == target, "a failed first page gets a full accessible recovery surface")
+        let failedIdentity = BrowserAddressIdentity(browser: empty)
+        try check(failedIdentity.siteName == "127.0.0.1" && failedIdentity.editingAddress == target.absoluteString,
+                  "first-load recovery displays the validated failing host and exact editable address")
+        var editedAddress = ""
+        var editingAddress = false
+        let toolbar = BrowserToolbar(session: session, browser: empty, chrome: empty.chrome,
+            input: Binding(get: { editedAddress }, set: { editedAddress = $0 }),
+            showingAddress: Binding(get: { editingAddress }, set: { editingAddress = $0 }),
+            keyboardVisible: false, bottomSafeArea: 0, accessibilityExpanded: false)
+        toolbar.beginAddressEditing()
+        try check(editingAddress && editedAddress == target.absoluteString,
+                  "the ordinary toolbar edit action seeds the failed first destination instead of an empty search")
+        try check(empty.address.isEmpty && empty.restorationURL == nil && WebsiteSettingsScope(browser: empty).host == nil,
+                  "displaying a failed first address does not promote it to restoration or website-setting scope")
+        empty.errorMessage = nil
+        let clearedIdentity = BrowserAddressIdentity(browser: empty)
+        try check(clearedIdentity.siteName == "Start Page" && clearedIdentity.editingAddress.isEmpty,
+                  "dismissing first-load recovery restores the native start-page address identity")
+        source.webViewWebContentProcessDidTerminate(webView)
+        try check(source.loadFailure?.kind == .processTerminated && source.failureCoversPage,
+                  "simulated process termination offers deliberate recovery without automatic reload")
+        let processFailure = source.loadFailure!
+        var missingCopy = LibraryEntry(address: processFailure.targetURL!.absoluteString, title: "Missing synthetic offline copy")
+        missingCopy.offlineID = UUID()
+        session.readingList = [missingCopy]
+        var failedCopy = false
+        do { _ = try session.openSavedCopyForRecovery(missingCopy, browser: source, failure: processFailure) }
+        catch { failedCopy = true }
+        try check(failedCopy && source.loadFailure?.id == processFailure.id && source.failureCoversPage,
+                  "a missing saved copy retains the full navigation failure and recovery actions")
+        try check(source.errorMessage == processFailure.message,
+                  "offline file errors cannot replace the navigation recovery message")
+        let offline = OfflineArticle(title: "Synthetic recovery copy", address: missingCopy.address,
+                                     blocks: [.init(kind: "paragraph", text: "A safe local saved copy", jpeg: nil)])
+        try session.savePage(missingCopy, reading: true, offline: offline)
+        let validCopy = session.readingList.first { $0.id == missingCopy.id }!
+        try check(try session.openSavedCopyForRecovery(validCopy, browser: source, failure: processFailure)
+                  && source.readerArticle != nil && source.loadFailure?.id == processFailure.id,
+                  "opening a valid saved copy preserves the source page failure")
+        source.readerArticle = nil
+        try check(source.failureCoversPage && source.errorMessage == processFailure.message && source.loadedWebView === webView,
+                  "returning from a saved copy restores recovery for the same unrecovered source page")
+        _ = session.newTab(privateTab: true)
+        try check(try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) == nil,
+                  "a saved-copy action captured before private browsing cannot expose the normal library")
+        try await recoveryReadStatusFailureChecks()
+        try await persistenceRecoveryChecks()
+    }
+
+    private func persistenceRecoveryChecks() async throws {
+        let suite = "DuoBrowser.PersistenceRecovery." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        var rejectWrites = false
+        var rejectedWrites = 0
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if rejectWrites { rejectedWrites += 1; throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        mount(source)
+        let webView = source.webView
+        let saveError = "Your browsing changes could not be saved on this device."
+        let target = URL(string: "http://127.0.0.1:8765/upgrades?persistence-recovery=1")!
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
+                            userInfo: [NSURLErrorFailingURLErrorKey: target])
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        let initialFailure = source.loadFailure!
+        rejectWrites = true
+        session.scheduleSave()
+        try await wait { rejectedWrites > 0 }
+        try check(source.loadFailure?.id == initialFailure.id && source.failureCoversPage && source.errorMessage == saveError,
+                  "scheduled archive-write failure retains initial-page recovery and reports the persistence notice")
+        try await persistenceWarningLayoutChecks(session: session, browser: source)
+        rejectWrites = false
+        try check(session.saveNow() && source.loadFailure?.id == initialFailure.id && source.failureCoversPage
+                  && source.errorMessage == initialFailure.message,
+                  "successful archive retry clears only the persistence notice and restores initial recovery copy")
+        try check(source.retryLoadFailure(initialFailure), "initial-page recovery retry stays actionable after scheduled save failure")
+        try await wait {
+            guard source.restorationURL == target, !source.isLoading, source.loadFailure == nil else { return false }
+            return (try? await self.js(source, "document.readyState==='complete' && location.search==='?persistence-recovery=1'")) as? Bool == true
+        }
+        source.webViewWebContentProcessDidTerminate(webView)
+        let processFailure = source.loadFailure!
+        let rejectedBeforeBackground = rejectedWrites
+        rejectWrites = true
+        session.background()
+        try check(rejectedWrites > rejectedBeforeBackground && source.loadFailure?.id == processFailure.id
+                  && source.failureCoversPage && source.errorMessage == saveError,
+                  "background archive-write failure retains terminated-page recovery and reports its notice")
+        rejectWrites = false
+        try check(session.saveNow() && source.loadFailure?.id == processFailure.id && source.failureCoversPage
+                  && source.errorMessage == processFailure.message,
+                  "successful archive retry cannot dismiss an unrecovered terminated page")
+        source.errorMessage = nil
+        try check(source.loadFailure == nil && !source.failureCoversPage,
+                  "explicit message dismissal still clears typed navigation recovery")
+        rejectWrites = true
+        try check(!session.saveNow() && source.errorMessage == saveError && source.loadFailure == nil,
+                  "ordinary archive-write failure still reports its error when no navigation failure exists")
+        rejectWrites = false
+        try check(session.saveNow() && source.errorMessage == nil && source.loadFailure == nil,
+                  "ordinary successful archive retry still clears its persistence error")
+    }
+
+    private func persistenceWarningLayoutChecks(session: BrowserSession, browser: BrowserModel) async throws {
+        for fullPage in [true, false] {
+            var probes: [String: [WeakRecoveryProbe]] = [:]
+            var screen = BrowserRecoveryView(session: session, browser: browser, fillsPage: fullPage, editAddress: {})
+            screen.registerElementProbe = { key, view in
+                guard !(probes[key] ?? []).contains(where: { $0.view === view }) else { return }
+                probes[key, default: []].append(WeakRecoveryProbe(view))
+            }
+            let controller = UIHostingController(rootView: screen)
+            host.addChild(controller)
+            controller.view.frame = host.view.bounds
+            host.view.addSubview(controller.view)
+            controller.didMove(toParent: host)
+            defer {
+                controller.willMove(toParent: nil)
+                controller.view.removeFromSuperview()
+                controller.removeFromParent()
+            }
+            func currentFrames(_ key: String) -> [CGRect] {
+                guard let window = controller.view.window else { return [] }
+                return (probes[key] ?? []).compactMap { probe in
+                    guard let view = probe.view, view.window === window else { return nil }
+                    let frame = view.convert(view.bounds, to: window)
+                    guard frame.width > 0, frame.height > 0 else { return nil }
+                    var ancestor: UIView? = view
+                    while let node = ancestor {
+                        guard !node.isHidden, node.alpha > 0.01, node.layer.opacity > 0.01 else { return nil }
+                        if node.clipsToBounds && !node.convert(node.bounds, to: window).insetBy(dx: -1, dy: -1).contains(frame) { return nil }
+                        ancestor = node.superview
+                    }
+                    return frame
+                }
+            }
+            func visiblePair() -> (CGRect, CGRect)? {
+                let visible = controller.view.convert(controller.view.bounds, to: controller.view.window).insetBy(dx: -1, dy: -1)
+                for notice in currentFrames("notice") where visible.contains(notice) {
+                    // Window conversion can round a native 44-point bound down by a few ulps.
+                    for retry in currentFrames("retry") where retry.height >= 44 - 0.000001 && visible.contains(retry) && !notice.intersects(retry) {
+                        return (notice, retry)
+                    }
+                }
+                return nil
+            }
+            func diagnostics() -> String {
+                ["notice", "retry"].map { key in
+                    let candidates = (probes[key] ?? []).map { probe -> String in
+                        guard let view = probe.view else { return "released" }
+                        return "frame=\(view.convert(view.bounds, to: controller.view.window)) bounds=\(view.bounds) window=\(view.window != nil) hidden=\(view.isHidden) alpha=\(view.alpha)"
+                    }
+                    return "\(key)=[\(candidates.joined(separator: "; "))] visible=\(currentFrames(key))"
+                }.joined(separator: " ")
+            }
+            do { try await wait { visiblePair() != nil } }
+            catch {
+                throw NSError(domain: "\(fullPage ? "full-page" : "inline") recovery probe visibility failed: \(diagnostics())", code: 1)
+            }
+            try check(visiblePair() != nil,
+                      "\(fullPage ? "full-page" : "inline") recovery visibly retains both the archive warning and reachable retry action")
+        }
+    }
+
+    private func recoveryReadStatusFailureChecks() async throws {
+        let suite = "DuoBrowser.RecoveryReadStatus." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        var rejectWrites = false
+        var rejectedWrites = 0
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if rejectWrites { rejectedWrites += 1; throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        try await load(source, "upgrades?recovery-read-status=1")
+        let webView = source.webView
+        _ = try await js(source, "window.__recoveryCopyRetryMarker=true")
+        let address = source.restorationURL!.absoluteString
+        let offline = OfflineArticle(title: "Unread recovery copy", address: address,
+                                     blocks: [.init(kind: "paragraph", text: "Synthetic unread offline article", jpeg: nil)])
+        try session.savePage(LibraryEntry(address: address, title: offline.title, isRead: false), reading: true, offline: offline)
+        let unread = session.readingList.first!
+        source.webViewWebContentProcessDidTerminate(webView)
+        let failure = source.loadFailure!
+        rejectWrites = true
+        try check(try session.openSavedCopyForRecovery(unread, browser: source, failure: failure)
+                  && source.readerArticle != nil && rejectedWrites > 0,
+                  "a valid unread saved copy opens despite an injected read-status archive failure")
+        try check(session.readingList.first?.isRead == false && archive.load()?.readingList?.first?.isRead == false,
+                  "failed recovery read-status persistence rolls back both the live and durable unread state")
+        try check(source.loadFailure?.id == failure.id && source.errorMessage == failure.message,
+                  "best-effort read-status failure cannot replace the critical source navigation failure")
+        source.readerArticle = nil
+        try check(source.failureCoversPage && source.loadFailure?.id == failure.id
+                  && source.errorMessage == failure.message && source.loadedWebView === webView,
+                  "closing that saved copy retains the original failure and retry surface")
+        let retryClock = ContinuousClock()
+        let retryStarted = retryClock.now
+        var retryEvents: [String] = []
+        func recordRetryEvent(_ event: String) {
+            guard retryEvents.count < 32 else { return }
+            retryEvents.append("\(retryStarted.duration(to: retryClock.now)): \(event.prefix(192))")
+        }
+        source.testNavigationObserver = recordRetryEvent
+        source.testDownloadObserver = recordRetryEvent
+        defer { source.testNavigationObserver = nil; source.testDownloadObserver = nil }
+        try check(source.retryLoadFailure(failure),
+                  "original recovery retry remains actionable after a failed unread-copy status update")
+        var lastRetryDocument = "not evaluated"
+        var lastRetryScriptError = "none"
+        do {
+            // This action starts a new GET document, including on a cold hosted simulator.
+            // Use load()'s existing navigation-readiness budget; interaction waits remain 10s.
+            try await wait(timeout: 60) {
+                guard !source.isLoading, source.loadFailure == nil else { return false }
+                do {
+                    let value = try await self.js(source, """
+                        ({complete:document.readyState==='complete' && location.search==='?recovery-read-status=1' && typeof window.__recoveryCopyRetryMarker==='undefined',
+                          ready:document.readyState,search:location.search,markerType:typeof window.__recoveryCopyRetryMarker})
+                        """) as? [String: Any]
+                    lastRetryDocument = String(String(describing: value).prefix(768))
+                    lastRetryScriptError = "none"
+                    return value?["complete"] as? Bool == true
+                } catch {
+                    lastRetryScriptError = String(String(describing: error).prefix(384))
+                    return false
+                }
+            }
+        } catch {
+            results.append("RECOVERY RETRY: elapsed=\(retryStarted.duration(to: retryClock.now)) actual=\(webView.url?.absoluteString ?? "nil") modelLoading=\(source.isLoading) nativeLoading=\(webView.isLoading) failure=\(String(describing: source.loadFailure?.kind)) message=\(source.errorMessage ?? "none") document=\(lastRetryDocument) scriptError=\(lastRetryScriptError) events=\(retryEvents.joined(separator: "; "))")
+            throw error
+        }
+        var ordinarySaveFailed = false
+        var read = unread; read.isRead = true
+        do { try session.savePage(read, reading: true) } catch { ordinarySaveFailed = true }
+        try check(ordinarySaveFailed && source.errorMessage == "Your browsing changes could not be saved on this device."
+                  && session.readingList.first?.isRead == false,
+                  "ordinary saved-page writes still report persistence errors and roll back read state")
+    }
+}
+
+private final class WeakRecoveryProbe {
+    weak var view: UIView?
+    init(_ view: UIView) { self.view = view }
+}
+#endif

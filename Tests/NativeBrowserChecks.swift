@@ -523,6 +523,7 @@ final class NativeCheckRunner {
         func pause() async throws { try await Task.sleep(for: .milliseconds(950)) }
         do {
             try await load(model, "settling")
+            let originalFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
             let original = try await measure("width")
             let gap = (try await measure("top", "following")) - (try await measure("bottom"))
             let lineScript = "(()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));return JSON.stringify([...r.getClientRects()].map(q=>[q.width,q.height]))})()"
@@ -568,7 +569,11 @@ final class NativeCheckRunner {
                 """, in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
             try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
             try check(interpolates == true, "WebKit animation interpolates horizontally without pushing text down")
-            try check(try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String == "18px", "WebKit fitting preserves font size")
+            let fittedFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
+            // WebKit can autosize the authored 18px font on a larger display; fitting must
+            // preserve the actual computed baseline rather than force the authored CSS size.
+            let validOriginalFont = originalFont.hasSuffix("px") && Double(originalFont.dropLast(2)).map { $0 > 0 } == true
+            try check(validOriginalFont && fittedFont == originalFont, "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
             try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
             try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
             try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")
@@ -681,7 +686,7 @@ final class NativeCheckRunner {
             try await wait {
                 (try? await self.js(model, "![...document.getElementById('reading').attributes].some(a=>a.name.startsWith('data-duo-camera-'))")) as? Bool == true
             }
-            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');document.getElementById('draft').value='Long article draft'")
+            _ = try await js(model, "document.getElementById('reading').textContent='A thoughtful browser makes room for the page. Reader keeps the original document intact, while workspaces organize research and private browsing remains separate. '.repeat(4);document.getElementById('reading').style.lineHeight='28.8px';window.originalLongNode=document.getElementById('reading');window.originalLongFont=getComputedStyle(originalLongNode).fontSize;document.getElementById('draft').value='Long article draft'")
             let longWidth = try await measure("width"), longTop = try await measure("top")
             try check((try await measure("height")) > 320, "native long article exceeds the previous camera cutoff")
             // Exercise the production UIKit geometry publisher, not only a synthetic JavaScript update.
@@ -720,7 +725,7 @@ final class NativeCheckRunner {
             let fittedLongTop = try await measure("top"), fittedLongWidth = try await measure("width")
             try check(abs(fittedLongTop-longTop)<1 && fittedLongWidth < longWidth,
                       "production geometry bridge fits long article beside actual camera without a downshift")
-            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&getComputedStyle(originalLongNode).fontSize==='18px'") as? Bool == true,
+            try check(try await js(model, "originalLongNode===document.getElementById('reading')&&document.getElementById('draft').value==='Long article draft'&&originalLongFont.endsWith('px')&&parseFloat(originalLongFont)>0&&getComputedStyle(originalLongNode).fontSize===originalLongFont") as? Bool == true,
                       "long camera fitting preserves native DOM, draft and font size")
             model.originalPageLayout = true
             try await wait { abs(((try? await measure("width")) ?? 0) - longWidth) < 1 }
@@ -2307,12 +2312,19 @@ final class NativeCheckRunner {
         session.selected.errorMessage = nil
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "history clear preserves bookmarks and open tabs")
         try check(try await js(normal, "document.querySelector('#kept').value") as? String == "Keep this draft", "history clear preserves live form draft")
+        if ProcessInfo.processInfo.arguments.contains("--settings-record-diagnostics") {
+            await websiteDataDiagnostics(store)
+        }
         let data = session.websiteData
         try await wait(timeout: 20) {
             await data.reload()
             return data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) }
         }
         try check(data.entries.contains { $0.name == "first.example" } && data.entries.contains { $0.name == "second.example" }, "normal website list reflects actual WebKit cookie records")
+        let enumeratedTypes = data.entries.reduce(into: Set<String>()) { $0.formUnion($1.record.dataTypes) }
+        try check(enumeratedTypes.isSuperset(of: [WKWebsiteDataTypeCookies, WKWebsiteDataTypeFetchCache, WKWebsiteDataTypeLocalStorage])
+                  && enumeratedTypes.isSubset(of: BrowsingDataSelection.managedTypes),
+                  "callback enumeration retains the production-managed cookie cache and local-storage coverage")
         // Complete the potentially slow WebKit refresh before starting the user-facing Undo window.
         let first = data.entries.first { $0.name == "first.example" }!
         await data.reload()
@@ -2343,12 +2355,19 @@ final class NativeCheckRunner {
         try check(!remaining.contains { $0.domain == "first.example" } && remaining.contains { $0.domain == "second.example" }, "selected-site removal leaves other site cookie intact")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "selected normal-site removal preserves private cookie")
         try check(await data.clear(BrowsingDataSelection(cache: true)), "cached files can be cleared independently")
-        try check(!(await store.dataRecords(ofTypes: BrowsingDataSelection.cacheTypes)).contains { $0.dataTypes.contains(WKWebsiteDataTypeFetchCache) }, "actual WebKit CacheStorage was removed")
+        // clear() invalidates every prior record and reloads the full production managed-type set.
+        // Require that refresh to complete before inspecting its actual WebKit records; an empty
+        // snapshot from a failed/canceled refresh must never count as successful deletion.
+        try check(data.hasLoaded && !data.isBusy && !data.isRemoving
+                  && !data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeFetchCache) },
+                  "actual WebKit CacheStorage was removed")
         try check((await store.httpCookieStore.allCookies()).contains { $0.domain == "second.example" }, "cache-only clear preserves cookies")
         try check(try await js(normal, "localStorage.getItem('settings-check')") as? String == "normal", "cache-only clear preserves website local storage")
         try check(await data.clear(BrowsingDataSelection(siteData: true)), "cookies and site data can be cleared independently")
         try check((await store.httpCookieStore.allCookies()).isEmpty, "actual normal WebKit cookies removed")
-        try check((await store.dataRecords(ofTypes: [WKWebsiteDataTypeLocalStorage])).isEmpty, "actual normal WebKit local storage removed")
+        try check(data.hasLoaded && !data.isBusy && !data.isRemoving
+                  && !data.entries.contains { $0.record.dataTypes.contains(WKWebsiteDataTypeLocalStorage) },
+                  "actual normal WebKit local storage removed")
         try check((await privateStore.httpCookieStore.allCookies()).contains { $0.value == "private" }, "clear all normal website data preserves private store")
         try check(session.bookmarks.map(\.id) == bookmarks.map(\.id) && session.tabs.contains(where: { $0.id == normal.id }), "website data clear preserves saved bookmark and open tab")
         try check(try session.offlineStore.read(offlineID).blocks.first?.text == "Synthetic offline reading" && archive.load()?.readingList?.first?.offlineID == offlineID, "clearing history cookies and cache preserves saved offline article and reading list")
@@ -2379,6 +2398,25 @@ final class NativeCheckRunner {
     }
 
     func run() async {
+        if ProcessInfo.processInfo.arguments.contains("--premium-start-preview") { premiumStartPreview(); return }
+        if ProcessInfo.processInfo.arguments.contains("--density-checks") {
+            do { try await premiumDensityChecks() } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("DensityChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--premium-checks") {
+            do {
+                try await premiumControlsChecks()
+                try await premiumRecoveryChecks()
+                try await premiumTabsChecks()
+                try await premiumStartChecks()
+                try await premiumDensityChecks()
+            } catch { results.append("FAIL: " + String(describing: error)) }
+            let file = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("PremiumChecks.txt")
+            try? results.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--saved-pages-preview") { savedPagesPreview(); return }
         if ProcessInfo.processInfo.arguments.contains("--download-checks") {
             do { try await downloadsChecks() } catch { results.append("FAIL: " + String(describing: error)) }

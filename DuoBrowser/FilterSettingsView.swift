@@ -32,7 +32,10 @@ struct FilterSettingsView: View {
                         Spacer()
                         if filters.updating { ProgressView() }
                     }
-                }.disabled(filters.updating)
+                    .frame(maxWidth: .infinity, minHeight: 44).contentShape(Rectangle())
+                }
+                .accessibilityElement(children: .combine)
+                .disabled(filters.updating)
                 if let message = filters.message { Text(message).font(.footnote).foregroundStyle(.secondary) }
             } header: { Text("Updates") } footer: {
                 Text("Updates download public filter lists without your browsing history or cookies. If an update fails, the last working filters stay active.")

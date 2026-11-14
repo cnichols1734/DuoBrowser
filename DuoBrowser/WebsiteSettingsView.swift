@@ -32,6 +32,7 @@ struct WebsiteSettingsView: View {
     @ObservedObject var browser: BrowserModel
     let scope: WebsiteSettingsScope
     @State private var showingProtection = false
+    @AccessibilityFocusState private var protectionFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     private var protectionStatus: String {
@@ -69,7 +70,10 @@ struct WebsiteSettingsView: View {
                             Spacer(minLength: 8)
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
-                    }.foregroundStyle(.primary).accessibilityElement(children: .combine)
+                        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading).contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary).accessibilityElement(children: .combine)
+                    .accessibilityFocused($protectionFocused)
                 }
             }
             .disabled(!scope.matches(browser))
@@ -77,7 +81,7 @@ struct WebsiteSettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
-        .sheet(isPresented: $showingProtection) { BrowserProtectionView(session: session, browser: browser) }
+        .sheet(isPresented: $showingProtection, onDismiss: { protectionFocused = true }) { BrowserProtectionView(session: session, browser: browser) }
         .onChange(of: browser.address) { _, _ in if !scope.matches(browser) { dismiss() } }
         .onChange(of: session.selectedID) { _, selected in if selected != scope.browserID { dismiss() } }
     }

@@ -111,6 +111,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private var activated = false
     private var suspendedInteractionState: Any?
     private var currentMethod = "GET"
+    private var lastRequestedURL: URL?
+    private var activeNavigation: WKNavigation?
+    private var hasCommittedPage = false
     var hasWindowRelationships = false
     var searchEngine = BrowserSearchEngine.google
     var lastUsed = Date()
@@ -137,7 +140,13 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     @Published var canGoForward = false
     @Published var isLoading = false
     @Published var progress = 0.0
-    @Published var errorMessage: String?
+    @Published var errorMessage: String? {
+        // Generic notices must not discard an unrecovered document's typed failure.
+        // Explicit dismissal or a new navigation clears both by assigning nil.
+        didSet { if errorMessage == nil { loadFailure = nil } }
+    }
+    @Published private(set) var loadFailure: BrowserLoadFailure?
+    var failureCoversPage: Bool { loadFailure != nil && !hasCommittedPage }
     var keepControlsExpanded = false {
         didSet { if keepControlsExpanded { revealControls() } }
     }
@@ -355,10 +364,12 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        guard loadedWebView === webView, !closed, !isRetainedForUndo else { return }
         #if DEBUG
         testDownloadObserver?("page provisional start url=\(webView.url?.absoluteString ?? "nil")")
         #endif
         expectedDownloadInterruptions.removeAll()
+        activeNavigation = navigation
         presentation.cancel()
         documentGeneration = UUID()
         downloads.sourceDocumentChanged(id)
@@ -369,20 +380,27 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard loadedWebView === webView else { return }
+        if let navigation, let activeNavigation, navigation !== activeNavigation { return }
         report(error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        guard loadedWebView === webView else { return }
+        if let navigation, let activeNavigation, navigation !== activeNavigation { return }
         report(error)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        guard loadedWebView === webView, !closed, !isRetainedForUndo else { return }
         // Any committed WebKit document belongs to browsing, including site-owned blank windows.
         // Failed/stopped provisional navigation leaves the native start page visible.
         showingStartPage = false
+        hasCommittedPage = true
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard loadedWebView === webView, !closed, !isRetainedForUndo else { return }
         refreshState()
         pageLayout.applyToCurrentDocument()
         webView.scrollView.refreshControl?.endRefreshing()
@@ -406,6 +424,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     }
 
     private func report(_ error: Error) {
+        guard !closed, !isRetainedForUndo else { return }
         let failure = error as NSError
         #if DEBUG
         testDownloadObserver?("page failure domain=\(failure.domain) code=\(failure.code)")
@@ -423,22 +442,43 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         guard failure.code != NSURLErrorCancelled else { return }
         loadedWebView?.scrollView.refreshControl?.endRefreshing()
         revealControls()
-        let code = (error as NSError).code
-        if [NSURLErrorServerCertificateUntrusted, NSURLErrorServerCertificateHasBadDate,
-            NSURLErrorServerCertificateHasUnknownRoot, NSURLErrorServerCertificateNotYetValid,
-            NSURLErrorSecureConnectionFailed].contains(code) {
-            errorMessage = "A secure connection could not be verified. This page was not opened."
-        } else { errorMessage = error.localizedDescription }
+        loadFailure = BrowserLoadFailure.navigation(failure, url: failingURL ?? lastRequestedURL ?? restorationURL,
+            method: currentMethod, documentID: documentGeneration)
+        errorMessage = loadFailure?.message
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        guard loadedWebView === webView, !closed, !isRetainedForUndo else { return }
         #if DEBUG
         testDownloadObserver?("web content process terminated")
         #endif
         revealControls()
         presentation.cancel()
         loadedWebView?.scrollView.refreshControl?.endRefreshing()
-        errorMessage = "This page stopped responding. Reload to recover it; unsent changes may be lost."
+        hasCommittedPage = false
+        loadFailure = BrowserLoadFailure(kind: .processTerminated, url: restorationURL,
+            method: currentMethod, documentID: documentGeneration)
+        errorMessage = loadFailure?.message
+    }
+
+    @discardableResult
+    func retryLoadFailure(_ failure: BrowserLoadFailure) -> Bool {
+        guard !closed, !isRetainedForUndo, !isLoading, loadFailure?.id == failure.id,
+              documentGeneration == failure.documentID, failure.allowsRetry,
+              let url = failure.targetURL else { return false }
+        errorMessage = nil
+        // A new explicit GET avoids replaying a form submission or restoring a failed request body.
+        navigate(to: url.absoluteString)
+        return true
+    }
+
+    @discardableResult
+    func goBackFromLoadFailure(_ failure: BrowserLoadFailure) -> Bool {
+        guard !closed, !isRetainedForUndo, loadFailure?.id == failure.id,
+              documentGeneration == failure.documentID, let view = loadedWebView, view.canGoBack else { return false }
+        errorMessage = nil
+        view.goBack()
+        return true
     }
 
     func revealControls() {
@@ -511,6 +551,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         view.stopLoading()
         pageLayout = nil
         loadedWebView = nil
+        hasCommittedPage = false
         activated = false
         return true
     }
@@ -632,6 +673,7 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
                                     decisionHandler: @escaping @MainActor (WKNavigationActionPolicy, WKWebpagePreferences) -> Void) {
         guard let url = navigationAction.request.url else { decisionHandler(.cancel, preferences); return }
         if navigationAction.targetFrame?.isMainFrame == true {
+            lastRequestedURL = url
             currentMethod = navigationAction.request.httpMethod ?? "GET"
             let site = preferenceForURL?(url) ?? SitePreference()
             applyingPreferences = true

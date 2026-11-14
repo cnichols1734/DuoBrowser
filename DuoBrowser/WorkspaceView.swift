@@ -20,7 +20,8 @@ struct WorkspaceView: View {
                                     Image(systemName: "square.stack")
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(verbatim: workspace.name).font(.headline).lineLimit(2)
-                                        Text("\(session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count) tabs")
+                                        let count = session.tabs.filter { !$0.isPrivate && $0.workspaceID == workspace.id }.count
+                                        Text("\(count) \(count == 1 ? "tab" : "tabs")")
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -62,7 +63,18 @@ struct BrowserProtectionView: View {
     @ObservedObject var session: BrowserSession
     @ObservedObject var browser: BrowserModel
     @Environment(\.dismiss) private var dismiss
-    private var host: String? { browser.restorationURL?.host }
+    @State private var scope: WebsiteSettingsScope
+    #if DEBUG
+    var scopeDidChange: ((WebsiteSettingsScope, Bool, Binding<Bool>) -> Void)?
+    #endif
+    private var host: String? { scope.host }
+    private var isCurrent: Bool { scope.matches(browser) && session.selectedID == scope.browserID }
+
+    init(session: BrowserSession, browser: BrowserModel) {
+        _session = ObservedObject(wrappedValue: session)
+        _browser = ObservedObject(wrappedValue: browser)
+        _scope = State(initialValue: WebsiteSettingsScope(browser: browser))
+    }
     private var protected: Bool { session.adBlockingEnabled && browser.blockAds }
     private var unavailable: Bool { browser.blockingStatus == "Protection unavailable" }
     private var title: String {
@@ -94,12 +106,16 @@ struct BrowserProtectionView: View {
                     }
                     if host != nil {
                         VStack(alignment: .leading, spacing: 12) {
-                            Toggle("Block ads & trackers on this site", isOn: $browser.blockAds)
+                            Toggle("Block ads & trackers on this site", isOn: protectionEnabled)
                                 .disabled(!session.adBlockingEnabled)
                                 .font(.body.weight(.semibold))
                             Text("Changes apply to new requests. Reload when you’re ready; anything you’ve typed stays in place until then.")
                                 .font(.subheadline).foregroundStyle(.secondary)
-                            Button("Reload This Page", systemImage: "arrow.clockwise") { browser.webView.reload(); dismiss() }
+                            Button("Reload This Page", systemImage: "arrow.clockwise") {
+                                guard isCurrent else { return }
+                                browser.loadedWebView?.reload()
+                                dismiss()
+                            }
                         }
                     }
                     VStack(alignment: .leading, spacing: 10) {
@@ -112,6 +128,8 @@ struct BrowserProtectionView: View {
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     NavigationLink("Filter Lists & Updates") { FilterSettingsView() }
+                        .frame(minHeight: 44)
+                    NavigationLink("Other Blocking Apps") { OtherBlockingAppsView() }
                         .frame(minHeight: 44)
                     Divider()
                     VStack(alignment: .leading, spacing: 12) {
@@ -129,7 +147,10 @@ struct BrowserProtectionView: View {
                                 HStack(spacing: 12) {
                                     Text(exception).lineLimit(2)
                                     Spacer(minLength: 8)
-                                    Button("Protect") { session.restoreBlocking(host: exception, isPrivate: browser.isPrivate) }
+                                    Button("Protect") {
+                                        guard isCurrent else { return }
+                                        session.restoreBlocking(host: exception, isPrivate: scope.isPrivate)
+                                    }
                                         .buttonStyle(.bordered).controlSize(.small)
                                         .accessibilityLabel("Turn protection on for \(exception)")
                                 }.frame(minHeight: 44)
@@ -143,9 +164,39 @@ struct BrowserProtectionView: View {
                     }
                 }.padding(24).frame(maxWidth: 640, alignment: .leading).frame(maxWidth: .infinity)
             }
-            .navigationTitle("Website protection").navigationBarTitleDisplayMode(.inline)
+            .disabled(host != nil && !isCurrent)
+            .navigationTitle("Website Protection").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
         }
+        .onChange(of: browser.address) { _, _ in if host != nil && !scope.matches(browser) { dismiss() } }
+        .onChange(of: session.selectedID) { _, selected in if selected != scope.browserID { dismiss() } }
         .presentationDragIndicator(.visible)
+        #if DEBUG
+        .background {
+            ProtectionScopeProbe(scope: scope, isCurrent: isCurrent, binding: protectionEnabled, report: scopeDidChange)
+                .frame(width: 0, height: 0).allowsHitTesting(false).accessibilityHidden(true)
+        }
+        #endif
+    }
+
+    private var protectionEnabled: Binding<Bool> {
+        Binding(get: { browser.blockAds }, set: { value in
+            guard isCurrent else { return }
+            scope.set(value, for: \.blockAds, on: browser)
+        })
     }
 }
+
+#if DEBUG
+/// Reports the scope of the actual rendered view, including state retained after root-view replacement.
+private struct ProtectionScopeProbe: UIViewRepresentable {
+    let scope: WebsiteSettingsScope
+    let isCurrent: Bool
+    let binding: Binding<Bool>
+    let report: ((WebsiteSettingsScope, Bool, Binding<Bool>) -> Void)?
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) {
+        DispatchQueue.main.async { report?(scope, isCurrent, binding) }
+    }
+}
+#endif
