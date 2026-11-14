@@ -103,7 +103,7 @@ struct StartPageFavoriteEditor: View {
             }
             .alert("Couldn’t Save Favorite", isPresented: $failed) {
                 Button("OK", role: .cancel) {}
-            } message: { Text("Check the website address and try again.") }
+            } message: { Text("Your changes haven’t been saved. Please try again.") }
             .onAppear { if address.isEmpty { focused = .address } }
             .onChange(of: session.privateMode) { _, isPrivate in if isPrivate { dismiss() } }
         }

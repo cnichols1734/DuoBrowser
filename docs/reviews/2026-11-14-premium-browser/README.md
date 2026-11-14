@@ -23,14 +23,14 @@ Other Blocking Apps links to official setup instructions for the owner's named p
 | Check | Completed result |
 | --- | --- |
 | Full synthetic iOS 27.1 Duo native suite | **644 assertions passed** |
-| Final source premium regressions | **139 assertions passed**, including seven final address-editing and mid-drag-layout checks |
+| Expanded premium regressions | **139 assertions passed**, including seven address-editing and mid-drag-layout checks |
 | Portable policies and persistence | **392 checks passed** |
 | Web/layout fixtures | **197 assertions passed** |
 | SwiftLint 0.65.1 | Strict lint passed |
 | Builds | Debug simulator and signed-device Release rebuilds passed |
 | Hosted CI and Copilot review | Clean at [`1bbc6fa`](https://github.com/cnichols1734/DuoBrowser/commit/1bbc6faa4e9c537b8ab56b645d13e769c46fa6fe) |
 
-The full suite covers live page/draft preservation, interrupted swipes, stale actions, durable-write rollback, private isolation, recovery/copy return, actual rendered occlusion nonintersection, wrapping convergence and RTL/intrinsic alignment. Review findings were addressed with focused regressions. The final [`0b1676a`](https://github.com/cnichols1734/DuoBrowser/commit/0b1676a3b855c672bd8fba4171fcd2ca38f0a725) source passed the expanded **139-assertion premium run**, Debug and signed Release builds, and strict lint. The full 644-check run belongs to the earlier checkpoint; final hosted CI and delivery receipts are tracked on the PR.
+The full suite covers live page/draft preservation, interrupted swipes, stale actions, durable-write rollback, private isolation, recovery/copy return, actual rendered occlusion nonintersection, wrapping convergence and RTL/intrinsic alignment. Review findings were addressed with focused regressions. Behavioral checkpoint [`0b1676a`](https://github.com/cnichols1734/DuoBrowser/commit/0b1676a3b855c672bd8fba4171fcd2ca38f0a725) passed the expanded **139-assertion premium run**, Debug and signed Release builds, and strict lint. The subsequent save-error wording correction no longer blames a valid address for storage failure. The full 644-check run belongs to the earlier checkpoint; final hosted CI and delivery receipts are tracked on the PR.
 
 Closed-display simulator captures below use synthetic sites; Favorites deliberately show letter fallbacks. Maximum text, dark appearance, Reduce Motion and the VoiceOver-enabled partially folded interface also received simulator accessibility inspection. Scratch receipts, signing profiles and device identifiers remain under ignored `work/`.
 
