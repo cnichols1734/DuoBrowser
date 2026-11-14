@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// Presentation only: a failed first load has a useful address without becoming a
 /// committed website, permission scope or persistent restoration destination.
@@ -28,6 +29,9 @@ struct BrowserRecoveryView: View {
     let editAddress: () -> Void
     var maximumHeight: CGFloat = 360
     @State private var savedCopyError: String?
+    #if DEBUG
+    var registerElementProbe: ((String, UIView) -> Void)? = nil
+    #endif
 
     private var savedEntry: LibraryEntry? {
         guard !browser.isPrivate, !session.privateMode, session.selectedID == browser.id,
@@ -46,6 +50,7 @@ struct BrowserRecoveryView: View {
                                 .accessibilityHidden(true).padding(.bottom, 4)
                             Text(failure.title).font(.title2.bold()).accessibilityAddTraits(.isHeader)
                             Text(failure.message).font(.body).foregroundStyle(.secondary)
+                            additionalNotice(failure)
                             if let host = failure.targetURL?.host {
                                 Text(verbatim: host).font(.footnote).foregroundStyle(.secondary).lineLimit(2)
                             }
@@ -89,8 +94,21 @@ struct BrowserRecoveryView: View {
                 closeButton
             }
             Text(failure.message).font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            additionalNotice(failure)
             actions(failure)
         }.padding(16)
+    }
+
+    @ViewBuilder private func additionalNotice(_ failure: BrowserLoadFailure) -> some View {
+        if let notice = browser.errorMessage, notice != failure.message {
+            Text(notice).font(.footnote).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                #if DEBUG
+                .background {
+                    RecoveryRenderedElementProbe(name: "notice", report: registerElementProbe)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                #endif
+        }
     }
 
     private func localMessage(_ message: String) -> some View {
@@ -121,6 +139,12 @@ struct BrowserRecoveryView: View {
             Button(failure.retryLabel) { browser.retryLoadFailure(failure) }
                 .buttonStyle(.borderedProminent).frame(minHeight: 44)
                 .disabled(browser.isLoading).accessibilityIdentifier("retryPageLoad")
+                #if DEBUG
+                .background {
+                    RecoveryRenderedElementProbe(name: "retry", report: registerElementProbe)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+                #endif
         } else if browser.canGoBack {
             Button("Go Back") { browser.goBackFromLoadFailure(failure) }
                 .buttonStyle(.borderedProminent).frame(minHeight: 44)
@@ -137,6 +161,19 @@ struct BrowserRecoveryView: View {
         } catch { savedCopyError = "Try opening the website again." }
     }
 }
+
+#if DEBUG
+private struct RecoveryRenderedElementProbe: UIViewRepresentable {
+    let name: String
+    let report: ((String, UIView) -> Void)?
+    func makeUIView(context: Context) -> UIView { UIView() }
+    func updateUIView(_ view: UIView, context: Context) {
+        // Register the real UIKit probe. The fixture measures its current window/clipping state
+        // instead of caching geometry from hidden ViewThatFits measurement candidates.
+        report?(name, view)
+    }
+}
+#endif
 
 extension BrowserSession {
     @discardableResult

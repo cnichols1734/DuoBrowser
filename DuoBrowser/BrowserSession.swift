@@ -768,7 +768,7 @@ final class BrowserSession: ObservableObject {
         bookmarkFolders: bookmarkFolders, readingList: readingList, recentlyClosed: recentlyClosed)
         do {
             if replaceBackup { try archiveStore.replace(archive) } else { try archiveStore.write(archive) }
-            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = nil }
+            for tab in tabs where tab.errorMessage == saveError { tab.errorMessage = tab.loadFailure?.message }
             return true
         } catch {
             if reportFailure { selected.errorMessage = saveError }

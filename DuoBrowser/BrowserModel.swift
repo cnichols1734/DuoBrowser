@@ -141,7 +141,9 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     @Published var isLoading = false
     @Published var progress = 0.0
     @Published var errorMessage: String? {
-        didSet { if errorMessage != loadFailure?.message { loadFailure = nil } }
+        // Generic notices must not discard an unrecovered document's typed failure.
+        // Explicit dismissal or a new navigation clears both by assigning nil.
+        didSet { if errorMessage == nil { loadFailure = nil } }
     }
     @Published private(set) var loadFailure: BrowserLoadFailure?
     var failureCoversPage: Bool { loadFailure != nil && !hasCommittedPage }

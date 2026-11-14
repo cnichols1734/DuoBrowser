@@ -523,6 +523,7 @@ final class NativeCheckRunner {
         func pause() async throws { try await Task.sleep(for: .milliseconds(950)) }
         do {
             try await load(model, "settling")
+            let originalFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
             let original = try await measure("width")
             let gap = (try await measure("top", "following")) - (try await measure("bottom"))
             let lineScript = "(()=>{const r=document.createRange();r.selectNodeContents(document.getElementById('reading'));return JSON.stringify([...r.getClientRects()].map(q=>[q.width,q.height]))})()"
@@ -568,7 +569,8 @@ final class NativeCheckRunner {
                 """, in: nil, contentWorld: PageLayoutAdapter.world) as? Bool
             try check((try await measure("right")) <= model.webView.bounds.width-87, "WebKit paragraph fits beside synthetic island")
             try check(interpolates == true, "WebKit animation interpolates horizontally without pushing text down")
-            try check(try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String == "18px", "WebKit fitting preserves font size")
+            let fittedFont = try await js(model, "getComputedStyle(document.getElementById('reading')).fontSize") as? String ?? "missing"
+            try check(fittedFont == "18px", "WebKit fitting preserves font size (original=\(originalFont), fitted=\(fittedFont), bounds=\(model.webView.bounds))")
             try check(abs((try await measure("top", "following"))-(try await measure("bottom"))-gap) < 1, "WebKit following paragraph preserves its natural gap")
             try check(try await js(model, "scrollY") as? Double == 0, "WebKit settling preserves initial scroll offset")
             try check(try await js(model, "typeof globalThis.__duoCamera") as? String == "undefined", "camera controller is isolated from the page world")

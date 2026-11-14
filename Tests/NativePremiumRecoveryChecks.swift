@@ -52,7 +52,9 @@ extension NativeCheckRunner {
         try check(!source.retryLoadFailure(stale), "a replacement document invalidates a visible recovery action")
         try check(!source.goBackFromLoadFailure(stale), "a stale recovery Back action cannot navigate a replacement document")
         source.errorMessage = "A different local error"
-        try check(source.loadFailure == nil, "unrelated notices cannot retain a stale navigation action")
+        try check(source.loadFailure?.id == stale.id && !source.retryLoadFailure(stale),
+                  "generic notices preserve typed recovery without making a stale navigation action valid")
+        source.errorMessage = nil
         source.isRetainedForUndo = true
         source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
         try check(source.loadFailure == nil, "retained closed tabs cannot publish page failure actions")
@@ -112,6 +114,131 @@ extension NativeCheckRunner {
         try check(try session.articleForRecovery(missingCopy, browser: source, failure: processFailure) == nil,
                   "a saved-copy action captured before private browsing cannot expose the normal library")
         try await recoveryReadStatusFailureChecks()
+        try await persistenceRecoveryChecks()
+    }
+
+    private func persistenceRecoveryChecks() async throws {
+        let suite = "DuoBrowser.PersistenceRecovery." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(suite)
+        var rejectWrites = false
+        var rejectedWrites = 0
+        let archive = BrowserArchiveStore(directory: directory, writeData: { data, url, options in
+            if rejectWrites { rejectedWrites += 1; throw CocoaError(.fileWriteNoPermission) }
+            try data.write(to: url, options: options)
+        })
+        let session = BrowserSession(storage: defaults, archiveStore: archive, dataStore: .nonPersistent())
+        defer {
+            session.tabs.forEach { $0.close() }
+            defaults.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: directory)
+        }
+        let source = session.selected
+        mount(source)
+        let webView = source.webView
+        let saveError = "Your browsing changes could not be saved on this device."
+        let target = URL(string: "http://127.0.0.1:8765/upgrades?persistence-recovery=1")!
+        let error = NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
+                            userInfo: [NSURLErrorFailingURLErrorKey: target])
+        source.webView(webView, didFailProvisionalNavigation: nil, withError: error)
+        let initialFailure = source.loadFailure!
+        rejectWrites = true
+        session.scheduleSave()
+        try await wait { rejectedWrites > 0 }
+        try check(source.loadFailure?.id == initialFailure.id && source.failureCoversPage && source.errorMessage == saveError,
+                  "scheduled archive-write failure retains initial-page recovery and reports the persistence notice")
+        try await persistenceWarningLayoutChecks(session: session, browser: source)
+        rejectWrites = false
+        try check(session.saveNow() && source.loadFailure?.id == initialFailure.id && source.failureCoversPage
+                  && source.errorMessage == initialFailure.message,
+                  "successful archive retry clears only the persistence notice and restores initial recovery copy")
+        try check(source.retryLoadFailure(initialFailure), "initial-page recovery retry stays actionable after scheduled save failure")
+        try await wait {
+            guard source.restorationURL == target, !source.isLoading, source.loadFailure == nil else { return false }
+            return (try? await self.js(source, "document.readyState==='complete' && location.search==='?persistence-recovery=1'")) as? Bool == true
+        }
+        source.webViewWebContentProcessDidTerminate(webView)
+        let processFailure = source.loadFailure!
+        let rejectedBeforeBackground = rejectedWrites
+        rejectWrites = true
+        session.background()
+        try check(rejectedWrites > rejectedBeforeBackground && source.loadFailure?.id == processFailure.id
+                  && source.failureCoversPage && source.errorMessage == saveError,
+                  "background archive-write failure retains terminated-page recovery and reports its notice")
+        rejectWrites = false
+        try check(session.saveNow() && source.loadFailure?.id == processFailure.id && source.failureCoversPage
+                  && source.errorMessage == processFailure.message,
+                  "successful archive retry cannot dismiss an unrecovered terminated page")
+        source.errorMessage = nil
+        try check(source.loadFailure == nil && !source.failureCoversPage,
+                  "explicit message dismissal still clears typed navigation recovery")
+        rejectWrites = true
+        try check(!session.saveNow() && source.errorMessage == saveError && source.loadFailure == nil,
+                  "ordinary archive-write failure still reports its error when no navigation failure exists")
+        rejectWrites = false
+        try check(session.saveNow() && source.errorMessage == nil && source.loadFailure == nil,
+                  "ordinary successful archive retry still clears its persistence error")
+    }
+
+    private func persistenceWarningLayoutChecks(session: BrowserSession, browser: BrowserModel) async throws {
+        for fullPage in [true, false] {
+            var probes: [String: [WeakRecoveryProbe]] = [:]
+            var screen = BrowserRecoveryView(session: session, browser: browser, fillsPage: fullPage, editAddress: {})
+            screen.registerElementProbe = { key, view in
+                guard !(probes[key] ?? []).contains(where: { $0.view === view }) else { return }
+                probes[key, default: []].append(WeakRecoveryProbe(view))
+            }
+            let controller = UIHostingController(rootView: screen)
+            host.addChild(controller)
+            controller.view.frame = host.view.bounds
+            host.view.addSubview(controller.view)
+            controller.didMove(toParent: host)
+            defer {
+                controller.willMove(toParent: nil)
+                controller.view.removeFromSuperview()
+                controller.removeFromParent()
+            }
+            func currentFrames(_ key: String) -> [CGRect] {
+                guard let window = controller.view.window else { return [] }
+                return (probes[key] ?? []).compactMap { probe in
+                    guard let view = probe.view, view.window === window else { return nil }
+                    let frame = view.convert(view.bounds, to: window)
+                    guard frame.width > 0, frame.height > 0 else { return nil }
+                    var ancestor: UIView? = view
+                    while let node = ancestor {
+                        guard !node.isHidden, node.alpha > 0.01, node.layer.opacity > 0.01 else { return nil }
+                        if node.clipsToBounds && !node.convert(node.bounds, to: window).insetBy(dx: -1, dy: -1).contains(frame) { return nil }
+                        ancestor = node.superview
+                    }
+                    return frame
+                }
+            }
+            func visiblePair() -> (CGRect, CGRect)? {
+                let visible = controller.view.convert(controller.view.bounds, to: controller.view.window).insetBy(dx: -1, dy: -1)
+                for notice in currentFrames("notice") where visible.contains(notice) {
+                    // Window conversion can round a native 44-point bound down by a few ulps.
+                    for retry in currentFrames("retry") where retry.height >= 44 - 0.000001 && visible.contains(retry) && !notice.intersects(retry) {
+                        return (notice, retry)
+                    }
+                }
+                return nil
+            }
+            func diagnostics() -> String {
+                ["notice", "retry"].map { key in
+                    let candidates = (probes[key] ?? []).map { probe -> String in
+                        guard let view = probe.view else { return "released" }
+                        return "frame=\(view.convert(view.bounds, to: controller.view.window)) bounds=\(view.bounds) window=\(view.window != nil) hidden=\(view.isHidden) alpha=\(view.alpha)"
+                    }
+                    return "\(key)=[\(candidates.joined(separator: "; "))] visible=\(currentFrames(key))"
+                }.joined(separator: " ")
+            }
+            do { try await wait { visiblePair() != nil } }
+            catch {
+                throw NSError(domain: "\(fullPage ? "full-page" : "inline") recovery probe visibility failed: \(diagnostics())", code: 1)
+            }
+            try check(visiblePair() != nil,
+                      "\(fullPage ? "full-page" : "inline") recovery visibly retains both the archive warning and reachable retry action")
+        }
     }
 
     private func recoveryReadStatusFailureChecks() async throws {
@@ -166,5 +293,10 @@ extension NativeCheckRunner {
                   && session.readingList.first?.isRead == false,
                   "ordinary saved-page writes still report persistence errors and roll back read state")
     }
+}
+
+private final class WeakRecoveryProbe {
+    weak var view: UIView?
+    init(_ view: UIView) { self.view = view }
 }
 #endif
