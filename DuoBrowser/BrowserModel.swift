@@ -114,6 +114,10 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
     private var lastRequestedURL: URL?
     private var activeNavigation: WKNavigation?
     private var hasCommittedPage = false
+    /// iOS reclaims an unseen page's web process under memory pressure, routinely after time in the
+    /// background. Like Safari, reload such a GET page once it is next seen instead of showing recovery.
+    private var reloadWhenSeen = false
+    private var lastTerminationReload: Date?
     var hasWindowRelationships = false
     var searchEngine = BrowserSearchEngine.google
     var lastUsed = Date()
@@ -456,9 +460,26 @@ final class BrowserModel: NSObject, ObservableObject, Identifiable, WKNavigation
         presentation.cancel()
         loadedWebView?.scrollView.refreshControl?.endRefreshing()
         hasCommittedPage = false
+        // Unseen (app in the background, or another tab on screen), a GET page, and not a page that
+        // already died within a minute of such a reload: whatever it held is gone either way, so
+        // reload it quietly when it is next shown. Anything else keeps deliberate recovery.
+        let unseen = UIApplication.shared.applicationState != .active || webView.window == nil
+        let looping = lastTerminationReload.map { Date().timeIntervalSince($0) < 60 } ?? false
+        if unseen, !looping, currentMethod == "GET", restorationURL != nil {
+            reloadWhenSeen = true
+            return
+        }
         loadFailure = BrowserLoadFailure(kind: .processTerminated, url: restorationURL,
             method: currentMethod, documentID: documentGeneration)
         errorMessage = loadFailure?.message
+    }
+
+    /// Called when this tab is shown: on selection, and for the selected tab when the app returns.
+    func reloadIfTerminatedWhileUnseen() {
+        guard reloadWhenSeen, !closed, !isRetainedForUndo, let view = loadedWebView else { return }
+        reloadWhenSeen = false
+        lastTerminationReload = Date()
+        view.reload()
     }
 
     @discardableResult
