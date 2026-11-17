@@ -60,6 +60,9 @@ final class BrowserSession: ObservableObject {
     private var saveTask: Task<Void, Never>?
     private var memoryObserver: AnyCancellable?
     private var filterRefreshObserver: AnyCancellable?
+    private lazy var reloadObserver = NotificationCenter.default
+        .publisher(for: UIApplication.didBecomeActiveNotification)
+        .sink { [weak self] _ in self?.selected.reloadIfTerminatedWhileUnseen() }
     private var compactTask: Task<Void, Never>?
     private var retainedClosedTab: (recordID: UUID, tab: BrowserModel, index: Int)?
     private var closedTabExpiry: Task<Void, Never>?
@@ -115,6 +118,7 @@ final class BrowserSession: ObservableObject {
         if let warning = normalDownloads.errorMessage { selected.errorMessage = warning }
         selected.activate()
         startFilterUpdates()
+        _ = reloadObserver
         lastNormalID = selectedID
         websiteData.onWillRemove = { [weak self] in self?.releaseClosedTab() }
         // Migrate only after a durable write succeeds; normal cookies remain in WebKit's existing store.
@@ -307,6 +311,7 @@ final class BrowserSession: ObservableObject {
         rememberSelection()
         selected.revealControls()
         selected.activate()
+        selected.reloadIfTerminatedWhileUnseen()
         showingTabs = false
         trimSnapshots()
         compactInactiveTabs()
